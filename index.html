@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watch Bitcoin — BWATCH bw–1</title>
+<meta name="description" content="BWATCH bw-1. A wristwatch that keeps Bitcoin's time. No app, no account, no custodian.">
+<meta property="og:title" content="Watch Bitcoin">
+<meta property="og:description" content="BWATCH bw-1. A wristwatch that keeps Bitcoin's time.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bwatch.xyz">
+<meta property="og:image" content="https://bwatch.xyz/img/hero.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://bwatch.xyz">
+<style>
+:root{--paper:#f4f2ec;--ink:#12110d;--dim:#57554e;--rule:#d5d1c5;--orange:#FF3B12}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);
+  font-family:"Neue Haas Grotesk Display Pro","Helvetica Neue",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+/* the texture belongs to the paper, not to the photograph: it sits below
+   the plate, so the image reads as a clean print on a textured page */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.016) 0 1px,transparent 1px 3px)}
+
+.page{display:grid;grid-template-columns:minmax(0,0.82fr) minmax(0,1.18fr);
+  height:100%;align-items:center}
+.txt{padding:clamp(28px,5vh,64px) clamp(20px,3vw,52px);position:relative;z-index:2}
+.shot{align-self:stretch;height:100%;background-size:cover;
+  background-position:50% 46%;background-repeat:no-repeat;position:relative;z-index:1}
+
+.kick{display:flex;align-items:center;gap:10px;font-size:clamp(10.5px,1vw,13px);
+  letter-spacing:.22em;font-weight:600;text-transform:uppercase;margin-bottom:14px}
+.kick i{display:block;width:clamp(16px,1.6vw,26px);height:3px;background:var(--orange)}
+h1{font-size:clamp(30px,4.4vw,80px);font-weight:500;letter-spacing:-.022em;line-height:.9;
+  text-transform:uppercase;font-synthesis:none;font-kerning:normal}
+h1 span,h1 em{display:block;font-style:normal}
+h1 .l1{margin-left:-.020em}   /* W: diagonal, hangs left  */
+h1 .l2{margin-left:0}         /* B: flat stem, the reference */
+.sub{margin-top:clamp(14px,1.8vh,24px);max-width:none;font-size:clamp(13px,1.24vw,17px);
+  font-weight:500;line-height:1.45;text-wrap:balance}
+.sub mark{background:var(--orange);color:#fff;padding:.04em .16em .12em;font-weight:400;
+  box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.soon{display:inline-block;margin-top:clamp(20px,2.8vh,34px);padding:13px 24px;
+  border:1px solid var(--ink);background:var(--ink);color:var(--paper);
+  font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;font-weight:700}
+.note{margin-top:12px;font-size:12px;letter-spacing:.02em;color:var(--dim);
+  line-height:1.5;white-space:nowrap}
+.note a{color:var(--ink);text-decoration:none;
+  border-bottom:1px solid var(--orange);padding-bottom:1px}
+.note a:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
+.foot{position:fixed;left:0;right:0;bottom:0;z-index:2;display:flex;
+  justify-content:space-between;gap:14px;padding:14px clamp(20px,3vw,52px);
+  font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--dim);
+  border-top:1px solid var(--rule);background:var(--paper)}
+.foot a{color:var(--dim);text-decoration:none}
+.foot a:hover{color:var(--ink)}
+.foot b{color:var(--orange);font-weight:700;font-family:"SF Mono","Courier New",monospace}
+
+@media(max-width:960px){
+  body{overflow:auto}
+  .page{grid-template-columns:1fr;height:auto;min-height:100%}
+  .shot{height:46svh;order:-1}
+  .txt{padding-bottom:90px}
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="txt">
+    <div class="kick"><i></i>A timechain instrument</div>
+    <h1><span class="l1">Watch</span><em class="l2">Bitcoin</em></h1>
+    <p class="sub"><mark>BWATCH bw&ndash;1</mark>, a wristwatch that keeps<br>
+      Bitcoin's time. No app, no account, no custodian.</p>
+    <span class="soon">Currently in field testing</span>
+    <p class="note">Stay tuned, or say
+      <a href="mailto:hello@bwatch.xyz?subject=BWATCH%20bw-1">hello@bwatch.xyz</a></p>
+  </div>
+  <div class="shot" role="img" aria-label="BWATCH bw-1 on a sunlit countertop" style="background-image:url('img/hero.jpg')"></div>
+</div>
+
+<div class="foot">
+  <span><a href="https://btctech.xyz">BTC&nbsp;TECHNOLOGIES</a> / DIV-001</span>
+  <span>Block <b id="tip">------</b></span>
+</div>
+
+<script>
+(function(){
+  function tick(){
+    fetch('https://mempool.space/api/blocks/tip/height')
+      .then(function(r){return r.text()})
+      .then(function(t){var n=parseInt(t,10);
+        if(n>0) document.getElementById('tip').textContent=n.toLocaleString();})
+      .catch(function(){});
+  }
+  tick(); setInterval(tick,20000);
+})();
+</script>
+</body>
+</html>

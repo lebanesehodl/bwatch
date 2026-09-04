@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BWATCH bw–1 — Manual</title>
+<meta name="description" content="Four buttons, nine instruments. The BWATCH bw-1 field manual.">
+<style>
+:root{
+  --paper:#F2EFE6;
+  --ink:#14120F;
+  --dim:#5A564C;
+  --orange:#FF3B12;
+  --rule:#CBC4B4;
+  --panel:#E7E2D5;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--paper);color:var(--ink);
+  font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
+}
+/* paper grain, under everything */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+  background:
+    repeating-linear-gradient(0deg,rgba(20,18,15,.022) 0 1px,transparent 1px 3px);
+}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;
+  padding:0 clamp(18px,4vw,56px)}
+
+/* ─── type ─────────────────────────────────────────── */
+.mono{font-family:"SF Mono",ui-monospace,"Roboto Mono","Courier New",monospace}
+.eyebrow{font-family:"SF Mono",ui-monospace,"Courier New",monospace;
+  font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim)}
+h1,h2,h3{font-weight:800;letter-spacing:-.03em;text-transform:uppercase;line-height:.88}
+h1{font-size:clamp(46px,12vw,150px)}
+h2{font-size:clamp(30px,5.4vw,68px)}
+h3{font-size:clamp(17px,2vw,23px);letter-spacing:-.01em}
+p{max-width:62ch}
+b{font-weight:700}
+
+/* the one risky move: two inks, slightly out of register */
+.riso{position:relative;display:inline-block}
+.riso::before,.riso::after{
+  content:attr(data-t);position:absolute;left:0;top:0;pointer-events:none;
+  mix-blend-mode:multiply}
+.riso::before{color:var(--orange);transform:translate(-3px,2px)}
+.riso::after{color:rgba(20,18,15,.38);transform:translate(3px,-2px)}
+
+/* ─── cover ────────────────────────────────────────── */
+.cover{min-height:92svh;display:flex;flex-direction:column;justify-content:center;
+  padding:80px 0 40px;border-bottom:3px solid var(--ink)}
+.cover .kicker{display:flex;gap:14px;align-items:center;margin-bottom:26px}
+.cover .kicker i{display:block;width:46px;height:5px;background:var(--orange)}
+.cover h1{margin-bottom:6px}
+.cover .sub{font-size:clamp(16px,2.1vw,26px);font-weight:600;max-width:24ch;
+  margin-top:24px;line-height:1.25}
+.cover .meta{display:flex;flex-wrap:wrap;gap:28px;margin-top:46px}
+.cover .meta div{min-width:120px}
+.cover .meta .k{font-size:10px;letter-spacing:.24em;text-transform:uppercase;
+  color:var(--dim);margin-bottom:4px}
+.cover .meta .v{font-weight:700;font-size:15px}
+
+/* ─── chapters ─────────────────────────────────────── */
+section{padding:clamp(56px,9vh,110px) 0;border-bottom:1px solid var(--rule)}
+.chead{display:grid;grid-template-columns:auto 1fr;gap:clamp(16px,3vw,36px);
+  align-items:start;margin-bottom:36px}
+.cnum{font-weight:800;font-size:clamp(40px,7vw,86px);line-height:.8;
+  color:var(--paper);-webkit-text-stroke:2px var(--ink)}
+.chead p{margin-top:14px;color:var(--dim);font-size:16px}
+
+/* ─── the annotated face ───────────────────────────── */
+.anatomy{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);
+  gap:clamp(22px,4vw,54px);align-items:start}
+.screen{background:var(--ink);padding:14px;border:3px solid var(--ink)}
+.screen svg{display:block;width:100%;height:auto;background:var(--ink)}
+/* the annotated face keeps its margins clear, so numbers never sit on the
+   readout they are pointing at */
+.anat{background:var(--paper);border-color:var(--ink);padding:6px 4px}
+.anat svg{background:transparent}
+.legend{list-style:none;display:grid;gap:2px}
+.legend li{display:grid;grid-template-columns:30px 1fr;gap:14px;padding:11px 0;
+  border-top:1px solid var(--rule);align-items:baseline}
+.legend li:last-child{border-bottom:1px solid var(--rule)}
+.legend .n{font-family:"SF Mono",ui-monospace,monospace;font-size:12px;
+  font-weight:700;color:var(--paper);background:var(--orange);
+  width:22px;height:22px;display:grid;place-items:center}
+.legend b{display:block;font-size:15px}
+.legend span{color:var(--dim);font-size:14px}
+
+/* ─── buttons ──────────────────────────────────────── */
+.btns{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);
+  gap:clamp(22px,4vw,54px);align-items:start}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{text-align:left;padding:11px 12px 11px 0;border-bottom:1px solid var(--rule);
+  vertical-align:top}
+th{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+  font-weight:600;border-bottom:2px solid var(--ink)}
+td.k{font-family:"SF Mono",ui-monospace,monospace;font-weight:700;white-space:nowrap;
+  width:1%;padding-right:26px}
+.hold{color:var(--orange)}
+
+/* ─── mode grid ────────────────────────────────────── */
+.modes{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+  gap:clamp(16px,2.4vw,30px)}
+.mode{border:2px solid var(--ink);background:var(--panel)}
+.mode .cap{display:flex;justify-content:space-between;align-items:center;
+  padding:9px 12px;border-bottom:2px solid var(--ink);background:var(--ink);
+  color:var(--paper)}
+.mode .cap b{font-family:"SF Mono",ui-monospace,monospace;letter-spacing:.12em}
+.mode .cap span{font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:#B9B3A5}
+.mode .art{padding:12px;background:var(--ink)}
+.mode svg{display:block;width:100%;height:auto}
+.mode .txt{padding:13px}
+.mode .txt p{font-size:14px;line-height:1.45}
+.mode .up{margin-top:9px;font-size:12px;font-family:"SF Mono",ui-monospace,monospace;
+  color:var(--dim);border-top:1px solid var(--rule);padding-top:8px}
+
+/* ─── states ───────────────────────────────────────── */
+.states{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));
+  gap:14px}
+.state{border-left:5px solid var(--orange);padding:12px 0 12px 14px;
+  background:linear-gradient(90deg,rgba(255,59,18,.05),transparent 60%)}
+.state b{font-family:"SF Mono",ui-monospace,monospace;display:block;font-size:16px;
+  letter-spacing:.1em;margin-bottom:5px}
+.state span{font-size:14px;color:var(--dim)}
+
+/* ─── callout ──────────────────────────────────────── */
+.note{border:2px solid var(--ink);padding:clamp(18px,3vw,30px);margin-top:34px;
+  background:var(--panel);position:relative}
+.note::after{content:"";position:absolute;inset:5px;border:1px solid var(--ink);
+  pointer-events:none;opacity:.28}
+.note .eyebrow{margin-bottom:9px}
+.note p{font-size:16px}
+
+/* ─── steps ────────────────────────────────────────── */
+.steps{counter-reset:s;display:grid;gap:0;margin-top:8px}
+.steps li{counter-increment:s;list-style:none;display:grid;
+  grid-template-columns:44px 1fr;gap:16px;padding:16px 0;
+  border-top:1px solid var(--rule)}
+.steps li::before{content:counter(s,decimal-leading-zero);
+  font-family:"SF Mono",ui-monospace,monospace;font-weight:700;font-size:14px;
+  color:var(--orange)}
+/* the counter owns column 1; both text elements stay in column 2, or the
+   description wraps back under the number and sets four characters wide */
+.steps b,.steps li span{grid-column:2}
+.steps b{display:block;margin-bottom:3px}
+.steps li span{color:var(--dim);font-size:15px;max-width:52ch}
+
+footer{padding:52px 0 70px;font-size:13px;color:var(--dim)}
+footer a{color:var(--ink)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:clamp(20px,3vw,44px)}
+
+@media(max-width:760px){
+  .anatomy,.btns{grid-template-columns:1fr}
+  .riso::before{transform:translate(-2px,1px)}
+  .riso::after{transform:translate(2px,-1px)}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ══ COVER ══ -->
+<header class="cover">
+  <div class="kicker"><i></i><span class="eyebrow">BTC Technologies · DIV-001 · bw–1</span></div>
+  <h1><span class="riso" data-t="THE">THE</span><br><span class="riso" data-t="MANUAL">MANUAL</span></h1>
+  <p class="sub">Four buttons. Nine instruments. One chain that does not care whether you are watching.</p>
+  <div class="meta">
+    <div><div class="k">Read this</div><div class="v">Once, then never</div></div>
+    <div><div class="k">Time needed</div><div class="v">Six minutes</div></div>
+    <div><div class="k">Tools</div><div class="v">Your thumbs</div></div>
+    <div><div class="k">Firmware</div><div class="v mono">bw1-2026.08</div></div>
+  </div>
+</header>
+
+<!-- ══ 01 THE FACE ══ -->
+<section id="face">
+  <div class="chead">
+    <div class="cnum">01</div>
+    <div>
+      <h2>The face</h2>
+      <p>Everything on screen at once. Nothing here refreshes behind your back — the panel
+         holds its last state with the power off, which is why a watch you have not touched
+         all day still shows you something true.</p>
+    </div>
+  </div>
+
+  <div class="anatomy">
+    <div class="screen anat">
+      <svg viewBox="-40 -8 280 216" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-label="Annotated BWATCH face">
+        <!-- the panel itself; callouts live in the margins beside it -->
+        <rect x="0" y="0" width="200" height="200" fill="#14120F"/>
+        <g fill="#F2EFE6" font-family="SF Mono, monospace">
+          <text x="4" y="10" font-size="8">23:41</text>
+          <rect x="30" y="4" width="12" height="7" fill="none" stroke="#F2EFE6"/>
+          <rect x="31" y="5" width="8" height="5"/>
+          <text x="62" y="10" font-size="8">BLOCK HEIGHT</text>
+          <text x="196" y="10" font-size="8" text-anchor="end">LIVE</text>
+
+          <text x="100" y="46" font-size="30" text-anchor="middle"
+                letter-spacing="1" font-weight="700">964,379</text>
+          <text x="100" y="62" font-size="8" text-anchor="middle">TIMECHAIN TIP</text>
+
+          <text x="30" y="70" font-size="7" text-anchor="middle">EPOC</text>
+          <circle cx="30" cy="86" r="15" fill="none" stroke="#F2EFE6"/>
+          <path d="M30 71 A15 15 0 0 1 43 94" fill="none" stroke="#F2EFE6" stroke-width="3"/>
+          <text x="30" y="89" font-size="8" text-anchor="middle">36</text>
+          <text x="170" y="70" font-size="7" text-anchor="middle">HALV</text>
+          <circle cx="170" cy="86" r="15" fill="none" stroke="#F2EFE6"/>
+          <path d="M170 71 A15 15 0 1 1 156 95" fill="none" stroke="#F2EFE6" stroke-width="3"/>
+          <text x="170" y="89" font-size="8" text-anchor="middle">59</text>
+
+          <rect x="53" y="70" width="94" height="22" fill="none" stroke="#F2EFE6" stroke-width="1.5"/>
+          <text x="59" y="86" font-size="13" font-weight="700">3.125</text>
+          <text x="141" y="86" font-size="7" text-anchor="end">BTC RWD</text>
+
+          <line x1="6" y1="115" x2="194" y2="115" stroke="#F2EFE6"/>
+          <g stroke="#F2EFE6">
+            <line x1="6" y1="107" x2="6" y2="115"/><line x1="53" y1="107" x2="53" y2="115"/>
+            <line x1="100" y1="107" x2="100" y2="115"/><line x1="147" y1="107" x2="147" y2="115"/>
+            <line x1="194" y1="107" x2="194" y2="115"/>
+            <line x1="24" y1="111" x2="24" y2="115"/><line x1="76" y1="111" x2="76" y2="115"/>
+            <line x1="124" y1="111" x2="124" y2="115"/><line x1="170" y1="111" x2="170" y2="115"/>
+          </g>
+          <polygon points="132,99 142,99 137,106"/>
+          <text x="6" y="126" font-size="7">FEAR</text>
+          <text x="100" y="126" font-size="7" text-anchor="middle">SENTIMENT 73</text>
+          <text x="194" y="126" font-size="7" text-anchor="end">GREED</text>
+
+          <rect x="6" y="136" width="188" height="38" fill="none" stroke="#F2EFE6"/>
+          <text x="10" y="146" font-size="7">24H</text>
+          <polyline fill="none" stroke="#F2EFE6" stroke-width="1.2"
+            points="9,168 25,166 40,160 56,152 72,156 88,148 104,150 120,144 136,146 152,141 168,143 184,139"/>
+          <text x="190" y="163" font-size="7" text-anchor="end">H 80600</text>
+          <text x="190" y="171" font-size="7" text-anchor="end">L 78765</text>
+
+          <text x="100" y="182" font-size="7" text-anchor="middle">TICK TOCK NEXT BLOCK</text>
+          <g font-size="6">
+            <rect x="5" y="186" width="19" height="12" fill="#F2EFE6"/>
+            <text x="7" y="195" fill="#14120F">HGT</text>
+            <rect x="26" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="28" y="195">PRC</text>
+            <rect x="47" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="49" y="195">SAT</text>
+            <rect x="68" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="70" y="195">CAP</text>
+            <rect x="89" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="91" y="195">FEE</text>
+            <rect x="110" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="112" y="195">SUP</text>
+            <rect x="131" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="133" y="195">HLV</text>
+            <rect x="152" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="154" y="195">WAL</text>
+            <rect x="173" y="186" width="19" height="12" fill="none" stroke="#F2EFE6"/><text x="175" y="195">JOE</text>
+          </g>
+        </g>
+
+        <!-- callouts: outside the panel, one ink, leader lines to the feature -->
+        <g stroke="#FF3B12" stroke-width="1.1" fill="none">
+          <line x1="211" y1="9"   x2="200" y2="9"/>
+          <line x1="-11" y1="42"  x2="20"  y2="42"/>
+          <line x1="-11" y1="81"  x2="53"  y2="81"/>
+          <line x1="211" y1="86"  x2="187" y2="86"/>
+          <line x1="-11" y1="115" x2="6"   y2="115"/>
+          <line x1="211" y1="155" x2="194" y2="155"/>
+          <line x1="-11" y1="192" x2="5"   y2="192"/>
+        </g>
+        <g font-family="SF Mono, monospace" font-size="10" font-weight="700"
+           fill="#FF3B12">
+          <circle cx="220" cy="9"   r="9"/><text x="220" y="12.5" fill="#F2EFE6" text-anchor="middle">1</text>
+          <circle cx="-20" cy="42"  r="9"/><text x="-20" y="45.5" fill="#F2EFE6" text-anchor="middle">2</text>
+          <circle cx="-20" cy="81"  r="9"/><text x="-20" y="84.5" fill="#F2EFE6" text-anchor="middle">3</text>
+          <circle cx="220" cy="86"  r="9"/><text x="220" y="89.5" fill="#F2EFE6" text-anchor="middle">4</text>
+          <circle cx="-20" cy="115" r="9"/><text x="-20" y="118.5" fill="#F2EFE6" text-anchor="middle">5</text>
+          <circle cx="220" cy="155" r="9"/><text x="220" y="158.5" fill="#F2EFE6" text-anchor="middle">6</text>
+          <circle cx="-20" cy="192" r="9"/><text x="-20" y="195.5" fill="#F2EFE6" text-anchor="middle">7</text>
+        </g>
+      </svg>
+    </div>
+
+    <ul class="legend">
+      <li><span class="n">1</span><span><b>Freshness tag</b>
+        <span>How old the data is, always. LIVE under twenty minutes, then it counts the age
+        out loud.</span></span></li>
+      <li><span class="n">2</span><span><b>The number</b>
+        <span>Whatever the current instrument measures. Sets smaller as it grows longer, so
+        the figure is never abbreviated.</span></span></li>
+      <li><span class="n">3</span><span><b>The box</b>
+        <span>A second reading for the same instrument. UP turns it. This is where most of
+        the watch hides.</span></span></li>
+      <li><span class="n">4</span><span><b>Epoch and halving</b>
+        <span>Two dials, always on: progress through the difficulty period, and progress to
+        the next halving.</span></span></li>
+      <li><span class="n">5</span><span><b>Sentiment</b>
+        <span>Fear and greed, 0 to 100. The only number on the face that measures a mood
+        rather than the chain.</span></span></li>
+      <li><span class="n">6</span><span><b>Twenty-four hours</b>
+        <span>Price, with its high and low. The labels move out of the line's way.</span></span></li>
+      <li><span class="n">7</span><span><b>Mode strip</b>
+        <span>All nine instruments. The filled one is where you are.</span></span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ══ 02 BUTTONS ══ -->
+<section id="buttons">
+  <div class="chead">
+    <div class="cnum">02</div>
+    <div>
+      <h2>Four buttons</h2>
+      <p>There is no touchscreen and no gesture to learn. Two of these do almost everything:
+         <b>MODE</b> picks the instrument, <b>UP</b> turns its crown.</p>
+    </div>
+  </div>
+
+  <div class="btns">
+    <div class="screen">
+      <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-label="Button positions on the case">
+        <rect x="34" y="24" width="132" height="152" rx="9" fill="none"
+              stroke="#F2EFE6" stroke-width="3"/>
+        <rect x="46" y="38" width="108" height="124" fill="none" stroke="#F2EFE6"/>
+        <g fill="#F2EFE6">
+          <circle cx="46" cy="36" r="4"/><circle cx="154" cy="36" r="4"/>
+          <circle cx="46" cy="164" r="4"/><circle cx="154" cy="164" r="4"/>
+        </g>
+        <!-- pushers -->
+        <g fill="#FF3B12">
+          <rect x="24" y="56" width="12" height="20" rx="3"/>
+          <rect x="24" y="124" width="12" height="20" rx="3"/>
+          <rect x="164" y="56" width="12" height="20" rx="3"/>
+          <rect x="164" y="124" width="12" height="20" rx="3"/>
+        </g>
+        <g font-family="SF Mono, monospace" font-size="9" fill="#F2EFE6">
+          <text x="8" y="52">BACK</text>
+          <text x="8" y="156">MENU</text>
+          <text x="192" y="52" text-anchor="end">UP</text>
+          <text x="192" y="156" text-anchor="end">DOWN</text>
+        </g>
+        <g font-family="SF Mono, monospace" font-size="7" fill="#F2EFE6" opacity=".65">
+          <text x="100" y="96" text-anchor="middle">BACK = MODE</text>
+          <text x="100" y="108" text-anchor="middle">UP = THE CROWN</text>
+        </g>
+      </svg>
+    </div>
+
+    <div>
+      <table>
+        <tr><th>Button</th><th>Press</th><th>Hold</th></tr>
+        <tr><td class="k">MODE / BACK</td>
+            <td>Next instrument</td>
+            <td class="hold">Return from time travel</td></tr>
+        <tr><td class="k">UP</td>
+            <td>Turn the box dial. In WAL, cycle receive QR and Lightning</td>
+            <td class="hold">Fetch everything now</td></tr>
+        <tr><td class="k">DOWN</td>
+            <td>Light, dark, or automatic theme</td>
+            <td class="hold">In WAL, hide the balance</td></tr>
+        <tr><td class="k">MENU</td>
+            <td>Settings, wallet, time travel</td>
+            <td class="hold">In time travel, launch</td></tr>
+      </table>
+
+      <div class="note">
+        <div class="eyebrow">If you remember one thing</div>
+        <p><b>Hold UP.</b> It works in every mode and means "go and look now" — the corner
+        reads <span class="mono">FTCH</span> while the radio is out, then the whole face
+        refreshes. Use it when you have just turned on a hotspot, or when the tag has been
+        counting up for an hour.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 03 MODES ══ -->
+<section id="modes">
+  <div class="chead">
+    <div class="cnum">03</div>
+    <div>
+      <h2>Nine instruments</h2>
+      <p>MODE walks through them in order. Each one owns the big number, the box, and the
+         line beneath — everything else on the face stays where it is.</p>
+    </div>
+  </div>
+  <div class="modes" id="modeGrid"></div>
+</section>
+
+<!-- ══ 04 STATES ══ -->
+<section id="states">
+  <div class="chead">
+    <div class="cnum">04</div>
+    <div>
+      <h2>What the corner is telling you</h2>
+      <p>The top right never shows a mood or a signal-strength icon. It answers one question:
+         how much should you trust what you are looking at.</p>
+    </div>
+  </div>
+
+  <div class="states">
+    <div class="state"><b>LIVE</b><span>Fetched within the last twenty minutes.</span></div>
+    <div class="state"><b>OLD 34M</b><span>The age of the data, in minutes, then hours.</span></div>
+    <div class="state"><b>FTCH</b><span>You asked for a refresh and the radio is out.</span></div>
+    <div class="state"><b>SCAN</b><span>Walking the wallet's addresses.</span></div>
+    <div class="state"><b>DOCK</b><span>On the charger and streaming in real time.</span></div>
+    <div class="state"><b>CHG</b><span>Charging, and asleep on purpose so it fills faster.</span></div>
+    <div class="state"><b>TRVL</b><span>Nothing on screen is now. See chapter 05.</span></div>
+    <div class="state"><b>DEMO</b><span>No data yet. Set up WiFi.</span></div>
+  </div>
+
+  <div class="note">
+    <div class="eyebrow">Off the network</div>
+    <p>After twenty minutes without an update, block height stops being reported and starts
+    being <b>estimated</b> — the unit line reads
+    <span class="mono">EST +36 BLK +/-6</span>, meaning it has counted thirty-six blocks
+    forward at the chain's measured pace and could be six either side. The watch would rather
+    show you the size of its ignorance than a confident number that is quietly wrong.</p>
+  </div>
+</section>
+
+<!-- ══ 05 TIME TRAVEL ══ -->
+<section id="travel">
+  <div class="chead">
+    <div class="cnum">05</div>
+    <div>
+      <h2>Time travel</h2>
+      <p>Everything the chain guarantees is a function of block height: the subsidy, the coins
+         issued, the coins left, the epoch, the halving. None of it needs a network. So the
+         watch will take you to any height and show you the face as it will read.</p>
+    </div>
+  </div>
+
+  <p class="eyebrow" style="margin-bottom:14px">Forward · block 2,279,279 · August 2051</p>
+  <div class="modes" id="travelGrid" style="margin-bottom:34px"></div>
+
+  <p class="eyebrow" style="margin-bottom:14px">Back · block 210,000 · November 2012</p>
+  <div class="modes" id="pastGrid" style="margin-bottom:36px"></div>
+
+  <div class="two">
+    <div>
+      <ol class="steps">
+        <li><b>MENU → Time Travel</b><span>Opens on today.</span></li>
+        <li><b>MENU taps the unit</b><span>Travel by block, day, month, year or halving.</span></li>
+        <li><b>UP and DOWN move</b><span>Forward or back, one unit per press.</span></li>
+        <li><b>Hold MENU to launch</b><span>The whole watch goes there. The corner reads TRVL.</span></li>
+        <li><b>Hold BACK to come home</b><span>Or wait: it expires by itself after thirty minutes.</span></li>
+      </ol>
+    </div>
+    <div>
+      <table>
+        <tr><th>Out there</th><th>Where it comes from</th></tr>
+        <tr><td class="k">Height, supply, epoch</td><td>Arithmetic. Exact.</td></tr>
+        <tr><td class="k">Subsidy, halving dates</td><td>Arithmetic. Exact.</td></tr>
+        <tr><td class="k">Price in the past</td><td>Fetched from the record.</td></tr>
+        <tr><td class="k">Price in the future</td><td>A power-law model, labelled as one.</td></tr>
+        <tr><td class="k">Fees</td><td>Not derivable. Shown as dashes.</td></tr>
+      </table>
+      <div class="note">
+        <div class="eyebrow">Read the box</div>
+        <p>While travelling, the box states where the number came from:
+        <span class="mono">RECORDED</span> if it was fetched,
+        <span class="mono">RECORDED, APPROX</span> if interpolated offline, and
+        <span class="mono">POWER LAW MODEL</span> for anything ahead of now. Nobody has been
+        to block 1,260,000. The watch does not pretend otherwise.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 06 SETUP ══ -->
+<section id="setup">
+  <div class="chead">
+    <div class="cnum">06</div>
+    <div>
+      <h2>First six minutes</h2>
+      <p>Done once. There is no app to install and no account to make — the watch raises its
+         own network, you fill in a form, and it never asks again.</p>
+    </div>
+  </div>
+
+  <div class="two">
+    <ol class="steps">
+      <li><b>Charge it first</b>
+        <span>Plug in and leave it. Below 95% the watch declines the live dock and sleeps so
+        the charger's whole output reaches the cell. The corner reads CHG.</span></li>
+      <li><b>MENU → Setup WiFi</b>
+        <span>Join the network the watch advertises, then pick yours from the list. It holds
+        three networks — add your phone's hotspot as one of them.</span></li>
+      <li><b>MENU → Setup Wallet</b>
+        <span>Same portal. Paste a <b>zpub</b>, never a seed. Add a Lightning address if you
+        want to be paid on the wrist.</span></li>
+      <li><b>MENU → Set Timezone</b>
+        <span>Pick a city. The clock itself re-anchors to network time every six hours.</span></li>
+      <li><b>Calibrate the battery, once</b>
+        <span>Fully charged, open About and hold UP until it buzzes. The watch learns what
+        full reads on its own board.</span></li>
+    </ol>
+
+    <div>
+      <div class="note" style="margin-top:0">
+        <div class="eyebrow">On the hotspot</div>
+        <p>iPhone hotspots default to 5 GHz and the watch is 2.4 GHz only — turn on
+        <b>Maximize Compatibility</b> or it will never see the network.</p>
+      </div>
+      <div class="note">
+        <div class="eyebrow">On the zpub</div>
+        <p>A zpub derives addresses and cannot sign. Losing the watch loses no coins. It does
+        reveal your balance to anyone holding it, which is what <b>hold DOWN</b> in WAL is
+        for — the numbers go behind dashes and the receive QR keeps working.</p>
+      </div>
+      <div class="note">
+        <div class="eyebrow">Water</div>
+        <p>Rain proof. Sand, dust and a whole afternoon outside are fine. It is not
+        rated for swimming or submersion.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="two">
+    <div>
+      <div class="eyebrow" style="margin-bottom:8px">BWATCH bw–1</div>
+      <p>Assembled, flashed and field-verified by hand. Firmware is MIT licensed and the case
+         is open — the hex key is in the box because the watch is yours to open.</p>
+    </div>
+    <div>
+      <div class="eyebrow" style="margin-bottom:8px">If something is wrong</div>
+      <p><a href="mailto:hello@bwatch.xyz">hello@bwatch.xyz</a><br>
+         Every fault found so far is published, with its fix, at
+         <a href="https://bwatch.xyz">bwatch.xyz</a>.</p>
+    </div>
+  </div>
+</footer>
+
+</div>
+
+<script>
+// Each instrument, drawn as the panel actually renders it.
+const MODES = [
+  { tag:"HGT", name:"Block height", big:"964,379", unit:"TIMECHAIN TIP",
+    box:["3.125","BTC RWD"],
+    txt:"The tip, fetched every fifteen minutes and never inferred while the network is reachable.",
+    up:"UP: reward · miner · retarget · min/blk · block age · unconfirmed" },
+  { tag:"PRC", name:"Price", big:"79,214", unit:"USD / BTC",
+    box:["+2.4","24H %"],
+    txt:"One coin, in six currencies. Spelled out in full, whatever the scale.",
+    up:"UP: switch currency" },
+  { tag:"SAT", name:"Sats per unit", big:"1,264", unit:"SAT / USD",
+    box:["12:64","MOSCOW"],
+    txt:"How many satoshis a unit of fiat buys, with Moscow Time in the box.",
+    up:"UP: switch currency" },
+  { tag:"CAP", name:"Market cap", big:"1.60", unit:"TRILLION USD",
+    box:["9.4","% GOLD"],
+    txt:"What the whole issued supply is worth, and what share of gold it has taken.",
+    up:"UP: switch currency" },
+  { tag:"FEE", name:"Fees", big:"0.25", unit:"SAT/VB FAST",
+    box:["0.20","MEDIUM"],
+    txt:"What it costs to be confirmed. Two decimals, because a quiet mempool runs below one.",
+    up:"UP: high · medium · low" },
+  { tag:"SUP", name:"Supply", big:"20,075,734", unit:"BTC ISSUED",
+    box:["95.60","% MINED"],
+    txt:"Every coin issued, derived on the watch from height alone. No API is involved.",
+    up:"UP: issued · remaining" },
+  { tag:"HLV", name:"Halving", big:"1,050,000", unit:"NEXT HALVING",
+    box:["1.5625","B NEXT"],
+    txt:"The almanac: the next six halvings, their heights, dates and subsidies.",
+    up:"UP: step through six epochs" },
+  { tag:"WAL", name:"Wallet", big:"0.00700", unit:"BTC BALANCE",
+    box:["+21000","TX"],
+    txt:"Watch-only, from a zpub. It derives addresses; it cannot sign.",
+    up:"UP: balance · receive QR · Lightning" },
+  { tag:"JOE", name:"Just a watch", big:"10:47", unit:"",
+    box:null,
+    txt:"Time, day, date. No height, no strip, no reason for anyone to ask what you are wearing.",
+    up:"" }
+];
+
+function face(m){
+  const P = "#F2EFE6";
+  if (m.tag === "JOE") {
+    return `<svg viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg" aria-label="${m.name}">
+      <g fill="${P}" font-family="SF Mono, monospace">
+        <text x="100" y="62" font-size="34" text-anchor="middle" font-weight="700">${m.big}</text>
+        <text x="100" y="84" font-size="9" text-anchor="middle">WED  26 AUG</text>
+        <rect x="88" y="98" width="20" height="9" fill="none" stroke="${P}"/>
+        <rect x="89" y="99" width="13" height="7"/>
+      </g></svg>`;
+  }
+  const box = m.box ? `
+      <rect x="53" y="70" width="94" height="22" fill="none" stroke="${P}" stroke-width="1.5"/>
+      <text x="59" y="86" font-size="13" font-weight="700">${m.box[0]}</text>
+      <text x="141" y="86" font-size="7" text-anchor="end">${m.box[1]}</text>` : "";
+  const size = m.big.length > 9 ? 20 : (m.big.length > 6 ? 26 : 30);
+  return `<svg viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg" aria-label="${m.name}">
+    <g fill="${P}" font-family="SF Mono, monospace">
+      <text x="4" y="10" font-size="8">23:41</text>
+      <rect x="30" y="4" width="12" height="7" fill="none" stroke="${P}"/><rect x="31" y="5" width="8" height="5"/>
+      <text x="100" y="10" font-size="8" text-anchor="middle">${m.name.toUpperCase()}</text>
+      <text x="196" y="10" font-size="8" text-anchor="end">LIVE</text>
+      <text x="100" y="46" font-size="${size}" text-anchor="middle" font-weight="700">${m.big}</text>
+      <text x="100" y="62" font-size="8" text-anchor="middle">${m.unit}</text>
+      <text x="30" y="70" font-size="7" text-anchor="middle">EPOC</text>
+      <circle cx="30" cy="86" r="15" fill="none" stroke="${P}"/>
+      <path d="M30 71 A15 15 0 0 1 43 94" fill="none" stroke="${P}" stroke-width="3"/>
+      <text x="170" y="70" font-size="7" text-anchor="middle">HALV</text>
+      <circle cx="170" cy="86" r="15" fill="none" stroke="${P}"/>
+      <path d="M170 71 A15 15 0 1 1 156 95" fill="none" stroke="${P}" stroke-width="3"/>
+      ${box}
+      <line x1="6" y1="112" x2="194" y2="112" stroke="${P}"/>
+      <polygon points="126,104 136,104 131,111"/>
+      <text x="6" y="124" font-size="7">FEAR</text>
+      <text x="194" y="124" font-size="7" text-anchor="end">GREED</text>
+    </g></svg>`;
+}
+
+// The travelled face: supply bar and emission curve replace sentiment and
+// the 24h chart, because neither of those survives the trip.
+function travelFace(o){
+  const P = "#F2EFE6";
+  const bar = o.mined != null ? `
+      <rect x="8" y="96" width="184" height="8" fill="none" stroke="${P}"/>
+      <rect x="10" y="98" width="${Math.round(180*o.mined)}" height="4" fill="${P}"/>
+      <text x="8" y="113" font-size="7">0</text>
+      <text x="100" y="113" font-size="7" text-anchor="middle">${(o.mined*100).toFixed(4)}% MINED</text>
+      <text x="176" y="113" font-size="7">21M</text>` : "";
+  return `<svg viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg" aria-label="${o.name}">
+    <g fill="${P}" font-family="SF Mono, monospace">
+      <text x="4" y="10" font-size="8">23:41</text>
+      <rect x="30" y="4" width="12" height="7" fill="none" stroke="${P}"/><rect x="31" y="5" width="8" height="5"/>
+      <text x="100" y="10" font-size="8" text-anchor="middle">${o.head}</text>
+      <text x="196" y="10" font-size="8" text-anchor="end" fill="#FF3B12">TRVL</text>
+      <text x="100" y="44" font-size="${o.big.length>9?20:26}" text-anchor="middle" font-weight="700">${o.big}</text>
+      <text x="100" y="59" font-size="8" text-anchor="middle">${o.unit}</text>
+      <rect x="53" y="66" width="94" height="20" fill="none" stroke="${P}" stroke-width="1.5"/>
+      <text x="100" y="80" font-size="${o.boxText.length>12?7:9}" text-anchor="middle">${o.boxText}</text>
+      ${bar}
+      <text x="100" y="126" font-size="7" text-anchor="middle">${o.arrive}</text>
+    </g></svg>`;
+}
+
+// The setup screen. Not a face: a control panel with the destination at the
+// top and what the chain guarantees there listed beneath.
+function travelMenu(){
+  const P = "#F2EFE6";
+  return `<svg viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg"
+       aria-label="The Time Travel screen">
+    <g fill="${P}" font-family="SF Mono, monospace">
+      <text x="100" y="10" font-size="7" text-anchor="middle">TIME TRAVEL</text>
+      <text x="100" y="34" font-size="20" text-anchor="middle" font-weight="700">2,279,279</text>
+      <text x="100" y="45" font-size="7" text-anchor="middle">BLOCK HEIGHT</text>
+      <text x="100" y="56" font-size="7" text-anchor="middle">IN 25 YEARS</text>
+      <line x1="14" y1="62" x2="186" y2="62" stroke="${P}"/>
+      <g font-size="7">
+        <text x="14" y="74">REWARD</text><text x="70" y="74">0.04882812</text>
+        <text x="14" y="85">EPOCH</text> <text x="70" y="85">11 of 33</text>
+        <text x="14" y="96">ISSUED</text><text x="70" y="96">20988246</text>
+        <text x="14" y="107">LEFT</text>  <text x="70" y="107">11753</text>
+      </g>
+      <line x1="14" y1="112" x2="186" y2="112" stroke="${P}"/>
+      <text x="100" y="121" font-size="7" text-anchor="middle">TRAVEL BY YEAR</text>
+      <text x="100" y="129" font-size="7" text-anchor="middle">HOLD MENU TO LAUNCH</text>
+    </g></svg>`;
+}
+
+const TRAVEL = [
+  { tag:"SET", name:"The screen", menu:true,
+    txt:"Where you choose the destination. MENU taps the unit you move by, UP and DOWN move, and everything the chain guarantees there is listed as you go.",
+    up:"Hold MENU to launch" },
+  { tag:"HGT", name:"Block height, 2051", head:"BLOCK HEIGHT", big:"2,279,279",
+    unit:"TIMECHAIN TIP", boxText:"SUB  0.04882812", mined:0.999440,
+    arrive:"ARRIVING AUG 2051",
+    txt:"Twenty-five years out. The subsidy has halved six more times and the supply bar is all but full — both computed on the watch, with no network.",
+    up:"The bar replaces sentiment out there" },
+  { tag:"PRC", name:"Price, modelled", head:"PRICE", big:"13,473,754",
+    unit:"USD / BTC", boxText:"POWER LAW MODEL", mined:null,
+    arrive:"ARRIVING AUG 2051",
+    txt:"A price nobody can fetch, so the box says what kind of number it is. The model is anchored to the last real price the watch pulled.",
+    up:"Fees stay dashed: congestion cannot be modelled" },
+  { tag:"LFT", name:"Coins still to come", head:"SUPPLY", big:"11,753.96",
+    unit:"BTC REMAINING", boxText:"99.9440  % MINED", mined:null,
+    arrive:"ARRIVING AUG 2051",
+    txt:"Everything left to mine, ever. Eleven thousand coins across the following ninety years — the last one lands around 2140.",
+    up:"UP: issued · remaining" }
+];
+
+
+const PAST = [
+  { tag:"SET", name:"The screen", menuPast:true,
+    txt:"DOWN walks backwards. The same readout, except everything it lists actually happened — this is the block that cut the subsidy from 50 to 25.",
+    up:"Travel by halving to land exactly on one" },
+  { tag:"HGT", name:"The first halving", head:"BLOCK HEIGHT", big:"210,000",
+    unit:"TIMECHAIN TIP", boxText:"SUB  25", mined:0.500001,
+    arrive:"ARRIVED NOV 2012",
+    txt:"The bar sits at dead centre. At the first halving exactly half of all the coins there will ever be had been mined — in under four years.",
+    up:"Everything here is arithmetic, as it is going forward" },
+  { tag:"PRC", name:"Price, recorded", head:"PRICE", big:"12",
+    unit:"USD / BTC", boxText:"RECORDED", mined:null,
+    arrive:"ARRIVED NOV 2012",
+    txt:"Two digits. Travelling back the watch fetches the block's own timestamp and the price at that moment, so this is not a model — it is what a coin cost.",
+    up:"Offline it interpolates and says RECORDED, APPROX" },
+  { tag:"LFT", name:"Coins still to come", head:"SUPPLY", big:"10,499,974.98",
+    unit:"BTC REMAINING", boxText:"50.0001  % MINED", mined:null,
+    arrive:"ARRIVED NOV 2012",
+    txt:"Ten and a half million left. Standing here, more than 99% of the coins issued since were still unmined.",
+    up:"UP: issued · remaining" }
+];
+
+function pastMenu(){
+  const P = "#F2EFE6";
+  return `<svg viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg"
+       aria-label="The Time Travel screen, in the past">
+    <g fill="${P}" font-family="SF Mono, monospace">
+      <text x="100" y="10" font-size="7" text-anchor="middle">TIME TRAVEL</text>
+      <text x="100" y="34" font-size="22" text-anchor="middle" font-weight="700">210,000</text>
+      <text x="100" y="45" font-size="7" text-anchor="middle">BLOCK HEIGHT</text>
+      <text x="100" y="56" font-size="7" text-anchor="middle">AGO 13 YEARS</text>
+      <line x1="14" y1="62" x2="186" y2="62" stroke="${P}"/>
+      <g font-size="7">
+        <text x="14" y="74">REWARD</text><text x="70" y="74">25.00000000</text>
+        <text x="14" y="85">EPOCH</text> <text x="70" y="85">2 of 33</text>
+        <text x="14" y="96">ISSUED</text><text x="70" y="96">10500025</text>
+        <text x="14" y="107">LEFT</text>  <text x="70" y="107">10499974</text>
+      </g>
+      <line x1="14" y1="112" x2="186" y2="112" stroke="${P}"/>
+      <text x="100" y="121" font-size="7" text-anchor="middle">TRAVEL BY HALVING</text>
+      <text x="100" y="129" font-size="7" text-anchor="middle">HOLD MENU TO LAUNCH</text>
+    </g></svg>`;
+}
+
+document.getElementById("pastGrid").innerHTML = PAST.map(m => `
+  <article class="mode">
+    <div class="cap"><b>${m.tag}</b><span>${m.name}</span></div>
+    <div class="art">${m.menuPast ? pastMenu() : travelFace(m)}</div>
+    <div class="txt"><p>${m.txt}</p><div class="up">${m.up}</div></div>
+  </article>`).join("");
+
+document.getElementById("travelGrid").innerHTML = TRAVEL.map(m => `
+  <article class="mode">
+    <div class="cap"><b>${m.tag}</b><span>${m.name}</span></div>
+    <div class="art">${m.menu ? travelMenu() : travelFace(m)}</div>
+    <div class="txt"><p>${m.txt}</p><div class="up">${m.up}</div></div>
+  </article>`).join("");
+
+document.getElementById("modeGrid").innerHTML = MODES.map(m => `
+  <article class="mode">
+    <div class="cap"><b>${m.tag}</b><span>${m.name}</span></div>
+    <div class="art">${face(m)}</div>
+    <div class="txt"><p>${m.txt}</p>${m.up ? `<div class="up">${m.up}</div>` : ""}</div>
+  </article>`).join("");
+</script>
+</body>
+</html>

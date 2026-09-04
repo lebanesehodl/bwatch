@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watch your Bitcoin — BWATCH bw–1</title>
+<meta name="description" content="BWATCH bw-1. A wristwatch that keeps Bitcoin's time. No app, no account, no custodian. Feel the pulse of the timechain.">
+<style>
+@font-face{font-family:'DSEG7';src:url('https://cdnjs.cloudflare.com/ajax/libs/dseg/0.46.0/fonts/DSEG7-Classic/DSEG7Classic-Bold.woff2') format('woff2');font-display:swap}
+:root{--bg:#f4f2ec;--ink:#12110d;--dim:#57554e;--faint:#8d8a80;--red:#e5002b;
+      --orange:#FF3B12;--line:#d5d1c5}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);
+  font-family:"Neue Haas Grotesk Display Pro","Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-size:18px;line-height:1.58;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--orange);color:#fff}
+a{color:var(--ink);text-decoration:underline;text-underline-offset:4px;
+  text-decoration-thickness:1px;text-decoration-color:var(--faint)}
+a:hover{color:var(--orange);text-decoration-color:var(--orange)}
+.mono{font-family:"SF Mono","Courier New",monospace}
+.seg{font-family:'DSEG7',monospace}
+/* the scanline texture belongs to the paper, not to the photographs:
+   it sits below them, so plates read as clean prints on a textured page */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.016) 0 1px,transparent 1px 3px)}
+.hero-img,figure,figure img{position:relative;z-index:2}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:150;display:flex;justify-content:space-between;
+  align-items:center;padding:16px clamp(20px,4vw,44px);font-size:10.5px;letter-spacing:.3em;
+  text-transform:uppercase;color:var(--dim);
+  /* no scrim: the gradient was washing a pale strip across the top of the
+     photograph. The top of the frame is bright terrazzo, so dark type on
+     it reads perfectly well unaided. */
+  background:transparent;mix-blend-mode:multiply;isolation:isolate}
+nav a{text-decoration:none}
+/* the counter crosses the photograph, where multiply blending would bury
+   dark type in the strap — so it carries its own paper chip */
+nav .tip{mix-blend-mode:normal;background:var(--paper);border:1px solid var(--rule);
+  padding:5px 10px 6px;letter-spacing:.22em}
+nav .tip b{color:var(--orange);font-weight:700}
+
+.col{max-width:none;margin:0;padding:0 clamp(20px,4vw,44px)}
+/* ADULT's move: the text is the layout. Long measure, no centred column,
+   nothing but the page margin holding it. */
+/* only touch the vertical padding: the shorthand was zeroing .col's left
+   and right, so the masthead sat flush while the body was indented */
+.top{padding-top:clamp(96px,17vh,190px);padding-bottom:clamp(36px,6vh,72px)}
+h1{margin:0;font-size:clamp(25px,3.5vw,64px);font-weight:700;letter-spacing:-.042em;
+  line-height:1;text-transform:uppercase;white-space:nowrap}
+h1 b{color:var(--orange)}
+.standfirst{margin:clamp(18px,2.2vh,28px) 0 0;font-size:clamp(18px,1.9vw,24px);
+  line-height:1.3;font-weight:300;color:var(--dim);max-width:none}
+.standfirst b{color:var(--ink);font-weight:400}
+.standfirst b{color:var(--ink);font-weight:400}
+/* the claim gets its own line: two sentences of different kinds, so they
+   should not share a paragraph */
+.standfirst.second{margin-top:clamp(4px,.6vh,9px);color:var(--dim)}
+.say{margin-top:clamp(14px,1.8vh,24px);font-size:14px;color:var(--dim)}
+
+h2{display:flex;align-items:baseline;gap:16px;margin:clamp(56px,9vh,110px) 0 20px;
+  scroll-margin-top:84px;   /* the fixed nav must not cover a jumped-to heading */
+  font-size:12px;letter-spacing:.42em;text-transform:uppercase;color:var(--dim);font-weight:400}
+h2 i{font-style:normal;color:var(--red);letter-spacing:.3em}
+h3{font-size:clamp(24px,3.4vw,44px);font-weight:700;letter-spacing:-.03em;line-height:1.06;
+  margin:0 0 22px;text-transform:none}
+h3 em{font-style:normal;color:var(--orange)}
+p{margin:0 0 18px;color:var(--dim);font-weight:300;max-width:none}
+p b{color:var(--ink);font-weight:400}
+p.lead{font-size:clamp(21px,2.6vw,30px);line-height:1.3;color:var(--ink);font-weight:300;
+  margin-bottom:24px}
+/* the introduction closes on a syllogism; it needs space around it or it
+   reads as another sentence in the paragraph above */
+p.triad{margin:clamp(26px,4vh,48px) 0 clamp(30px,5vh,56px);
+  font-size:clamp(20px,2.4vw,30px);line-height:1.28;color:var(--dim);font-weight:300}
+p.triad b{color:var(--ink);font-weight:400}
+s{color:var(--faint)}
+ul{margin:0 0 18px;list-style:none}
+ul li{margin:0 0 12px;padding-left:74px;text-indent:-74px;color:var(--dim);font-weight:300}
+ul li b{display:inline-block;width:56px;text-indent:0;font-family:"SF Mono",monospace;
+  font-size:12.5px;letter-spacing:.12em;color:var(--ink);font-weight:400}
+.live{background:var(--orange);color:#fff;padding:2px 9px 3px;
+  font-family:"SF Mono",monospace;font-size:.74em;letter-spacing:.06em;white-space:nowrap;
+  font-weight:700}
+
+dl{margin:0 0 18px}
+dt{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.26em;
+  margin-top:26px;color:var(--ink)}
+dd{margin:8px 0 0;color:var(--dim);font-weight:300;max-width:none}
+
+.log{font-family:"SF Mono","Courier New",monospace;font-size:14px;line-height:1.55;
+  border-top:1px solid var(--line)}
+.log div{display:grid;grid-template-columns:96px 1fr;gap:18px;padding:16px 0;
+  border-bottom:1px solid var(--line);color:var(--dim)}
+.log b{color:var(--orange);font-weight:400}
+@media(max-width:640px){.log div{grid-template-columns:1fr;gap:5px}}
+
+/* FULL BLEED figures — the document's plates run edge to edge */
+figure{margin:clamp(34px,5vh,60px) 0;max-width:560px}
+figure img{display:block;width:100%;height:auto;filter:contrast(1.02) brightness(1.03)}
+figcaption{margin-top:12px;font-size:12.5px;color:var(--faint);font-weight:300;max-width:52ch}
+figcaption b{color:var(--orange);font-weight:400;font-family:"SF Mono",monospace;
+  font-size:11.5px;letter-spacing:.1em}
+
+footer{border-top:1px solid var(--line);margin-top:clamp(70px,11vh,130px);
+  padding:34px 0 90px;font-size:12px;color:var(--faint)}
+
+/* ---- glitch, ported from the corporate wordmark ----
+   Two duplicate layers behind the type, clipped to random bands and nudged
+   a few pixels for one frame at a time. steps(1) is what makes it snap
+   rather than slide. */
+h1.glitch{position:relative}
+h1.glitch::before,h1.glitch::after{
+  content:attr(data-t);position:absolute;left:0;top:0;width:100%;overflow:hidden;
+  white-space:nowrap;pointer-events:none}
+/* mono headline: the glitch layers separate by tone, not by hue — a light
+   ghost and a dark one, which reads as a print misregistration rather than
+   an RGB channel split */
+h1.glitch::before{color:#8f8c82;z-index:-1;animation:g1 3.2s infinite steps(1)}
+h1.glitch::after{color:#c9c5b9;z-index:-2;animation:g2 2.7s infinite steps(1)}
+@keyframes g1{0%,92%{clip-path:inset(0 0 100% 0);transform:none}
+ 93%{clip-path:inset(12% 0 61% 0);transform:translate(-4px,-2px)}
+ 95%{clip-path:inset(52% 0 21% 0);transform:translate(3px,1px)}
+ 97%{clip-path:inset(80% 0 4% 0);transform:translate(-2px,2px)}
+ 98%,100%{clip-path:inset(0 0 100% 0);transform:none}}
+@keyframes g2{0%,94%{clip-path:inset(0 0 100% 0);transform:none}
+ 95%{clip-path:inset(30% 0 40% 0);transform:translate(4px,2px)}
+ 97%{clip-path:inset(65% 0 15% 0);transform:translate(-3px,-1px)}
+ 98%,100%{clip-path:inset(0 0 100% 0);transform:none}}
+@media (prefers-reduced-motion:reduce){h1.glitch::before,h1.glitch::after{display:none}}
+
+/* two plates side by side: they are the same shot at the same distance,
+   so they read as a pair rather than two separate interruptions */
+/* three plates in a row: WAL, SUP and HLV are the same shot at the same
+   distance, so they read as one set of readings rather than three
+   separate interruptions */
+.figpair{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(12px,1.6vw,22px);
+  margin:clamp(34px,5vh,60px) 0;max-width:1180px}
+.figpair.four{grid-template-columns:repeat(4,1fr);max-width:1460px}
+.figpair.two{grid-template-columns:1fr 1fr;max-width:1100px}
+.figpair.two img{background:#fff}
+.figpair figure{margin:0;max-width:none}
+@media(max-width:1100px){.figpair.four{grid-template-columns:1fr 1fr}}
+@media(max-width:900px){.figpair{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.figpair{grid-template-columns:1fr}}
+
+/* ---- lightbox: plates open full size, since the row shows them small ---- */
+figure img{cursor:zoom-in}
+#lb{position:fixed;inset:0;z-index:300;display:none;place-items:center;
+  background:rgba(18,17,13,.94);padding:clamp(18px,4vw,56px);cursor:zoom-out}
+#lb.on{display:grid}
+#lb img{max-width:100%;max-height:82vh;height:auto;display:block;margin:0 auto;
+  box-shadow:0 40px 90px rgba(0,0,0,.6)}
+#lb .cap{margin:16px auto 0;max-width:56ch;text-align:center;color:#cfccc2;
+  font-size:13.5px;line-height:1.45}
+#lb .cap b{color:var(--orange);font-family:"SF Mono","Courier New",monospace;
+  font-size:12px;letter-spacing:.1em;font-weight:400}
+#lb .x{position:fixed;top:18px;right:22px;font-size:11px;letter-spacing:.24em;
+  text-transform:uppercase;color:#8d8a80}
+@media (prefers-reduced-motion:no-preference){#lb.on img{animation:lbin .18s ease-out}}
+@keyframes lbin{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+
+/* ---- split hero: paper on the left, the photograph on the right ----
+   The terrazzo is nearly white, so the empty panel reads as the same
+   surface continuing rather than a separate block. */
+/* minmax(0,1fr) or the nowrap headline's min-content width blows the
+   column past half and squeezes the photograph into a strip */
+/* the frame is portrait and uncropped, so it needs a taller, wider panel
+   to render at the size a cropped one did */
+.hero{display:grid;grid-template-columns:minmax(0,0.82fr) minmax(0,1.18fr);
+  min-height:min(94svh,1000px);align-items:center}
+.hero-txt{padding:clamp(32px,5vh,70px) clamp(20px,3vw,48px)}
+/* cropped to fill the panel: the watch sits low-right in the frame, so the
+   focal point is pulled that way to keep it centred in the visible area */
+.hero-img{align-self:stretch;min-height:min(94svh,1000px);width:100%;
+  background-size:cover;background-position:52% 58%;background-repeat:no-repeat}
+.hero .standfirst{max-width:42ch}
+@media(max-width:820px){
+  .hero{grid-template-columns:1fr;min-height:0}
+  .hero-img{min-height:56svh;order:-1;background-size:cover;background-position:58% 46%}
+  .hero-txt{padding-top:clamp(28px,5vh,48px)}
+}
+
+/* ---- calls to action ---- */
+.acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:clamp(20px,2.8vh,34px)}
+.cta{display:inline-block;padding:13px 22px;background:var(--ink);color:#f4f2ec !important;
+  font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;font-weight:700;
+  text-decoration:none;border:1px solid var(--ink);transition:.16s}
+.cta:visited{color:#f4f2ec}
+.cta:hover{background:var(--orange);border-color:var(--orange);color:#fff !important}
+.cta.ghost{background:transparent;color:var(--ink) !important;border-color:var(--rule)}
+.cta.ghost:hover{background:transparent;border-color:var(--ink);color:var(--ink) !important}
+.say{line-height:1.5}
+
+/* the model designation reads as a marked passage: the accent behind it
+   rather than in it. The full stop stays outside, on the paper. */
+.instructions{display:flex;flex-wrap:wrap;align-items:baseline;gap:14px;
+  margin:26px 0 4px;padding:14px 0;border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule)}
+.instructions span{font-family:"SF Mono",ui-monospace,monospace;font-size:10px;
+  letter-spacing:.24em;text-transform:uppercase;color:var(--dim)}
+.instructions a{font-weight:600;color:var(--ink);text-decoration:none;
+  border-bottom:2px solid var(--orange);padding-bottom:1px}
+.instructions a:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
+
+mark.hl{background:var(--orange);color:#fff;padding:.04em .16em .12em;
+  box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:400}
+
+/* nav */
+nav .div{color:var(--orange);font-weight:400}
+/* standfirst: balanced lines, no orphaned words, and the two lines sit as
+   one block rather than two paragraphs */
+.hero .standfirst{max-width:none;text-wrap:balance;white-space:nowrap;
+  font-size:clamp(15px,1.42vw,20px)}
+.hero .standfirst.second{white-space:normal}
+.hero .standfirst.second{max-width:34ch;margin-top:clamp(12px,1.5vh,20px)}
+.hero .standfirst.second br{display:inline}
+@media(max-width:1100px){.hero .standfirst.second br{display:none}}
+@media(max-width:700px){.hero .standfirst{white-space:normal}}
+
+/* ---- reveal on scroll ----
+   Sections and plates rise a few pixels into place as they enter view.
+   IntersectionObserver only, no scroll handler: the browser does the work
+   and nothing runs while you sit still. Anything above the fold is shown
+   immediately, and the whole thing is inert under reduced-motion. */
+.rv{opacity:0;transform:translateY(22px);
+  transition:opacity 1.15s cubic-bezier(.16,.68,.3,1),
+             transform 1.15s cubic-bezier(.16,.68,.3,1)}
+.rv.in{opacity:1;transform:none}
+.rv.d1{transition-delay:.13s}
+.rv.d2{transition-delay:.26s}
+.rv.d3{transition-delay:.39s}
+@media (prefers-reduced-motion:reduce){
+  .rv{opacity:1 !important;transform:none !important;transition:none}
+}
+/* no JS: nothing should stay invisible */
+.no-js .rv{opacity:1;transform:none}
+</style>
+</head>
+<body>
+
+<nav>
+  <span><a href="https://btctech.xyz">BTC&nbsp;TECHNOLOGIES</a> &nbsp;/&nbsp; <b class="div">DIV-001</b></span>
+  <span class="tip mono">FY BLOCK <b class="seg" id="tip">------</b></span>
+</nav>
+
+<div class="hero">
+  <div class="hero-txt">
+  <h1 class="glitch" data-t="Watch your Bitcoin">Watch your Bitcoin</h1>
+  <p class="standfirst"><mark class="hl">BWATCH bw–1</mark>. A&nbsp;wristwatch&nbsp;that&nbsp;keeps&nbsp;Bitcoin's&nbsp;time.</p>
+  <p class="standfirst second">No app, no account, no custodian.<br>
+    Feel the pulse of the timechain.</p>
+  <div class="acts">
+    <a class="cta" href="#genesis">Reserve a Genesis Nº</a>
+    <a class="cta ghost" href="mailto:hello@bwatch.xyz?subject=STANDARD%20EDITION">Shop a standard edition</a>
+  </div>
+  <p class="say">Genesis 21 is the first edition. Further editions to follow.<br>
+    Say <a href="mailto:hello@bwatch.xyz">hello@btctech.xyz</a></p>
+  </div>
+  <div class="hero-img" style="background-image:url('img/hero.jpg')"></div>
+</div>
+
+<div class="col">
+  <h2><i>00</i> Abstract</h2>
+  <p>BWATCH is a wearable instrument for the timechain. It shows the
+    height of the Bitcoin timechain, difficulty epochs, halvings, derives issued supply on-device
+    from the block height, carries a watch-only wallet that holds no key, and vibrates once for every block the
+    network finds — roughly one hundred and forty-four times a day. At the moment this page
+    loaded, the tip stood at <span class="live" id="tipa">······</span>.</p>
+
+  <h2><i>01</i> Introduction</h2>
+  <p class="lead">Every watch keeps somebody's time.</p>
+  <p>Conventional timekeeping rests on a schedule maintained by parties who may adjust it, and
+    which the wearer is required to trust. Bitcoin keeps a different clock: proof of work, one
+    block at a time, at an average interval held near ten minutes by difficulty adjustment. That
+    clock has produced a block roughly every ten minutes since January 2009, <b>without an
+    operator and without permission</b>.</p>
+  <p>It has never been early. It has never been late. It has simply continued.</p>
+  <p>This is a watch for that clock. <b>It is not a smartwatch.</b> No apps, no notifications, no
+    account, no cloud, no opinion about your step count. Nine instrument modes, four buttons, and
+    one job: to put the state of Bitcoin on your wrist.</p>
+  <p class="triad">Time is scarce. Bitcoin is scarce.<br><b>Bitcoin is time.</b></p>
+
+
+
+  <h2><i>02</i> The instrument</h2>
+  <h3>Nine modes.<br><em>One face.</em></h3>
+  <ul>
+    <li><b>HGT</b>block height, with the last block's reward, the pool that found it, the retarget
+      estimate, the chain's measured minutes per block, how long the current block has stood, and
+      the mempool backlog.</li>
+    <li><b>PRC</b>price, in six currencies.</li>
+    <li><b>SAT</b>satoshis per unit of fiat, with Moscow Time in the box.</li>
+    <li><b>CAP</b>market capitalisation, and what share of gold's it has taken.</li>
+    <li><b>FEE</b>sat/vB at high, medium and low priority, to two decimals — a quiet mempool runs
+      below one sat per byte, and 0.25 is not 0.</li>
+    <li><b>SUP</b>every coin issued and every coin still to come, to the hundredth, derived
+      on-device — one climbing, one falling, both stepping on each block.</li>
+    <li><b>HLV</b>the halving almanac: dates and subsidies for the next six halvings.</li>
+    <li><b>WAL</b>balance, receive QR, Lightning QR, and the last payment received. Hold DOWN to
+      hide the numbers.</li>
+    <li><b>JOE</b>time, day, date. Nothing else — for when you would rather not be asked what
+      you are wearing.</li>
+  </ul>
+  <p>The grammar is deliberately small. <b>MODE selects the instrument, UP turns its crown.</b>
+    Every reading is live, computed on-device, or explicitly labelled stale. The watch never
+    displays a number it cannot defend.</p>
+
+  <p class="instructions"><span>Instructions</span>
+    <a href="bwatch-manual.html">The manual &mdash; every mode, every button, in six
+    minutes</a></p>
+
+<div class="figpair four">
+  <figure>
+    <img loading="lazy" decoding="async" src="img/fig1-price.jpg" alt="Price mode in raking light">
+    <figcaption><b>FIG. 1</b> &nbsp; PRC mode. 71,691 USD per coin, up 8.6% on the day. Six currencies sit on the dial.</figcaption>
+  </figure>
+  <figure>
+    <img loading="lazy" decoding="async" src="img/fig2-supply.jpg" alt="Supply mode, percent of 21 million mined">
+    <figcaption><b>FIG. 2</b> &nbsp; SUP mode. 20.07 million issued, 95.59% of all there will ever be — arithmetic the watch performs itself.</figcaption>
+  </figure>
+  <figure>
+    <img loading="lazy" decoding="async" src="img/fig3-wallet.jpg" alt="Wallet balance and a received payment">
+    <figcaption><b>FIG. 3</b> &nbsp; WAL mode. 700,000 sats, and a receipt for the payment that arrived while the watch was watching.</figcaption>
+  </figure>
+  <figure>
+    <img loading="lazy" decoding="async" src="img/fig4-fee.jpg" alt="Fee mode in raking light">
+    <figcaption><b>FIG. 4</b> &nbsp; FEE mode. 3 sat/vB at high priority; the dial steps down through medium and low.</figcaption>
+  </figure>
+</div>
+
+  <h2><i>03</i> Claims</h2>
+  <h3>Measured, <em>not promised.</em></h3>
+  <dl>
+    <dt>Block height</dt>
+    <dd>On a network the height is exact — fetched, not inferred, and refreshed every fifteen
+      minutes. Off it, the watch falls back to dead reckoning: it counts forward at the epoch's
+      measured block time, and the face
+      stops claiming to know the tip — the unit line becomes an estimate with its own error bar,
+      <b>EST +36 BLK +/-6</b> after six hours offline. Blocks arrive as a Poisson process, so the
+      uncertainty grows as the square root of the blocks estimated: six hours of guessing is
+      thirty-six blocks and about six of error, a full day is one hundred and forty-four blocks
+      and about twelve. The watch would rather show you the size of its ignorance than a confident
+      number that is quietly wrong.</dd>
+    <dt>Payment detection</dt>
+    <dd>Press UP in wallet mode and the receive QR appears — a watch-only wallet cannot spend, but
+      it can be paid. The watch then stands watch for two minutes, polling the address it just
+      showed, and buzzes the moment sats land. This works even in a parking lot at 1.3% battery.</dd>
+    <dt>Lightning</dt>
+    <dd>LNURL-enabled: press UP again and the watch requests an invoice from your Lightning
+      address, renders it, and polls for settlement. Where the provider supports LNURL-verify it
+      buzzes three times within seconds of being paid.</dd>
+    <dt>Supply</dt>
+    <dd>Computed on the watch from block height alone. No API is involved; the height is the calendar.</dd>
+    <dt>Privacy</dt>
+    <dd>Hold DOWN in wallet mode and the balance and last payment go behind dashes. The receive
+      QR still works — being paid is not the private part.</dd>
+    <dt>Clock</dt>
+    <dd>v3 has no dedicated real-time clock, just the ESP32 and a crystal, and it ran about three
+      minutes fast a day. The watch now re-anchors to network time every six hours on the back of
+      a fetch it was making anyway, so the error stays under a minute.</dd>
+    <dt>Keys</dt>
+    <dd>Watch-only, from a zpub. It derives addresses; it cannot sign. Losing the watch loses nothing.</dd>
+  </dl>
+
+  <h2 id="genesis"><i>04</i> Editions</h2>
+  <h3>Two editions.<br>Both <em>made to order.</em></h3>
+  <p>Both are open now. Genesis 21 is twenty-one units in orange anodised aluminium, machined and
+    finished in a single batch, numbered 1 to 21; each caseback is engraved with its number and
+    the block that confirmed its payment, so every watch is a timestamp of its own purchase. When
+    the twenty-one are gone they are gone. The standard edition is natural bead-blasted aluminium,
+    unnumbered, running the same firmware and carrying the same instrument.</p>
+  <dl>
+    <dt>Genesis 21 — <mark class="hl">1,000,000 sats</mark></dt>
+    <dd>Orange anodised, numbered, block-engraved caseback. Twenty-one units, then never again.
+      Three weeks lead time.</dd>
+    <dt>Standard edition — <mark class="hl">500,000 sats</mark></dt>
+    <dd>Natural bead-blasted aluminium, unnumbered. Built in batches as orders come in.
+      Four to six weeks lead time.</dd>
+  </dl>
+  <p>Reserve a number at
+    <a href="mailto:hello@bwatch.xyz?subject=GENESIS%2021">hello@btctech.xyz</a>.</p>
+  <p><b>Nothing is held in stock.</b> Each watch is assembled, flashed and field-verified by hand
+    after it is paid for. <b>Pure proof of work.</b></p>
+  <p>Priced in satoshis, paid in bitcoin, on-chain or over Lightning. No cards, no accounts,
+    no custodian.</p>
+
+  <h2><i>05</i> Specifications</h2>
+  <dl>
+    <dt>Case</dt><dd>Armadillonium CNC aluminium, bead-blasted. 40.40 × 50.35 × 14.55 mm.
+      Four M2 hex socket fasteners, counterbored. 22 mm lugs.</dd>
+    <dt>Display</dt><dd>200 × 200 one-bit e-paper, 27.6 mm active. No backlight. Holds its image
+      with the power off.</dd>
+    <dt>Platform</dt><dd>Watchy by SQFMI, open hardware. ESP32-S3, WiFi, RTC, accelerometer.</dd>
+    <dt>Timekeeping</dt><dd>RTC disciplined by NTP every six hours. Block height is fetched, never inferred, while the network is reachable.</dd>
+    <dt>Haptics</dt><dd>One tick per block. Two quick pulses for a $1,000 rise, one long for a fall.</dd>
+    <dt>Battery</dt><dd>Multi-day on the wrist, deep sleep between minutes. Always awake when docked.</dd>
+    <dt>Data</dt><dd>mempool.space, blockstream.info, Coinbase market data, alternative.me —
+      or your own node.</dd>
+    <dt>Setup</dt><dd>From your phone, through the watch's own WiFi portal. Three networks
+      remembered and roamed. No app, no account, no mailing list.</dd>
+    <dt>Water resistance</dt><dd>Rain proof, not swim proof. It is, however, fully fiat-proof.</dd>
+  </dl>
+
+  <div class="figpair two">
+    <figure>
+      <img loading="lazy" decoding="async" src="img/fig5-case.png" alt="Case dimensions, three views">
+      <figcaption><b>FIG. 5</b> &nbsp; Case dimensions. 43.6 mm across the lugs, 40.4 mm across
+        the body, 50.36 mm tall, 14.55 mm thick, 24.05 mm at the strap.</figcaption>
+    </figure>
+    <figure>
+      <img loading="lazy" decoding="async" src="img/fig6-board.png" alt="Board layout, annotated">
+      <figcaption><b>FIG. 6</b> &nbsp; Board layout: four tactile buttons, accelerometer, real-time
+        clock, vibration motor, cell connector, USB-serial.</figcaption>
+    </figure>
+  </div>
+  <p style="font-size:14px">Drawings by SQFMI, from the
+    <a href="https://watchy.sqfmi.com">Watchy</a> open-hardware documentation, reproduced under
+    its licence.</p>
+
+  <h2><i>06</i> Field log</h2>
+  <h3>Twenty-five faults,<br>all found by <em>wearing it.</em></h3>
+  <p>None of these appeared on a bench. Each one turned up in ordinary use — on a wrist, in a
+    parking lot, halfway through a purchase — which is the argument for wearing a thing you intend
+    to sell. A product page that only lists features is hiding something, so here are five, in
+    plain terms.</p>
+  <div class="log">
+    <div><b>01</b><span><b>The calendar was nine years wrong.</b> The clock kept perfect time, so
+      nothing looked amiss. It surfaced only when the halving almanac — which projects future
+      halvings from today's date — announced that the 2028 halving would happen in 2037. The watch
+      now re-anchors its clock to network time every few hours.</span></div>
+
+    <div><b>02</b><span><b>The balance was missing my change.</b> After spending from the wallet,
+      the watch reported far less than it should. It was scanning the addresses that receive
+      payments, but not the separate branch where a spend's change comes back — so the change was
+      invisible. It now walks both.</span></div>
+
+    <div><b>03</b><span><b>It froze while checking the wallet.</b> A balance check can query sixty
+      addresses in sequence, and nothing was listening to the buttons while it worked. Pressing
+      MODE did nothing until it finished. A press now cancels the scan and does what you asked.</span></div>
+
+    <div><b>04</b><span><b>It claimed to be LIVE when it wasn't.</b> The face marked data fresh for
+      a full hour, though it refreshes every fifteen minutes — so three failed updates in a row
+      still read as current. It now says LIVE for twenty minutes, then states the age in
+      minutes.</span></div>
+
+    <div><b>05</b><span><b>The battery would not charge — except it was already full.</b> It sat
+      at 71% through a night, a day, and a wall charger. Three explanations were wrong before the
+      right one: the library's constant for reading the battery pin does not match this board, so a
+      full cell reported 3.92 V and the watch believed it. It now learns what full reads on the
+      board it is fitted to, once, and works from that.</span></div>
+
+    <div><b>06</b><span><b>The block height ran ahead of the chain.</b> Between fetches it counted
+      forward at the chain's measured pace, so the number climbed a block at ten minutes and fell
+      back when the next fetch disagreed. A block counter that goes backwards is worse than one
+      that lags, so it now shows what it was told until an update has actually failed.</span></div>
+
+    <div><b>07</b><span><b>One dial moved everything.</b> All eight modes shared a single dial
+      position, so stepping through fee priorities silently wound the halving calendar forward by
+      two epochs. Each instrument now remembers its own.</span></div>
+  </div>
+
+  <h2><i>07</i> The shore</h2>
+  <h3>Shell money, and a chain<br>that <em>doesn't need you.</em></h3>
+  <p>An afternoon at the tideline, because a watch that only ever appears on a countertop is a
+    watch nobody has actually used. Shells were money long before coins were: valuable while they
+    were hard to gather, worthless once they weren't. The sand is the other half of the argument —
+    the chain keeps counting whether the instrument is on a wrist, in a drawer, or half-buried and
+    ignored.</p>
+
+  <div class="figpair two">
+    <figure>
+      <img loading="lazy" decoding="async" src="img/fig7-sand.jpg" alt="The watch half covered in sand, still reading the tip">
+      <figcaption><b>FIG. 7</b> &nbsp; Block 963,766, read through the dust. The chain does not
+        need the watch, or you, or anyone's attention. It counts either way.</figcaption>
+    </figure>
+    <figure>
+      <img loading="lazy" decoding="async" src="img/fig8-shells.jpg" alt="The watch among wet pebbles, supply mode">
+      <figcaption><b>FIG. 8</b> &nbsp; 20.07 million issued, among a few million pebbles.
+        Only one of these was ever scarce by arithmetic.</figcaption>
+    </figure>
+  </div>
+
+  <div class="figpair two">
+    <figure>
+      <img loading="lazy" decoding="async" src="img/fig9-pebbles.jpg" alt="The watch on sand beside two shells">
+      <figcaption><b>FIG. 9</b> &nbsp; Shell money was the first money, and it failed for the
+        reason all money fails: it became easy to get. Twenty-one million, and no shore to gather
+        more from.</figcaption>
+    </figure>
+    <figure>
+      <img loading="lazy" decoding="async" src="img/fig10-stone.jpg" alt="Price mode, propped against a stone at low sun">
+      <figcaption><b>FIG. 10</b> &nbsp; 16:41, propped against a stone, two hours out of network
+        range. The corner reads <b>OLD 2H</b> — the watch would rather admit the number is stale
+        than quietly pretend it is current.</figcaption>
+    </figure>
+  </div>
+
+  <h2><i>08</i> Colophon</h2>
+  <p>BWATCH bw–1 is DIV-001 of <a href="https://btctech.xyz">BTC Technologies</a>, a conglomerate
+    of one. Built on <a href="https://watchy.sqfmi.com">Watchy</a> by SQFMI. Inspired by
+    <a href="https://dergigi.com/2021/01/14/bitcoin-is-time/">Bitcoin is Time</a>. Data by
+    <a href="https://mempool.space">mempool.space</a>. Drawings generated from
+    the machined part; see the <a href="bwatch-3d.html">viewer</a>.</p>
+  <p>Firmware and this page are MIT licensed. <b>Build your own</b>: everything is on
+    <a href="https://github.com">GitHub</a>, free, forever. The editions are for people who would
+    rather have one made.</p>
+  <p>No cookies, no trackers, no accounts. This page is one hand-written file.</p>
+
+  <footer class="mono">© BLOCK <span id="tip2">······</span> — TICK TOCK NEXT BLOCK</footer>
+</div>
+
+<script>
+(function(){
+  var h=0;
+  function tick(){
+    fetch('https://mempool.space/api/blocks/tip/height').then(function(r){return r.text()})
+    .then(function(t){var n=parseInt(t,10); if(!(n>h))return; h=n;
+      var s=n.toLocaleString();
+      ['tip','tip2'].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=n;});
+      var a=document.getElementById('tipa'); if(a)a.textContent=s;
+    }).catch(function(){});
+  }
+  tick(); setInterval(tick,20000);
+})();
+</script>
+<div id="lb" role="dialog" aria-modal="true" aria-label="Enlarged figure">
+  <span class="x">Click anywhere or press Esc to close</span>
+  <div><img id="lbimg" alt=""><div class="cap" id="lbcap"></div></div>
+</div>
+
+<script>
+(function(){
+  var lb=document.getElementById('lb'), im=document.getElementById('lbimg'),
+      cp=document.getElementById('lbcap');
+  document.querySelectorAll('figure img').forEach(function(img){
+    img.addEventListener('click', function(){
+      im.src=img.src; im.alt=img.alt||'';
+      var f=img.closest('figure'), c=f && f.querySelector('figcaption');
+      cp.innerHTML=c?c.innerHTML:'';
+      lb.classList.add('on');
+      document.body.style.overflow='hidden';
+    });
+  });
+  function close(){ lb.classList.remove('on'); document.body.style.overflow=''; im.src=''; }
+  lb.addEventListener('click', close);
+  addEventListener('keydown', function(e){ if(e.key==='Escape') close(); });
+})();
+</script>
+
+<script>
+(function(){
+  if (!('IntersectionObserver' in window)) return;      // old browser: leave visible
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return;
+
+  // what reveals: every numbered section, every plate, and the hero copy
+  // the document is one column of headings and paragraphs — there are no
+  // <section> wrappers, so reveal the elements themselves
+  var targets = [].slice.call(document.querySelectorAll(
+    '.col > h2, .col > h3, .col > p, .col > dl, .col > table, .col > .log,' +
+    '.col > figure, .col > .figpair, .col > footer,' +
+    'figure, .figpair, .hero-txt > *'));
+  targets.forEach(function(el){
+    if (el.closest && el.closest('#lb')) return;        // never the lightbox
+    el.classList.add('rv');
+  });
+
+  // the plates in a row arrive one after another rather than together
+  document.querySelectorAll('.figpair figure').forEach(function(f,i){
+    if (i) f.classList.add('d' + Math.min(i,3));
+  });
+  // each heading pulls its first paragraph along a beat behind it
+  document.querySelectorAll('.col > h2').forEach(function(h){
+    var n = h.nextElementSibling;
+    if (n && n.classList.contains('rv')) n.classList.add('d1');
+  });
+
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, {rootMargin:'0px 0px -12% 0px', threshold:0.05});
+
+  targets.forEach(function(el){
+    // anything already on screen at load shows at once: no flash of blank page
+    var r = el.getBoundingClientRect();
+    if (r.top < innerHeight * 0.92) el.classList.add('in');
+    else io.observe(el);
+  });
+})();
+</script>
+</body>
+</html>
