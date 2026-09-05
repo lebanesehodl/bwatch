@@ -2,10 +2,10 @@
 
 A wristwatch that keeps Bitcoin's time. No app, no account, no custodian.
 
-It shows the height of the Bitcoin timechain, difficulty epochs, halvings, derives
-issued supply on-device from the block height, carries a watch-only wallet that holds
-no key, and vibrates once for every block the network finds — roughly one hundred and
-forty-four times a day.
+Inspired by the digital watches of my youth, bwatch shows the height of the Bitcoin timechain, difficulty epochs, halvings, derives
+issued supply on-device from the block height. It also carries a watch-only wallet that holds
+no key, and vibrates once for every block the network finds, roughly one hundred and
+forty-four times a day. The Bitcoin price is available in 5 different currencies along with SATS/USD (MSCW Time) 
 
 **Site:** [bwatch.xyz](https://bwatch.xyz) · **Manual:** [bwatch.xyz/bwatch-manual.html](https://bwatch.xyz/bwatch-manual.html)
 
@@ -25,21 +25,17 @@ firmware/
 ```
 
 The site is served from the repository root by GitHub Pages. The firmware sits
-alongside it because they are the same project — the page makes claims and the code
+alongside it because they are the same project. The page makes claims and the code
 is where you check them.
 
 No case files are vendored here. BWATCH uses the **Armadillonium**, the official CNC
-anodized aluminium case for Watchy — buy it rather than machine it, and get the files
+anodized aluminium case for Watchy. Buy it rather than machine it, and get the files
 from the people who designed it:
 
 - Case: [shop.sqfmi.com](https://shop.sqfmi.com/products/watchy-cnc-anodized-aluminum-case)
   — top and bottom, four buttons, four M2×6 hex socket screws and a hex wrench, 30 g
 - Files and other designs: [sqfmi/watchy-cases](https://github.com/sqfmi/watchy-cases)
 - Watchy itself is MIT licensed and OSHWA certified
-
-The earlier case files that lived in this repository described a revision that no
-longer matches the watch, and have been removed rather than left to send someone to a
-shop with the wrong drawing.
 
 ---
 
@@ -64,7 +60,7 @@ vendored.
 | Step | Where |
 |---|---|
 | Charge to full | Plug in. Below 95% the watch declines the live dock and sleeps so the cell fills. |
-| WiFi | MENU → Setup WiFi. Holds three networks — add a phone hotspot as one. |
+| WiFi | MENU → Setup WiFi. Holds three networks — add a phone hotspot as one if you'd like. |
 | Wallet | MENU → Setup Wallet. Paste a **zpub**, never a seed. |
 | Timezone | MENU → Set Timezone. |
 | Battery | Fully charged, open About and **hold UP**. Each board learns its own full-charge reading. |
