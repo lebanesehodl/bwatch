@@ -5,7 +5,7 @@ A wristwatch that keeps Bitcoin's time. No app, no account, no custodian.
 Inspired by the digital watches of my youth, bwatch shows the height of the Bitcoin timechain, difficulty epochs, halvings, derives
 issued supply on-device from the block height. It also carries a watch-only wallet that holds
 no key, and vibrates once for every block the network finds, roughly one hundred and
-forty-four times a day. The Bitcoin price is available in 5 different currencies along with SATS/USD (MSCW Time) 
+forty-four times a day. The Bitcoin price is available in 5 different currencies along with SATS/USD (MSCW Time)
 
 **Site:** [bwatch.xyz](https://bwatch.xyz) · **Manual:** [bwatch.xyz/bwatch-manual.html](https://bwatch.xyz/bwatch-manual.html)
 
@@ -18,6 +18,7 @@ index.html              the site's front door
 bwatch.html             the long document: claims, editions, specs, field log
 bwatch-manual.html      the manual: every mode, every button
 img/                    photographs and schematics
+fonts/                  Archivo, self-hosted
 404.html  robots.txt  sitemap.xml  CNAME
 
 firmware/
