@@ -43,13 +43,12 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 h1{font-size:clamp(30px,4.4vw,80px);font-weight:500;letter-spacing:-.022em;line-height:.9;
   text-transform:uppercase;font-synthesis:none;font-kerning:normal}
 h1 span,h1 em{display:block;font-style:normal}
-/* Flush on BOTH edges, without either line changing size. WATCH is five
-   characters against BITCOIN's seven; its visual width is the sum of its
-   advances plus the spacing between glyphs, so tracking it +.0642em over
-   four gaps closes the .345em difference exactly. Measured from
-   fonts/archivo-600.woff2 — it holds only because the face is self-hosted. */
+/* Same size, same tracking, flush left. Two attempts at squaring the right
+   edge — scaling one line, then tracking it — both depended on which face
+   actually loaded, and both broke the moment it was not Archivo. BITCOIN is
+   a longer word than WATCH; the ragged edge is the truth of that. */
 h1{font-weight:600}
-h1 .l1{margin-left:0;letter-spacing:.0642em}
+h1 .l1{margin-left:0}
 h1 .l2{margin-left:0}
 .sub{margin-top:clamp(14px,1.8vh,24px);max-width:none;font-size:clamp(13px,1.24vw,17px);
   font-weight:500;line-height:1.45;text-wrap:balance}
