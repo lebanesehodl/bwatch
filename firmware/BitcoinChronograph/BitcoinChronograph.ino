@@ -2153,10 +2153,10 @@ public:
     display.display(true);
     display.setTextSize(1);
 
-    if (blockHeight > 0) {
-      char h[16]; snprintf(h, 16, "%ld", blockHeight);
-      display.setCursor((200 - (int)strlen(h) * 6) / 2, 140); display.print(h);
-    }
+    // No height here: RTC memory does not survive a power-on, so at boot
+    // there is nothing to show yet — the line was always skipped and the
+    // final refresh redrew the same frame, which read as the animation
+    // stalling. It ends on the words instead.
     display.display(false);                     // full refresh: no ghosts
     delay(600);
   }
