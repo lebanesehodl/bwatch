@@ -204,6 +204,11 @@ RTC_DATA_ATTR double   travelPastPrice = 0;   // real price at the travelled
 RTC_DATA_ATTR long     travelPastFor   = -1;  // height, fetched once on
                                               // arrival. The table is only
                                               // the fallback for no network
+RTC_DATA_ATTR bool     captivePortal = false;  // associated to WiFi, but a
+                                               // portal is intercepting: the
+                                               // watch cannot accept terms,
+                                               // and the face should say so
+                                               // rather than look broken
 RTC_DATA_ATTR bool     travelActive  = false;  // the whole face is simulated
 RTC_DATA_ATTR long     travelHeight  = 0;      // at this height
 RTC_DATA_ATTR uint32_t travelWake    = 0;      // and expires 30 min from here.
@@ -627,7 +632,15 @@ public:
       if (fetchAll()) {
         lastFetchMin = wakeMin;
         failCount = 0; nextTryWake = 0;
+        captivePortal = false;
       } else {
+        // Associated but nothing came back? Probe for a captive portal. The
+        // watch cannot tick a terms box, so the honest thing is to say a
+        // login page is in the way rather than let the data quietly age.
+        if (WiFi.status() == WL_CONNECTED) {
+          WiFiClient plain;
+          captivePortal = portalCheck(plain);
+        }
         // offline: back off 5 -> 10 -> 20 -> 40 -> 60 min between radio
         // attempts instead of a 10s WiFi timeout on every single wake.
         failCount++;
@@ -1187,6 +1200,23 @@ public:
     return ok;
   }
 
+  // A captive portal accepts the association and then intercepts everything.
+  // The standard probe is an endpoint that returns 204 with no body: anything
+  // other than a bare 204 means something is sitting in the way.
+  bool portalCheck(WiFiClient &plain) {
+    HTTPClient http; http.setConnectTimeout(3000);
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    bool portal = false;
+    if (http.begin(plain, "http://connectivitycheck.gstatic.com/generate_204")) {
+      int code = http.GET();
+      portal = (code != 204);
+      Serial.printf("[net] portal probe -> %d%s\n", code,
+                    portal ? "  CAPTIVE" : "");
+    }
+    http.end();
+    return portal;
+  }
+
   double pastPrice(long targetH) {
     if (travelPastFor == targetH && travelPastPrice > 0)
       return travelPastPrice;            // fetched: the real thing
@@ -1344,9 +1374,14 @@ public:
     // ink inside a 25 px cell while '.' advances zero. So identical-length
     // values measured differently and one of them overflowed. Every digit
     // advances the same amount, so compute it: digits x advance, exactly.
-    int total = (int)strlen(whole) * digitAdvance(f) + commas * commaW;
-    if (frac[0]) {
-      total += 1 + 2 + (int)strlen(frac) * digitAdvance(sf);
+    int total;
+    if (frac[0] && digits < 5) {
+      int n = 0;                              // one size, point costs nothing
+      for (const char *p = s; *p; p++) if (*p >= '0' && *p <= '9') n++;
+      total = n * digitAdvance(f);
+    } else {
+      total = (int)strlen(whole) * digitAdvance(f) + commas * commaW;
+      if (frac[0]) total += 1 + 2 + (int)strlen(frac) * digitAdvance(sf);
     }
     if (commasOut) *commasOut = commas;
     return total;
@@ -1398,6 +1433,24 @@ public:
 
     // advance-based, exactly as groupedWidthImpl computes it: ink measurement
     // varies with which digits a value contains and the two disagreed
+    // A short value like 1.60 or 0.25 IS its decimals — shrinking them makes
+    // the number look like it has a footnote. Only split the fraction when
+    // the whole part is long enough to need separators; otherwise set the
+    // lot at one size and let DSEG's own decimal point do the work: it has
+    // zero advance and sits in the preceding digit's corner, the way a real
+    // seven-segment display shows it.
+    if (frac[0] && digits < 5) {
+      int n = 0;
+      for (const char *p = s; *p; p++) if (*p >= '0' && *p <= '9') n++;
+      int adv = digitAdvance(f);
+      int x = (200 - n * adv) / 2 - glyphLeft(f, s[0]);
+      if (x < 0) x = 0;
+      display.setFont(f);
+      display.setCursor(x, y);
+      display.print(s);
+      return;
+    }
+
     int glyphs = (int)strlen(whole);          // dashes and minus signs count
     int wholeW = glyphs * digitAdvance(f) + commas * commaW;
     int fracW  = 0;
@@ -1932,18 +1985,26 @@ public:
 
 
   void drawModeStrip() {
-    int sy = 186, cw = 190 / NUM_MODES;
+    // Nine cells across 190 px is 21.1 each, and integer division threw the
+    // remainder away: the box came out 19 px while a three-character label at
+    // a 2 px inset needs 20, so every label crossed its own border. Compute
+    // each cell's edges from the full width so the remainder is spread, then
+    // centre the label in whatever width that cell actually got.
+    const int sy = 186, x0 = 5, span = 190;
     display.setFont(NULL);
     for (int i = 0; i < NUM_MODES; i++) {
-      int x = 5 + i * cw;
+      int a = x0 + (i * span) / NUM_MODES;
+      int b = x0 + ((i + 1) * span) / NUM_MODES;
+      int w = b - a - 1;                       // 1 px gap between cells
       if (i == dispMode) {
-        display.fillRect(x, sy, cw - 2, 13, fg());
+        display.fillRect(a, sy, w, 13, fg());
         display.setTextColor(bg());
       } else {
-        display.drawRect(x, sy, cw - 2, 13, fg());
+        display.drawRect(a, sy, w, 13, fg());
         display.setTextColor(fg());
       }
-      display.setCursor(x + 2, sy + 3);
+      int tw = strlen(MODE_LABELS[i]) * 6;     // built-in font: 6 px per char
+      display.setCursor(a + (w - tw) / 2, sy + 3);
       display.print(MODE_LABELS[i]);
     }
     display.setTextColor(fg());
@@ -2189,6 +2250,7 @@ public:
     // status tag: LIVE when fresh, OLD nH when stale, DEMO when never
     char tag[8];
     if (walletScanArmed) strcpy(tag, "SCAN");
+    else if (captivePortal) strcpy(tag, "PRTL");  // a login page is in the way
     else if (travelActive) strcpy(tag, "TRVL");   // nothing here is now
     else if (fetchPending)
       strcpy(tag, (dispMode == M_WALT) ? "SCAN" : "FTCH");   // asked for, not
@@ -2675,9 +2737,12 @@ public:
     { int16_t x1,y1; uint16_t w,h;
       display.getTextBounds(title,0,0,&x1,&y1,&w,&h);
       int tx = (200-w)/2;
-      display.setCursor(tx, 178); display.print(title);
-      display.drawFastHLine(6, 181, tx - 10, fg());
-      display.drawFastHLine(tx + w + 4, 181, 194 - (tx + w + 4), fg()); }
+      // centred in the band between the chart's bottom edge (173) and the
+      // mode strip (186): an 8 px line at 176 leaves 2 px either side, where
+      // 178 left 4 above and nothing below
+      display.setCursor(tx, 176); display.print(title);
+      display.drawFastHLine(6, 179, tx - 10, fg());
+      display.drawFastHLine(tx + w + 4, 179, 194 - (tx + w + 4), fg()); }
     drawModeStrip();
 
     // first WAL entry / due rescan: the face above goes to the panel
@@ -2728,11 +2793,11 @@ public:
   }
 
   // ---------------- menu: stock items + Timezone ----------------
-  static const int MY_MENU_LEN = 7;
+  static const int MY_MENU_LEN = 8;
 
   void myShowMenu(byte idx, bool partial) {
     const char *items[MY_MENU_LEN] = {
-      "About BWATCH", "Set Time", "Setup WiFi", "Sync NTP",
+      "About BWATCH", "Set Time", "Setup WiFi", "Networks", "Sync NTP",
       "Setup Wallet", "Set Timezone", "Time Travel"};
     display.setFullWindow();
     display.fillScreen(GxEPD_BLACK);
@@ -2759,6 +2824,81 @@ public:
   }
 
   // Timezone picker, in the style of the stock setTime() app
+  // Saved networks, and how to drop one. The keychain fills up silently —
+  // three slots, most-recent first — and until now the only way to evict a
+  // network was to add three more. UP/DOWN to pick, hold MENU to forget.
+  void showNetworks() {
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    unsigned long t0 = millis();
+    while ((digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
+            digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
+            digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
+            digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) &&
+           millis() - t0 < 2000) delay(20);
+
+    int sel = 0; bool redraw = true;
+    unsigned long lastActivity = millis();
+    display.setFullWindow();
+    while (1) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) { waitAllRelease(); break; }
+
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        if (heldFor(MENU_BTN_PIN, 800) && wifiSsid[sel][0]) {
+          // shuffle the rest up so the list stays packed, newest first
+          for (int i = sel; i < 2; i++) {
+            strncpy(wifiSsid[i], wifiSsid[i+1], 32);
+            strncpy(wifiPass[i], wifiPass[i+1], 64);
+          }
+          wifiSsid[2][0] = 0; wifiPass[2][0] = 0;
+          savePrefs();
+          buzz(40, 2);
+          Serial.println("[wifi] network forgotten");
+          redraw = true; lastActivity = millis();
+        }
+        waitAllRelease();
+      }
+      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + 2) % 3; redraw = true; lastActivity = millis(); delay(150); }
+      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + 1) % 3; redraw = true; lastActivity = millis(); delay(150); }
+      if (millis() - lastActivity > 20000) break;
+
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(GxEPD_BLACK);
+        display.setTextColor(GxEPD_WHITE);
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setCursor(0, 22); display.print("NETWORKS");
+        display.drawFastHLine(0, 30, 200, GxEPD_WHITE);
+        for (int i = 0; i < 3; i++) {
+          int y = 56 + i * 30;
+          if (i == sel) {
+            display.fillRect(0, y - 15, 200, 22, GxEPD_WHITE);
+            display.setTextColor(GxEPD_BLACK);
+          } else display.setTextColor(GxEPD_WHITE);
+          display.setCursor(4, y);
+          if (wifiSsid[i][0]) {
+            char s[15]; snprintf(s, 15, "%d %s", i + 1, wifiSsid[i]);
+            display.print(s);
+          } else {
+            char s[12]; snprintf(s, 12, "%d -empty-", i + 1);
+            display.print(s);
+          }
+        }
+        display.setTextColor(GxEPD_WHITE);
+        display.setFont(NULL);
+        display.setCursor(0, 168); display.print("UP/DOWN  SELECT");
+        display.setCursor(0, 180); display.print("HOLD MENU  FORGET");
+        display.setCursor(0, 192); display.print("BACK  DONE");
+        display.display(true);
+      }
+      delay(30);
+    }
+    myShowMenu(menuIndex, false);
+  }
+
   void showTimezone() {
     guiState = APP_STATE;
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
@@ -3397,10 +3537,11 @@ public:
       case 0: myShowAbout(); break;                     // state, not the radio
       case 1: setTime();   myShowMenu(menuIndex, false); break;
       case 2: mySetupWifi(); break;                     // BACK returns to menu
-      case 3: mySyncNTP(); break;                       // keychain-aware
-      case 4: setupWallet(); break;                     // ends in our menu
-      case 5: showTimezone(); break;                    // ends in our menu
-      case 6: timeTravel(); break;                      // arithmetic, not data
+      case 3: showNetworks(); break;                    // list and forget
+      case 4: mySyncNTP(); break;                       // keychain-aware
+      case 5: setupWallet(); break;                     // ends in our menu
+      case 6: showTimezone(); break;                    // ends in our menu
+      case 7: timeTravel(); break;                      // arithmetic, not data
     }
   }
 
