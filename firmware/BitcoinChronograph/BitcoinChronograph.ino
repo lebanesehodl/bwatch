@@ -307,6 +307,21 @@ RTC_DATA_ATTR float   fxRate[6] = {0};
 // halving almanac two epochs deep ("1.5625 halving in 2037").
 RTC_DATA_ATTR uint8_t  cellSel[NUM_MODES] = {0};
 
+// A tap during a wallet scan used to be missed: pressedButton() reads the pins
+// at that instant, and it is only called once per address — between two HTTPS
+// round trips. Unless the finger happened to be down at exactly that moment,
+// nothing was seen. These latch it instead.
+//
+// They live at FILE scope on purpose. An IRAM_ATTR handler cannot reference a
+// static class member: the linker has to place the member's address as a
+// literal, and in IRAM that literal lands after the instruction using it —
+// "dangerous relocation: l32r: literal placed after use".
+volatile int g_isrPin = 0;
+void IRAM_ATTR btnISR0() { g_isrPin = BACK_BTN_PIN; }
+void IRAM_ATTR btnISR1() { g_isrPin = MENU_BTN_PIN; }
+void IRAM_ATTR btnISR2() { g_isrPin = UP_BTN_PIN;   }
+void IRAM_ATTR btnISR3() { g_isrPin = DOWN_BTN_PIN; }
+
 class BitcoinChrono : public Watchy {
 public:
   BitcoinChrono(const watchySettings &s) : Watchy(s) {}
@@ -975,20 +990,9 @@ public:
   // Long network loops must stay interruptible. The gap-limit scan can make
   // sixty sequential requests; without this the watch ignores every button
   // for the duration, which reads as a freeze.
-  // A tap during a wallet scan used to be missed: pressedButton() reads the
-  // pins at that instant, and it is only called once per address — between
-  // two HTTPS round trips. Unless the finger happened to be down at exactly
-  // that moment, nothing was seen. Latch it in an interrupt instead, so any
-  // press at any point during the scan is caught and acted on.
-  static volatile int  isrPin;   // defined below the class
-  static void IRAM_ATTR btnISR0() { isrPin = BACK_BTN_PIN; }
-  static void IRAM_ATTR btnISR1() { isrPin = MENU_BTN_PIN; }
-  static void IRAM_ATTR btnISR2() { isrPin = UP_BTN_PIN;   }
-  static void IRAM_ATTR btnISR3() { isrPin = DOWN_BTN_PIN; }
-
   void watchButtonsDuringScan(bool on) {
     if (on) {
-      isrPin = 0;
+      g_isrPin = 0;
       int edge = (BTN_ACTIVE == 0) ? FALLING : RISING;
       attachInterrupt(digitalPinToInterrupt(BACK_BTN_PIN), btnISR0, edge);
       attachInterrupt(digitalPinToInterrupt(MENU_BTN_PIN), btnISR1, edge);
@@ -1003,7 +1007,7 @@ public:
   }
 
   int pressedButton() {
-    if (isrPin) { int p = isrPin; isrPin = 0; return p; }   // caught mid-fetch
+    if (g_isrPin) { int p = g_isrPin; g_isrPin = 0; return p; }  // caught
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
     pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
     if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) return BACK_BTN_PIN;
@@ -4299,10 +4303,6 @@ watchySettings settings{
   .gmtOffset = 0,               // your UTC offset in seconds
   .vibrateOClock = false,
 };
-
-// the interrupt latch's storage: a static member needs a definition outside
-// the class, and it must live where an ISR can reach it
-volatile int BitcoinChrono::isrPin = 0;
 
 BitcoinChrono watchy(settings);
 void setup() { watchy.init(); }
