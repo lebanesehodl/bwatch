@@ -1253,6 +1253,22 @@ public:
     return exp(log(loP) + f * (log(hiP) - log(loP)));   // log-linear
   }
 
+  // Seconds from now until a given height. The CURRENT epoch runs at the
+  // measured pace, but everything past the next retarget reverts to ten
+  // minutes — difficulty exists precisely to pull it back. Projecting a fast
+  // epoch across forty more of them put the 2028 halving in January.
+  double secondsUntil(long targetH) {
+    long here = estHeight();
+    if (targetH <= here) return 0;
+    long toRetarget = 2016L - (here % 2016L);        // rest of this epoch
+    long atPace = targetH - here;
+    if (atPace > toRetarget) atPace = toRetarget;
+    double s = atPace * (double)avgBlockSec;
+    long beyond = (targetH - here) - atPace;
+    if (beyond > 0) s += beyond * 600.0;             // the protocol's target
+    return s;
+  }
+
   double modelPrice(long targetH) {
     const double N = 5.82;                 // published fit, not a fact
     const double GENESIS = 1231006505.0;   // 2009-01-03 18:15:05 UTC
@@ -1447,8 +1463,13 @@ public:
     if (frac[0] && digits < 5) {
       int n = 0;
       for (const char *p = s; *p; p++) if (*p >= '0' && *p <= '9') n++;
-      int adv = digitAdvance(f);
-      int x = (200 - n * adv) / 2 - glyphLeft(f, s[0]);
+      int adv  = digitAdvance(f);
+      // centre the INK, both ends: correcting only the leading bearing left
+      // a short value a few pixels left of centre, which is exactly what the
+      // long path already handles
+      int lead = glyphLeft(f, s[0]);
+      int trail = glyphRightGap(f, s[strlen(s) - 1]);
+      int x = (200 - (n * adv - lead - trail)) / 2 - lead;
       if (x < 0) x = 0;
       display.setFont(f);
       display.setCursor(x, y);
@@ -2419,10 +2440,18 @@ public:
         time_t utc = makeTime(currentTime) - settings.gmtOffset;
         if (travelActive)
           utc += (time_t)((travelHeight - blockHeight) * (double)avgBlockSec);
-        time_t when = utc + (time_t)(blocksLeft * (double)avgBlockSec);
+        time_t when = utc + (time_t)secondsUntil(targetH);
         tmElements_t hd; breakTime(when, hd);
-        snprintf(ub, 24, "#%d - %s %d",
-                 era + 1 + t, MN[hd.Month], hd.Day);
+        // Precision the projection can actually carry. Hashrate growth has
+        // landed every halving so far ahead of the ten-minute estimate, and
+        // over tens of thousands of blocks that is weeks, not days — so a
+        // day is only shown once the target is close enough to mean it.
+        if (blocksLeft < 4032)                    // within two epochs: a date
+          snprintf(ub, 24, "#%d - %s %d",
+                   era + 1 + t, MN[hd.Month], hd.Day);
+        else                                      // beyond that: the month
+          snprintf(ub, 24, "#%d - %s %d",
+                   era + 1 + t, MN[hd.Month], tmYearToCalendar(hd.Year));
         unit = ub;
       }
       if (dispMode == M_WALT && haveWallet && walletSats < 1000000ULL)
