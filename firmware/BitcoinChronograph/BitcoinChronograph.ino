@@ -143,7 +143,7 @@ const char *DIFF_URL = "https://mempool.space/api/v1/difficulty-adjustment";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0127
+#define RTC_LAYOUT_MAGIC 0xB17C0128
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -204,6 +204,9 @@ RTC_DATA_ATTR double   travelPastPrice = 0;   // real price at the travelled
 RTC_DATA_ATTR long     travelPastFor   = -1;  // height, fetched once on
                                               // arrival. The table is only
                                               // the fallback for no network
+RTC_DATA_ATTR bool     joeReveal     = false;  // tap UP in JOE and the date
+                                               // line shows the block height
+                                               // for one refresh
 RTC_DATA_ATTR bool     captivePortal = false;  // associated to WiFi, but a
                                                // portal is intercepting: the
                                                // watch cannot accept terms,
@@ -568,6 +571,8 @@ public:
           diffChangeEst = doc["difficultyChange"] | 0.0f;
           float ta = doc["timeAvg"] | 0.0f;      // ms, current epoch
           if (ta > 0) avgBlockSec = constrain(ta / 1000.0f, 300.0f, 1200.0f);
+          if (!(avgBlockSec > 300.0f && avgBlockSec < 1200.0f))
+            avgBlockSec = 600;        // NaN or nonsense: back to ten minutes
         }
       }
       http.end(); }
@@ -2124,6 +2129,16 @@ public:
     medFee = 0; lowFee = 0;
     wakeMin = 0; failCount = 0; nextTryWake = 0; forceFetch = false;
     zpubBuf[0] = 0; lnAddrBuf[0] = 0;
+    // These were added later and never reset here, so a layout change left
+    // them holding whatever occupied those bytes before. A stale avgBlockSec
+    // is the worst of them: every halving date, every estimate and the
+    // MIN/BLK readout are computed from it, so a garbage value moves the
+    // 2028 halving by months without anything looking obviously broken.
+    avgBlockSec = 600;
+    joeReveal = false; captivePortal = false;
+    sawMillion = false;
+    vlogIdx = 0; vlogWake = 0;
+    for (int i = 0; i < 24; i++) vlog[i] = 0;
     prefsLoaded = false;                    // NVS reloads the real ones
     memset(wifiSsid, 0, sizeof(wifiSsid));
     memset(wifiPass, 0, sizeof(wifiPass));
@@ -2137,13 +2152,30 @@ public:
   // No height, no mode strip, no reason for anyone to ask what you are
   // wearing. The chain carries on behind it — ticks still land, fetches still
   // run — you are simply not advertising any of it.
+  // A tiny Bitcoin B, 7 x 11, drawn in rectangles. It sits where the 12
+  // o'clock marker goes: anyone glancing sees a tick, anyone looking sees
+  // what the watch actually is.
+  void drawTinyB(int x, int y) {
+    display.fillRect(x + 1, y + 1, 2, 9, fg());        // stem
+    display.fillRect(x + 1, y + 1, 4, 2, fg());        // upper bowl
+    display.fillRect(x + 4, y + 2, 2, 2, fg());
+    display.fillRect(x + 1, y + 4, 4, 2, fg());        // waist
+    display.fillRect(x + 4, y + 6, 2, 2, fg());        // lower bowl
+    display.fillRect(x + 1, y + 8, 4, 2, fg());
+    display.fillRect(x + 2, y - 1, 1, 2, fg());        // serifs through it
+    display.fillRect(x + 2, y + 10, 1, 2, fg());
+  }
+
+  // JOE. A watch that looks like a watch, using the whole panel: a ring of
+  // sixty minute marks around the edge with the current minute filled, the
+  // time large in the middle, the date beneath. No height, no mode strip, no
+  // reason for anyone to ask what you are wearing — unless they look closely
+  // at the twelve o'clock marker.
   void drawJoeFace() {
     display.fillScreen(bg());
     display.setTextColor(fg());
     RTC.read(currentTime);
 
-    // local time exactly as the status row does it, so JOE and the instrument
-    // faces can never disagree about what the clock says
     time_t lt = makeTime(currentTime);
     if (tzIndex > 0) {
       time_t utc = lt - settings.gmtOffset;
@@ -2151,22 +2183,57 @@ public:
     }
     tmElements_t dt; breakTime(lt, dt);
 
-    char t[8]; snprintf(t, 8, "%02d:%02d", dt.Hour, dt.Minute);
-    centerText(t, 110, &DSEG7_Classic_Bold_32);
+    // --- the ring: sixty marks, five-minute marks longer ---
+    const float CX = 100, CY = 100;
+    for (int m = 0; m < 60; m++) {
+      float ang = (m * 6.0f - 90.0f) * 0.01745329f;
+      bool major = (m % 5 == 0);
+      float r1 = 94, r2 = major ? 84 : 89;
+      int x1 = (int)(CX + cosf(ang) * r1), y1 = (int)(CY + sinf(ang) * r1);
+      int x2 = (int)(CX + cosf(ang) * r2), y2 = (int)(CY + sinf(ang) * r2);
+      if (m == 0) continue;                      // twelve belongs to the B
+      if (m == dt.Minute) {                      // where we are in the hour
+        display.drawLine(x1, y1, (int)(CX + cosf(ang) * 76),
+                                 (int)(CY + sinf(ang) * 76), fg());
+        display.fillCircle((int)(CX + cosf(ang) * 74),
+                           (int)(CY + sinf(ang) * 74), 2, fg());
+      } else if (major) {
+        display.drawLine(x1, y1, x2, y2, fg());
+        display.drawLine(x1 + 1, y1, x2 + 1, y2, fg());
+      } else {
+        display.drawLine(x1, y1, x2, y2, fg());
+      }
+    }
+    drawTinyB(97, 7);                            // the marker at twelve
 
+    // --- the hour, large, and the minutes beneath it ---
+    char hh[4]; snprintf(hh, 4, "%02d", dt.Hour);
+    char mm[4]; snprintf(mm, 4, "%02d", dt.Minute);
+    centerText(hh, 96,  &DSEG7_Classic_Bold_32);
+    centerText(mm, 134, &DSEG7_Classic_Bold_32);
+
+    // --- date, and the battery as a hairline under it ---
     static const char *DOW[7] = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
     static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
                                   "JUL","AUG","SEP","OCT","NOV","DEC"};
     int wd = (dt.Wday >= 1 && dt.Wday <= 7) ? dt.Wday - 1 : 0;
     int mo = (dt.Month >= 1 && dt.Month <= 12) ? dt.Month - 1 : 0;
-    char d[24];
-    snprintf(d, 24, "%s  %d %s", DOW[wd], dt.Day, MON[mo]);
     display.setFont(NULL);
+
+    char d[24];
+    if (joeReveal) {                             // the second easter egg:
+      snprintf(d, 24, "%ld", estHeight());       // tap UP and the chain shows
+    } else {
+      snprintf(d, 24, "%s %d %s", DOW[wd], dt.Day, MON[mo]);
+    }
     { int16_t x1, y1; uint16_t w, h2;
       display.getTextBounds(d, 0, 0, &x1, &y1, &w, &h2);
-      display.setCursor((200 - (int)w) / 2, 136); display.print(d); }
+      display.setCursor((200 - (int)w) / 2, 152); display.print(d); }
 
-    drawBattery(92, 160);        // the one thing a plain watch still needs
+    int pct = batteryPctShown();
+    int bw  = (int)(60.0f * pct / 100.0f + 0.5f);
+    display.drawFastHLine(70, 166, 60, fg());
+    if (bw > 0) display.fillRect(70, 164, bw, 3, fg());
   }
 
   void drawWatchFace() override {
@@ -2174,7 +2241,10 @@ public:
     sanitizeState();
     loadPrefs();
     themeDark = darkNow();
-    if (!buttonWake) wakeMin++;        // one tick per minute-wake
+    if (!buttonWake) {
+      wakeMin++;                       // one tick per minute-wake
+      joeReveal = false;               // the reveal lasts one glance only
+    }
     // hourly discharge sample
     if (wakeMin - vlogWake >= 60 || vlogWake == 0) {
       vlogWake = wakeMin;
@@ -3825,6 +3895,8 @@ public:
           if (dispMode == M_WALT)          // (in WAL: rescan too)
             lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
                               ? wakeMin - WALLET_EVERY_MIN : 0;
+        } else if (dispMode == M_JOE) {
+          joeReveal = !joeReveal;      // the chain, for one glance
         } else if (dispMode == M_WALT) walletToggleView();
         else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
@@ -3924,6 +3996,8 @@ public:
           if (dispMode == M_WALT)          // (in WAL: rescan too)
             lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
                               ? wakeMin - WALLET_EVERY_MIN : 0;
+        } else if (dispMode == M_JOE) {
+          joeReveal = !joeReveal;      // the chain, for one glance
         } else if (dispMode == M_WALT) walletToggleView();   // balance <-> QR
         else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
@@ -4010,6 +4084,8 @@ public:
           if (dispMode == M_WALT)          // (in WAL: rescan too)
             lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
                               ? wakeMin - WALLET_EVERY_MIN : 0;
+        } else if (dispMode == M_JOE) {
+          joeReveal = !joeReveal;      // the chain, for one glance
         } else if (dispMode == M_WALT) walletToggleView();
             else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
