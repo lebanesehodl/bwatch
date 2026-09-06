@@ -143,7 +143,7 @@ const char *DIFF_URL = "https://mempool.space/api/v1/difficulty-adjustment";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0128
+#define RTC_LAYOUT_MAGIC 0xB17C0129
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -204,6 +204,10 @@ RTC_DATA_ATTR double   travelPastPrice = 0;   // real price at the travelled
 RTC_DATA_ATTR long     travelPastFor   = -1;  // height, fetched once on
                                               // arrival. The table is only
                                               // the fallback for no network
+RTC_DATA_ATTR bool     resting       = false;  // the cell ran out and the
+                                               // panel is holding its last
+                                               // image; wake only to check
+                                               // whether a charger arrived
 RTC_DATA_ATTR bool     joeReveal     = false;  // tap UP in JOE and the date
                                                // line shows the block height
                                                // for one refresh
@@ -654,6 +658,13 @@ public:
         nextTryWake = wakeMin + backoff;
       }
     }
+    // Market cap is price x supply(height), so it needs BOTH. On a reboot
+    // each arrives from a different request, and if the price landed first
+    // the cap sat at zero until something happened to call applyCurrency()
+    // again — up to a full cycle later. Recompute once the fetch is done.
+    if (btcPrice > 0 && blockHeight > 0)
+      btcMcapB = btcPrice * supplyBTC(blockHeight) / 1e9;
+
     // the milestone: checked where a new height first becomes known
     if (!sawMillion && blockHeight >= 1000000L) millionScreen();
 
@@ -964,7 +975,35 @@ public:
   // Long network loops must stay interruptible. The gap-limit scan can make
   // sixty sequential requests; without this the watch ignores every button
   // for the duration, which reads as a freeze.
+  // A tap during a wallet scan used to be missed: pressedButton() reads the
+  // pins at that instant, and it is only called once per address — between
+  // two HTTPS round trips. Unless the finger happened to be down at exactly
+  // that moment, nothing was seen. Latch it in an interrupt instead, so any
+  // press at any point during the scan is caught and acted on.
+  static volatile int  isrPin;   // defined below the class
+  static void IRAM_ATTR btnISR0() { isrPin = BACK_BTN_PIN; }
+  static void IRAM_ATTR btnISR1() { isrPin = MENU_BTN_PIN; }
+  static void IRAM_ATTR btnISR2() { isrPin = UP_BTN_PIN;   }
+  static void IRAM_ATTR btnISR3() { isrPin = DOWN_BTN_PIN; }
+
+  void watchButtonsDuringScan(bool on) {
+    if (on) {
+      isrPin = 0;
+      int edge = (BTN_ACTIVE == 0) ? FALLING : RISING;
+      attachInterrupt(digitalPinToInterrupt(BACK_BTN_PIN), btnISR0, edge);
+      attachInterrupt(digitalPinToInterrupt(MENU_BTN_PIN), btnISR1, edge);
+      attachInterrupt(digitalPinToInterrupt(UP_BTN_PIN),   btnISR2, edge);
+      attachInterrupt(digitalPinToInterrupt(DOWN_BTN_PIN), btnISR3, edge);
+    } else {
+      detachInterrupt(digitalPinToInterrupt(BACK_BTN_PIN));
+      detachInterrupt(digitalPinToInterrupt(MENU_BTN_PIN));
+      detachInterrupt(digitalPinToInterrupt(UP_BTN_PIN));
+      detachInterrupt(digitalPinToInterrupt(DOWN_BTN_PIN));
+    }
+  }
+
   int pressedButton() {
+    if (isrPin) { int p = isrPin; isrPin = 0; return p; }   // caught mid-fetch
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
     pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
     if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) return BACK_BTN_PIN;
@@ -2038,6 +2077,90 @@ public:
 
   // ---------------- face (v1 layout, 200x200) ----------------
   // boot splash, shown once per power-on (survives deep sleep via RTC flag)
+  // The last thing it does. E-paper holds its image with the power off, so
+  // a watch that has run out does not have to freeze mid-face or brown out
+  // halfway through a refresh — it can put up something it meant to say and
+  // stop. The height is the one it last saw, which is the point: the chain
+  // carried on without it.
+  void restingScreen() {
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+
+    display.setFont(NULL);
+    display.setTextSize(2);
+    const char *l1 = "BITCOIN";
+    const char *l2 = "IS TIME";
+    display.setCursor((200 - (int)strlen(l1) * 12) / 2, 72); display.print(l1);
+    display.setCursor((200 - (int)strlen(l2) * 12) / 2, 96); display.print(l2);
+    display.setTextSize(1);
+
+    if (blockHeight > 0) {
+      char h[20]; snprintf(h, 20, "%ld", blockHeight);
+      char g[24]; int o = 0, len = strlen(h);
+      for (int i = 0; i < len && o < 22; i++) {          // group the height
+        g[o++] = h[i];
+        int left = len - i - 1;
+        if (left > 0 && left % 3 == 0 && o < 22) g[o++] = ',';
+      }
+      g[o] = 0;
+      display.setCursor((200 - o * 6) / 2, 128); display.print(g);
+      display.setCursor((200 - 15 * 6) / 2, 142);
+      display.print("LAST BLOCK SEEN");
+    }
+    display.setCursor((200 - 16 * 6) / 2, 176); display.print("CHARGE TO RESUME");
+    display.display(false);            // full refresh: this one has to last
+    Serial.println("[batt] resting");
+  }
+
+  // Boot. E-paper cannot move, so nothing here pretends to: each partial
+  // refresh is about a third of a second, and the watch uses them to ASSEMBLE
+  // itself instead — the ring fills a sixth at a time, the marker at twelve
+  // turns out to be a B, then the words arrive. Roughly three seconds, once
+  // per power-on, and it ends on a full refresh so no ghosting is left.
+  void bootAnimation() {
+    const float CX = 100, CY = 100;
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.display(false);                     // clean slate
+
+    // the ring, ten marks at a time
+    for (int step = 20; step <= 60; step += 20) {
+      for (int m = step - 20; m < step; m++) {
+        if (m == 0) continue;                   // twelve is spoken for
+        float a = (m * 6.0f - 90.0f) * 0.01745329f;
+        bool major = (m % 5 == 0);
+        int x1 = (int)(CX + cosf(a) * 94), y1 = (int)(CY + sinf(a) * 94);
+        int x2 = (int)(CX + cosf(a) * (major ? 84 : 89));
+        int y2 = (int)(CY + sinf(a) * (major ? 84 : 89));
+        display.drawLine(x1, y1, x2, y2, GxEPD_WHITE);
+        if (major) display.drawLine(x1 + 1, y1, x2 + 1, y2, GxEPD_WHITE);
+      }
+      display.display(true);
+    }
+
+    drawTinyB(97, 7);                           // and twelve is a B
+    display.display(true);
+
+    display.setFont(NULL);
+    display.setTextSize(2);
+    display.setCursor((200 - 7 * 12) / 2, 86);  display.print("BITCOIN");
+    display.display(true);
+    display.setCursor((200 - 7 * 12) / 2, 110); display.print("IS TIME");
+    display.display(true);
+    display.setTextSize(1);
+
+    if (blockHeight > 0) {
+      char h[16]; snprintf(h, 16, "%ld", blockHeight);
+      display.setCursor((200 - (int)strlen(h) * 6) / 2, 140); display.print(h);
+    }
+    display.display(false);                     // full refresh: no ghosts
+    delay(600);
+  }
+
   void drawSplash() {
     display.fillScreen(bg());
     display.setTextColor(fg());
@@ -2156,7 +2279,7 @@ public:
     // MIN/BLK readout are computed from it, so a garbage value moves the
     // 2028 halving by months without anything looking obviously broken.
     avgBlockSec = 600;
-    joeReveal = false; captivePortal = false;
+    joeReveal = false; captivePortal = false; resting = false;
     sawMillion = false;
     vlogIdx = 0; vlogWake = 0;
     for (int i = 0; i < 24; i++) vlog[i] = 0;
@@ -2258,8 +2381,23 @@ public:
   }
 
   void drawWatchFace() override {
-    if (dispMode == M_JOE) { drawJoeFace(); return; }
     sanitizeState();
+
+    // Out of charge: put up the resting screen once and stop. Checked before
+    // anything else is drawn, because a panel refresh at 3.3 V is exactly
+    // what browns the chip out mid-frame and leaves half an image on the
+    // glass. Once resting, wakes only look for a charger.
+    {
+      int cs = chargeState();
+      if (cs != 0 && resting) {           // plugged in: back to life
+        resting = false;
+      } else if (cs == 0 && battVoltsTrue() < 3.36f) {
+        if (!resting) { resting = true; restingScreen(); }
+        return;                           // nothing else gets drawn
+      }
+    }
+
+    if (dispMode == M_JOE) { drawJoeFace(); return; }
     loadPrefs();
     themeDark = darkNow();
     if (!buttonWake) {
@@ -2290,7 +2428,7 @@ public:
     // BITCOIN IS TIME on every true boot (power-on, reflash, crash) —
     // but never on the once-a-minute deep-sleep wake. Reset reason has
     // real semantics; a sticky RTC flag survives too many resets.
-    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) drawSplash();
+    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) bootAnimation();
     // wallet scans are slow (10 sequential TLS requests) — never do them
     // before the face is on screen. Render first, scan after (see the
     // hook at the end of this function). SCAN in the tag meanwhile.
@@ -2849,8 +2987,12 @@ public:
     if (walletScanArmed && !inWalletScan) {
       inWalletScan = true;
       scanCancelled = 0;
+      watchButtonsDuringScan(true);
       display.display(true);              // instant frame, tag = SCAN
       bool ok = fetchWallet();
+      watchButtonsDuringScan(false);       // disarm on EVERY path out, or the
+                                           // handlers stay live and fire
+                                           // during ordinary button use
       if (ok) lastWalletMin = wakeMin;
       fetchPending = false;                // the sweep is over either way
       Serial.printf("[wallet] sweep %s\n",
@@ -4157,6 +4299,10 @@ watchySettings settings{
   .gmtOffset = 0,               // your UTC offset in seconds
   .vibrateOClock = false,
 };
+
+// the interrupt latch's storage: a static member needs a definition outside
+// the class, and it must live where an ISR can reach it
+volatile int BitcoinChrono::isrPin = 0;
 
 BitcoinChrono watchy(settings);
 void setup() { watchy.init(); }
