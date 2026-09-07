@@ -19,9 +19,16 @@
 
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
+/* Two faces, on purpose. Archivo sets the headings — it is the brand voice and
+   it matches the mark. Running text is Helvetica, which is what the manual
+   uses and what reads more comfortably at paragraph length: wider apertures,
+   less mechanical. */
 body{background:var(--bg);color:var(--ink);
-  font-family:"Archivo","Neue Haas Grotesk Display Pro","Helvetica Neue",Helvetica,Arial,sans-serif;
-  font-size:18px;line-height:1.58;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-size:18px;line-height:1.58;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  padding-bottom:46px}   /* clearance for the fixed credit at the foot */
+h1,h2,h3,h4,.kick,.cta,.eyebrow,nav,.foot-fixed{
+  font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif}
 ::selection{background:var(--orange);color:#fff}
 a{color:var(--ink);text-decoration:underline;text-underline-offset:4px;
   text-decoration-thickness:1px;text-decoration-color:var(--faint)}
@@ -41,8 +48,17 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
 .mark svg{display:block;width:100%;height:auto}
 .mark,.mark:hover{background:none;border:0;text-decoration:none}
 
-nav{position:fixed;top:0;left:0;right:0;z-index:150;display:flex;justify-content:space-between;
-  align-items:center;padding:16px clamp(20px,4vw,44px) 16px clamp(58px,7vw,88px);font-size:10.5px;letter-spacing:.3em;
+/* The company credit sits at the foot now, not the head. It is a colophon,
+   not navigation — and the top of the page has enough on it already. */
+.foot-fixed{position:fixed;left:clamp(20px,4vw,44px);bottom:14px;z-index:150;
+  font-size:10.5px;letter-spacing:.3em;text-transform:uppercase;color:var(--dim);
+  mix-blend-mode:multiply;isolation:isolate;pointer-events:auto}
+.foot-fixed a{color:inherit;text-decoration:none;border-bottom:1px solid transparent}
+.foot-fixed a:hover{border-bottom-color:var(--orange);background:none;color:var(--ink)}
+@media(max-width:760px){ .foot-fixed{font-size:9.5px;letter-spacing:.22em;bottom:10px} }
+
+nav{position:fixed;top:0;left:0;right:0;z-index:150;display:flex;justify-content:flex-end;
+  align-items:center;padding:16px clamp(20px,4vw,44px);font-size:10.5px;letter-spacing:.3em;
   text-transform:uppercase;color:var(--dim);
   /* no scrim: the gradient was washing a pale strip across the top of the
      photograph. The top of the frame is bright terrazzo, so dark type on
@@ -61,8 +77,11 @@ nav .tip b{color:var(--orange);font-weight:700}
 /* only touch the vertical padding: the shorthand was zeroing .col's left
    and right, so the masthead sat flush while the body was indented */
 .top{padding-top:clamp(96px,17vh,190px);padding-bottom:clamp(36px,6vh,72px)}
-h1{margin:0;font-size:clamp(25px,3.5vw,64px);font-weight:700;letter-spacing:-.042em;
-  line-height:1;text-transform:uppercase;white-space:nowrap}
+h1{margin:0;font-size:clamp(40px,6.2vw,116px);font-weight:800;letter-spacing:-.045em;
+  line-height:.94;text-transform:uppercase;
+  /* three lines: the measure is wider than the longest word and narrower
+     than any two, so it breaks WATCH / BITCOIN / ALL DAY on its own */
+  max-width:4.2em}
 h1 b{color:var(--orange)}
 .standfirst{margin:clamp(18px,2.2vh,28px) 0 0;font-size:clamp(18px,1.9vw,24px);
   line-height:1.3;font-weight:300;color:var(--dim);max-width:none}
@@ -73,13 +92,66 @@ h1 b{color:var(--orange)}
 .standfirst.second{margin-top:clamp(4px,.6vh,9px);color:var(--dim)}
 .say{margin-top:clamp(14px,1.8vh,24px);font-size:14px;color:var(--dim)}
 
-h2{display:flex;align-items:baseline;gap:16px;margin:clamp(56px,9vh,110px) 0 20px;
-  scroll-margin-top:84px;   /* the fixed nav must not cover a jumped-to heading */
-  font-size:12px;letter-spacing:.42em;text-transform:uppercase;color:var(--dim);font-weight:400}
+/* The manual's hierarchy, applied here. A numbered chapter head, one idea per
+   block, and every element is a rule, a table, a card or a callout — nothing
+   free-floating. It is easier to read because it is easier to scan. */
+.chead{display:grid;grid-template-columns:auto 1fr;gap:clamp(16px,3vw,36px);
+  align-items:start;margin:clamp(56px,9vh,110px) 0 26px;scroll-margin-top:84px;
+  padding-top:clamp(28px,4vh,48px);border-top:1px solid var(--rule)}
+.chead:first-of-type{border-top:0;padding-top:0}
+.cnum{font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-weight:800;font-size:clamp(40px,7vw,86px);line-height:.8;
+  color:var(--bg);-webkit-text-stroke:2px var(--ink)}
+h2{display:block;margin:0;font-size:clamp(26px,4.6vw,58px);font-weight:800;
+  letter-spacing:-.03em;line-height:.9;text-transform:uppercase}
 h2 i{font-style:normal;color:var(--red);letter-spacing:.3em}
 h3{font-size:clamp(24px,3.4vw,44px);font-weight:700;letter-spacing:-.03em;line-height:1.06;
   margin:0 0 22px;text-transform:none}
 h3 em{font-style:normal;color:var(--orange)}
+
+/* ── the manual's blocks ─────────────────────────────────────────── */
+
+/* claims and specs: a mono key against plain text, on hairlines. Reads as a
+   table of facts rather than a run of prose. */
+dl{margin:0 0 26px;border-top:2px solid var(--ink)}
+dt{font-family:"SF Mono",ui-monospace,"Courier New",monospace;
+  font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--orange);
+  font-weight:700;padding:16px 0 0}
+dd{margin:0 0 16px;padding:4px 0 16px;border-bottom:1px solid var(--rule);
+  color:var(--ink);font-weight:300;max-width:64ch}
+
+/* the field log: numbered the way the manual numbers its steps */
+.log{counter-reset:f;margin:8px 0 26px}
+.log>div{counter-increment:f;display:grid;grid-template-columns:44px 1fr;
+  gap:16px;padding:16px 0;border-top:1px solid var(--rule);align-items:baseline}
+.log>div>b{font-family:"SF Mono",ui-monospace,monospace;font-size:13px;
+  font-weight:700;color:var(--orange)}
+.log>div>span{color:var(--dim);font-weight:300;max-width:62ch}
+.log>div>span b{color:var(--ink);font-weight:600}
+
+/* the mode list: mono key against plain text, one per row, hairline between.
+   The manual's instrument list, which is the clearest thing on that page. */
+ul{list-style:none;margin:0 0 26px;padding:0;border-top:2px solid var(--ink)}
+li{display:grid;grid-template-columns:64px 1fr;gap:18px;padding:14px 0;
+  border-bottom:1px solid var(--rule);align-items:baseline;
+  color:var(--dim);font-weight:300}
+li>b{font-family:"SF Mono",ui-monospace,monospace;font-size:13px;
+  letter-spacing:.12em;color:var(--orange);font-weight:700}
+li>span b{color:var(--ink);font-weight:600}
+
+/* the callout: a double rule, for the one thing per section worth stopping on */
+.note{border:2px solid var(--ink);padding:clamp(18px,3vw,30px);margin:28px 0;
+  position:relative;background:var(--paper);max-width:none}
+.note::after{content:"";position:absolute;inset:5px;border:1px solid var(--ink);
+  pointer-events:none;opacity:.28}
+.note .eyebrow{font-family:"SF Mono",ui-monospace,monospace;font-size:10px;
+  letter-spacing:.26em;text-transform:uppercase;color:var(--dim);
+  display:block;margin-bottom:9px}
+.note p{margin:0;color:var(--ink);font-weight:400}
+
+/* section intros: the manual sets these grey and short, under the head */
+.chead p{margin:14px 0 0;color:var(--dim);font-size:16px;font-weight:300;
+  max-width:62ch}
 p{margin:0 0 18px;color:var(--dim);font-weight:300;max-width:none}
 p b{color:var(--ink);font-weight:400}
 p.lead{font-size:clamp(21px,2.6vw,30px);line-height:1.3;color:var(--ink);font-weight:300;
@@ -90,18 +162,16 @@ p.triad{margin:clamp(26px,4vh,48px) 0 clamp(30px,5vh,56px);
   font-size:clamp(20px,2.4vw,30px);line-height:1.28;color:var(--dim);font-weight:300}
 p.triad b{color:var(--ink);font-weight:400}
 s{color:var(--faint)}
-ul{margin:0 0 18px;list-style:none}
-ul li{margin:0 0 12px;padding-left:74px;text-indent:-74px;color:var(--dim);font-weight:300}
-ul li b{display:inline-block;width:56px;text-indent:0;font-family:"SF Mono",monospace;
-  font-size:12.5px;letter-spacing:.12em;color:var(--ink);font-weight:400}
+
+ul 
+ul 
 .live{background:var(--orange);color:#fff;padding:2px 9px 3px;
   font-family:"SF Mono",monospace;font-size:.74em;letter-spacing:.06em;white-space:nowrap;
   font-weight:700}
 
 dl{margin:0 0 18px}
-dt{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.26em;
-  margin-top:26px;color:var(--ink)}
-dd{margin:8px 0 0;color:var(--dim);font-weight:300;max-width:none}
+
+
 
 .log{font-family:"SF Mono","Courier New",monospace;font-size:14px;line-height:1.55;
   border-top:1px solid var(--line)}
@@ -127,7 +197,8 @@ footer{border-top:1px solid var(--line);margin-top:clamp(70px,11vh,130px);
 h1.glitch{position:relative}
 h1.glitch::before,h1.glitch::after{
   content:attr(data-t);position:absolute;left:0;top:0;width:100%;overflow:hidden;
-  white-space:nowrap;pointer-events:none}
+  /* they must wrap exactly as the h1 does — same text, same measure, same face */
+  white-space:normal;pointer-events:none}
 /* mono headline: the glitch layers separate by tone, not by hue — a light
    ghost and a dark one, which reads as a print misregistration rather than
    an RGB channel split */
@@ -264,9 +335,12 @@ nav .div{color:var(--orange);font-weight:400}
 </a>
 
 <nav>
-  <span><a href="https://btctech.xyz">BTC&nbsp;TECHNOLOGIES</a> &nbsp;/&nbsp; <b class="div">DIV-001</b></span>
   <span class="tip mono">FY BLOCK <b class="seg" id="tip">------</b></span>
 </nav>
+
+<div class="foot-fixed">
+  <a href="https://btctech.xyz">BTC&nbsp;TECHNOLOGIES</a> &nbsp;/&nbsp; <b class="div">DIV-001</b>
+</div>
 
 <div class="hero">
   <div class="hero-txt">
@@ -285,14 +359,14 @@ nav .div{color:var(--orange);font-weight:400}
 </div>
 
 <div class="col">
-  <h2><i>00</i> Abstract</h2>
+  <div class="chead"><div class="cnum">00</div><div><h2>Abstract</h2></div></div>
   <p>BWATCH is a wearable instrument for the timechain. It shows the
     height of the Bitcoin timechain, difficulty epochs, halvings, derives issued supply on-device
     from the block height, carries a watch-only wallet that holds no key, and vibrates once for every block the
     network finds — roughly one hundred and forty-four times a day. At the moment this page
     loaded, the tip stood at <span class="live" id="tipa">······</span>.</p>
 
-  <h2><i>01</i> Introduction</h2>
+  <div class="chead"><div class="cnum">01</div><div><h2>Introduction</h2></div></div>
   <p class="lead">Every watch keeps somebody's time.</p>
   <p>Conventional timekeeping rests on a schedule maintained by parties who may adjust it, and
     which the wearer is required to trust. Bitcoin keeps a different clock: proof of work, one
@@ -303,28 +377,28 @@ nav .div{color:var(--orange);font-weight:400}
   <p>This is a watch for that clock. <b>It is not a smartwatch.</b> No apps, no notifications, no
     account, no cloud, no opinion about your step count. Nine instrument modes, four buttons, and
     one job: to put the state of Bitcoin on your wrist.</p>
-  <p class="triad">Time is scarce. Bitcoin is scarce.<br><b>Bitcoin is time.</b></p>
+  
 
 
 
-  <h2><i>02</i> The instrument</h2>
+  <div class="chead"><div class="cnum">02</div><div><h2>The instrument</h2></div></div>
   <h3>Nine modes.<br><em>One face.</em></h3>
   <ul>
-    <li><b>HGT</b>block height, with the last block's reward, the pool that found it, the retarget
+    <li><b>HGT</b><span>block height, with the last block's reward, the pool that found it, the retarget
       estimate, the chain's measured minutes per block, how long the current block has stood, and
-      the mempool backlog.</li>
-    <li><b>PRC</b>price, in six currencies.</li>
-    <li><b>SAT</b>satoshis per unit of fiat, with Moscow Time in the box.</li>
-    <li><b>CAP</b>market capitalisation, and what share of gold's it has taken.</li>
-    <li><b>FEE</b>sat/vB at high, medium and low priority, to two decimals — a quiet mempool runs
-      below one sat per byte, and 0.25 is not 0.</li>
-    <li><b>SUP</b>every coin issued and every coin still to come, to the hundredth, derived
-      on-device — one climbing, one falling, both stepping on each block.</li>
-    <li><b>HLV</b>the halving almanac: dates and subsidies for the next six halvings.</li>
-    <li><b>WAL</b>balance, receive QR, Lightning QR, and the last payment received. Hold DOWN to
-      hide the numbers.</li>
-    <li><b>JOE</b>time, day, date. Nothing else — for when you would rather not be asked what
-      you are wearing.</li>
+      the mempool backlog.</span></li>
+    <li><b>PRC</b><span>price, in six currencies.</span></li>
+    <li><b>SAT</b><span>satoshis per unit of fiat, with Moscow Time in the box.</span></li>
+    <li><b>CAP</b><span>market capitalisation, and what share of gold's it has taken.</span></li>
+    <li><b>FEE</b><span>sat/vB at high, medium and low priority, to two decimals — a quiet mempool runs
+      below one sat per byte, and 0.25 is not 0.</span></li>
+    <li><b>SUP</b><span>every coin issued and every coin still to come, to the hundredth, derived
+      on-device — one climbing, one falling, both stepping on each block.</span></li>
+    <li><b>HLV</b><span>the halving almanac: dates and subsidies for the next six halvings.</span></li>
+    <li><b>WAL</b><span>balance, receive QR, Lightning QR, and the last payment received. Hold DOWN to
+      hide the numbers.</span></li>
+    <li><b>JOE</b><span>time, day, date. Nothing else — for when you would rather not be asked what
+      you are wearing.</span></li>
   </ul>
   <p>The grammar is deliberately small. <b>MODE selects the instrument, UP turns its crown.</b>
     Every reading is live, computed on-device, or explicitly labelled stale. The watch never
@@ -353,7 +427,7 @@ nav .div{color:var(--orange);font-weight:400}
   </figure>
 </div>
 
-  <h2><i>03</i> Claims</h2>
+  <div class="chead"><div class="cnum">03</div><div><h2>Claims</h2></div></div>
   <h3>Measured, <em>not promised.</em></h3>
   <dl>
     <dt>Block height</dt>
@@ -387,7 +461,7 @@ nav .div{color:var(--orange);font-weight:400}
     <dd>Watch-only, from a zpub. It derives addresses; it cannot sign. Losing the watch loses nothing.</dd>
   </dl>
 
-  <h2 id="genesis"><i>04</i> Editions</h2>
+  <div class="chead" id="genesis"><div class="cnum">04</div><div><h2>Editions</h2></div></div>
   <h3>Two editions.<br>Both <em>made to order.</em></h3>
   <p>Both are open now. Genesis 21 is twenty-one units in orange anodised aluminium, machined and
     finished in a single batch, numbered 1 to 21; each caseback is engraved with its number and
@@ -409,7 +483,7 @@ nav .div{color:var(--orange);font-weight:400}
   <p>Priced in satoshis, paid in bitcoin, on-chain or over Lightning. No cards, no accounts,
     no custodian.</p>
 
-  <h2><i>05</i> Specifications</h2>
+  <div class="chead"><div class="cnum">05</div><div><h2>Specifications</h2></div></div>
   <dl>
     <dt>Case</dt><dd>Armadillonium CNC aluminium, bead-blasted. 40.40 × 50.35 × 14.55 mm.
       Four M2 hex socket fasteners, counterbored. 22 mm lugs.</dd>
@@ -442,7 +516,7 @@ nav .div{color:var(--orange);font-weight:400}
     <a href="https://watchy.sqfmi.com">Watchy</a> open-hardware documentation, reproduced under
     its licence.</p>
 
-  <h2><i>06</i> Field log</h2>
+  <div class="chead"><div class="cnum">06</div><div><h2>Field log</h2></div></div>
   <h3>Twenty-five faults,<br>all found by <em>wearing it.</em></h3>
   <p>None of these appeared on a bench. Each one turned up in ordinary use — on a wrist, in a
     parking lot, halfway through a purchase — which is the argument for wearing a thing you intend
@@ -484,7 +558,7 @@ nav .div{color:var(--orange);font-weight:400}
       two epochs. Each instrument now remembers its own.</span></div>
   </div>
 
-  <h2><i>07</i> The shore</h2>
+  <div class="chead"><div class="cnum">07</div><div><h2>The shore</h2></div></div>
   <h3>Shell money, and a chain<br>that <em>doesn't need you.</em></h3>
   <p>An afternoon at the tideline, because a watch that only ever appears on a countertop is a
     watch nobody has actually used. Shells were money long before coins were: valuable while they
@@ -520,7 +594,7 @@ nav .div{color:var(--orange);font-weight:400}
     </figure>
   </div>
 
-  <h2><i>08</i> Colophon</h2>
+  <div class="chead"><div class="cnum">08</div><div><h2>Colophon</h2></div></div>
   <p>BWATCH bw–1 is DIV-001 of <a href="https://btctech.xyz">BTC Technologies</a>, a conglomerate
     of one. Built on <a href="https://watchy.sqfmi.com">Watchy</a> by SQFMI. Inspired by
     <a href="https://dergigi.com/2021/01/14/bitcoin-is-time/">Bitcoin is Time</a>. Data by
