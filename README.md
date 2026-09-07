@@ -19,19 +19,25 @@ bwatch.html             the long document: claims, editions, specs, field log
 bwatch-manual.html      the manual: every mode, every button
 img/                    photographs and schematics
 fonts/                  Archivo, self-hosted
+brand/                  the mark and lockup, SVG and PDF
+favicon.svg
 404.html  robots.txt  sitemap.xml  CNAME
 
 firmware/
   BitcoinChronograph/   the Arduino sketch and its fonts
+hardware/
+  case/                 the case split into parts, with drawings
 ```
 
 The site is served from the repository root by GitHub Pages. The firmware sits
 alongside it because they are the same project. The page makes claims and the code
 is where you check them.
 
-No case files are vendored here. BWATCH uses the **Armadillonium**, the official CNC
-anodized aluminium case for Watchy. Buy it rather than machine it, and get the files
-from the people who designed it:
+The case is the **Armadillonium**, SQFMI's official CNC anodized aluminium case for
+Watchy. Buy it from them unless you need a colour they do not sell — `hardware/case`
+holds the assembly split into its three parts and the manufacturing drawings that go
+with it, which exist because the Genesis edition is orange and had to be machined.
+The geometry is theirs, under MIT; the drawings are ours.
 
 - Case: [shop.sqfmi.com](https://shop.sqfmi.com/products/watchy-cnc-anodized-aluminum-case)
   — top and bottom, four buttons, four M2×6 hex socket screws and a hex wrench, 30 g
@@ -103,6 +109,15 @@ subsidy is an integer number of satoshis and halving truncates.
 
 The case ships with its own screws and hex wrench, so nothing else is needed. Flash,
 set WiFi, paste a zpub, calibrate the battery once, and it is the same watch.
+
+## The mark
+
+`brand/` holds the mark and the lockup as SVG and PDF, letterforms converted to
+paths. The field is not a generic rounded square: it is the bw-1 case at its true
+proportion — 40.40 × 50.36, corner radius 5.4 — traced from the same STEP file the
+shop machines from, so the mark and the object cannot drift apart.
+
+Orange `#FF3B12` · ink `#14120F` · paper `#F2EFE6` · Archivo SemiBold.
 
 ## Licence
 
