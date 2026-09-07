@@ -31,9 +31,18 @@ body{background:var(--paper);color:var(--ink);
 body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:repeating-linear-gradient(0deg,rgba(0,0,0,.016) 0 1px,transparent 1px 3px)}
 
-.page{display:grid;grid-template-columns:minmax(0,0.82fr) minmax(0,1.18fr);
+.page{position:relative;display:grid;grid-template-columns:minmax(0,0.82fr) minmax(0,1.18fr);
   height:100%;align-items:center}
 .txt{padding:clamp(28px,5vh,64px) clamp(20px,3vw,52px);position:relative;z-index:2}
+/* The mark, top right. The field is the case: 40.40 x 50.36 with a 5.4
+   corner radius, the watch's own proportion. */
+.mark{position:absolute;top:clamp(18px,3.2vh,38px);left:clamp(20px,3vw,52px);
+  z-index:3;display:block;width:clamp(28px,2.8vw,38px);line-height:0}
+.mark svg{display:block;width:100%;height:auto}
+@media(max-width:960px){
+  .mark{top:16px;left:18px;width:30px}
+}
+
 .shot{align-self:stretch;height:100%;background-size:cover;
   background-position:50% 46%;background-repeat:no-repeat;position:relative;z-index:1}
 
@@ -81,10 +90,18 @@ h1 .l2{margin-left:0}
 <body>
 
 <div class="page">
+  <a class="mark" href="/" aria-label="BWATCH">
+    <svg viewBox="0 0 40.4 50.36" xmlns="http://www.w3.org/2000/svg" role="img">
+      <rect x="0" y="0" width="40.4" height="50.36" rx="5.4" ry="5.4" fill="#FF3B12"/>
+      <text x="20.2" y="34.6" text-anchor="middle" fill="#F2EFE6"
+            font-family="Archivo,Helvetica,Arial,sans-serif" font-weight="600"
+            font-size="36">B</text>
+    </svg>
+  </a>
   <div class="txt">
     <div class="kick"><i></i>A timechain instrument</div>
     <h1><span class="l1">Watch</span><em class="l2">Bitcoin</em></h1>
-    <p class="sub"><mark>BWATCH bw&ndash;1</mark> is a wristwatch that keeps<br>
+    <p class="sub"><mark>BWATCH bw&ndash;1</mark>, a wristwatch that keeps<br>
       Bitcoin's time. No app, no account, no custodian.</p>
     <span class="soon">Currently in field testing</span>
     <p class="note">Stay tuned, or say
@@ -107,7 +124,7 @@ h1 .l2{margin-left:0}
   var HEROES = [
     { src:"img/hero-a.jpg", pos:"50% 46%", alt:"BWATCH bw-1 on a sunlit countertop" },
     { src:"img/hero-b.jpg", pos:"50% 52%", alt:"BWATCH bw-1 half covered in sand" },
-    { src:"img/hero-c.jpg", pos:"50% 50%", alt:"BWATCH bw-1 among wet shells" }
+    { src:"img/hero-c.jpg", pos:"50% 50%", alt:"BWATCH bw-1 among wet pebbles" }
   ];
   var h = HEROES[Math.floor(Math.random() * HEROES.length)];
   var el = document.getElementById("shot");
