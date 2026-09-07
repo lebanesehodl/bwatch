@@ -2310,10 +2310,51 @@ public:
     alreadyInMenu = true;
   }
 
-  // JOE. An ana-digi face: an analogue dial and a digital readout side by
-  // side, which is the 1980s arrangement and the one that suits a rectangular
-  // panel. Nothing here comes off the chain — that is the whole point of the
-  // mode. The only tell is the marker at twelve, which is a B.
+  // Stencil numerals. Each digit is a solid slab with its counters cut back
+  // out of it, the way a stencil is made — not a grid of little bricks. At
+  // 86 x 81 on e-paper that is the difference between a number that reads
+  // across a room and one that reads as texture.
+  //
+  //   T   stroke thickness, as a fraction of the digit
+  //   UY  top of the upper counter        LY  top of the lower counter
+  //   UH  counter height — what is left after three strokes
+  void drawStencilDigit(int X, int Y, int W, int H, int d) {
+    const float T = 0.24f;
+    const float UH = (1.0f - 3.0f * T) / 2.0f;
+    const float UY = T, LY = (1.0f + T) / 2.0f;
+    auto fill = [&](float x, float y, float w, float h, uint16_t c) {
+      display.fillRect(X + (int)(x * W + 0.5f), Y + (int)(y * H + 0.5f),
+                       (int)(w * W + 0.5f),     (int)(h * H + 0.5f), c);
+    };
+    // (x, width) of each counter: where the digit is open
+    float ux, uw, lx, lw;
+    bool slab = true;
+    switch (d) {
+      case 0: fill(0,0,1,1,fg()); fill(T,T,1-2*T,1-2*T,bg()); return;
+      case 2: ux=0;   uw=1-T;   lx=T;   lw=1-T;   break;
+      case 3: ux=0;   uw=1-T;   lx=0;   lw=1-T;   break;
+      case 5: ux=T;   uw=1-T;   lx=0;   lw=1-T;   break;
+      case 6: ux=T;   uw=1-T;   lx=T;   lw=1-2*T; break;
+      case 8: ux=T;   uw=1-2*T; lx=T;   lw=1-2*T; break;
+      case 9: ux=T;   uw=1-2*T; lx=0;   lw=1-T;   break;
+      default: slab = false; break;
+    }
+    if (slab) {
+      fill(0,0,1,1,fg());
+      fill(ux,UY,uw,UH,bg());
+      fill(lx,LY,lw,UH,bg());
+      return;
+    }
+    // the three that are strokes rather than a slab
+    if (d == 1) { fill(1-T,0,T,1,fg()); fill(1-2.1f*T,0,1.1f*T,T,fg()); }
+    else if (d == 4) { fill(0,0,T,(1+T)/2,fg()); fill(1-T,0,T,1,fg());
+                       fill(0,(1-T)/2,1,T,fg()); }
+    else if (d == 7) { fill(0,0,1,T,fg()); fill(1-T,0,T,1,fg()); }
+  }
+
+  // JOE. Four digits, each one filling a quarter of the panel, with nothing
+  // drawn between them — the gaps do the dividing. Below them a strip: the
+  // date, the cell as a bar, and the mark. Nothing here comes off the chain.
   void drawJoeFace() {
     display.fillScreen(bg());
     display.setTextColor(fg());
@@ -2325,87 +2366,41 @@ public:
     }
     tmElements_t dt; breakTime(lt, dt);
 
-    // ── the analogue dial, upper left ──────────────────────────────
-    const float DX = 58, DY = 62, DR = 46;
-    display.drawCircle(DX, DY, DR, fg());
-    display.drawCircle(DX, DY, DR - 1, fg());
-    for (int m = 0; m < 60; m++) {
-      float a = (m * 6.0f - 90.0f) * 0.01745329f;
-      bool major = (m % 5 == 0);
-      if (m == 0) continue;                      // twelve belongs to the B
-      float r2 = major ? DR - 8 : DR - 4;
-      display.drawLine(DX + cosf(a) * (DR - 3), DY + sinf(a) * (DR - 3),
-                       DX + cosf(a) * r2,       DY + sinf(a) * r2, fg());
-      if (major)
-        display.drawLine(DX + cosf(a) * (DR - 3) + 1, DY + sinf(a) * (DR - 3),
-                         DX + cosf(a) * r2 + 1,       DY + sinf(a) * r2, fg());
+    // A digit fills most of its quarter but not all of it. The cell gutter and
+    // the gap between quarters were the same 4 px at first, which made the
+    // four digits merge into one grid — the margin is what separates them.
+    const int QW = 98, QH = 90, GUT = 4;
+    const int DW = 86, DH = 81;                // the digit, inside its quarter
+    int digits[4] = { dt.Hour / 10, dt.Hour % 10,
+                      dt.Minute / 10, dt.Minute % 10 };
+    for (int q = 0; q < 4; q++) {
+      int ox = (q % 2) * (QW + GUT) + (QW - DW) / 2;
+      int oy = (q / 2) * (QH + GUT) + (QH - DH) / 2;
+      drawStencilDigit(ox, oy, DW, DH, digits[q]);
     }
-    drawTinyB(DX - 3, DY - DR + 3);              // the marker at twelve
 
-    // hands: a thick hour, a thin minute, drawn as tapered triangles so they
-    // read at this resolution instead of vanishing into single pixels
-    float ha = ((dt.Hour % 12) * 30.0f + dt.Minute * 0.5f - 90.0f) * 0.01745329f;
-    float ma = (dt.Minute * 6.0f - 90.0f) * 0.01745329f;
-    auto hand = [&](float ang, float len, float halfw) {
-      float px = -sinf(ang), py = cosf(ang);     // perpendicular
-      display.fillTriangle(DX + px * halfw, DY + py * halfw,
-                           DX - px * halfw, DY - py * halfw,
-                           DX + cosf(ang) * len, DY + sinf(ang) * len, fg());
-    };
-    hand(ha, DR - 18, 3.4f);
-    hand(ma, DR - 8,  2.2f);
-    display.fillCircle(DX, DY, 3, fg());
-    display.fillCircle(DX, DY, 1, bg());
-
-    // ── the digital readout, upper right ───────────────────────────
-    char hhmm[8]; snprintf(hhmm, 8, "%02d:%02d", dt.Hour, dt.Minute);
-    display.setFont(&DSEG7_Classic_Bold_25);
-    { int16_t x1, y1; uint16_t w, h;
-      display.getTextBounds(hhmm, 0, 0, &x1, &y1, &w, &h);
-      display.setCursor(196 - w, 52); display.print(hhmm); }
+    // ── the strip ──────────────────────────────────────────────────
     display.setFont(NULL);
-    display.setCursor(112, 62); display.print("LOCAL");
+    const int SY = 188;
+    drawTinyB(1, SY);                                    // the mark
 
-    // ── the rule, and the day and date beneath it ──────────────────
-    display.drawFastHLine(8, 118, 184, fg());
-    display.drawFastHLine(8, 120, 184, fg());
+    char d[10]; snprintf(d, 10, "%02d %02d", dt.Day, dt.Month);
+    display.setCursor(12, SY + 3); display.print(d);
 
-    static const char *DOW[7] = {"SUNDAY","MONDAY","TUESDAY","WEDNESDAY",
-                                 "THURSDAY","FRIDAY","SATURDAY"};
-    static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
-                                  "JUL","AUG","SEP","OCT","NOV","DEC"};
-    int wd = (dt.Wday >= 1 && dt.Wday <= 7) ? dt.Wday - 1 : 0;
-    int mo = (dt.Month >= 1 && dt.Month <= 12) ? dt.Month - 1 : 0;
-    display.setCursor(10, 132); display.print(DOW[wd]);
+    // the cell, drawn the way the strip wants it: a rule with a fill under it
+    display.fillRect(78, SY, 46, 3, fg());
+    int fw = (int)(46.0f * batteryPctShown() / 100.0f + 0.5f);
+    if (fw > 0) display.fillRect(78, SY + 5, fw, 5, fg());
 
-    char dstr[12]; snprintf(dstr, 12, "%02d %s", dt.Day, MON[mo]);
-    display.setFont(&DSEG7_Classic_Bold_18);
-    { int16_t x1, y1; uint16_t w, h;
-      display.getTextBounds(dstr, 0, 0, &x1, &y1, &w, &h);
-      display.setCursor(192 - w, 148); display.print(dstr); }
-    display.setFont(NULL);
-
-    // ── the bar, bottom: the only thing it will admit to knowing ───
-    int pct = batteryPctShown();
-    display.drawRect(8, 168, 184, 12, fg());
-    int fillw = (int)(180.0f * pct / 100.0f + 0.5f);
-    if (fillw > 0) display.fillRect(10, 170, fillw, 8, fg());
-    display.setCursor(10, 186); display.print("CELL");
-    char pb[8]; snprintf(pb, 8, "%d%%", pct);
-    { int16_t x1, y1; uint16_t w, h;
-      display.getTextBounds(pb, 0, 0, &x1, &y1, &w, &h);
-      display.setCursor(192 - w, 186); display.print(pb); }
-
-    // tapping UP still shows the chain, for one glance
-    if (joeReveal) {
-      char hb[20]; snprintf(hb, 20, "%ld", estHeight());
+    char right[16];
+    if (joeReveal) snprintf(right, 16, "%ld", estHeight());
+    else           snprintf(right, 16, "%s", "");
+    if (right[0]) {
       int16_t x1, y1; uint16_t w, h;
-      display.getTextBounds(hb, 0, 0, &x1, &y1, &w, &h);
-      display.fillRect(100 - w/2 - 5, 96, w + 10, 14, bg());
-      display.setCursor(100 - w/2, 100); display.print(hb);
+      display.getTextBounds(right, 0, 0, &x1, &y1, &w, &h);
+      display.setCursor(198 - w, SY + 3); display.print(right);
     }
   }
-
 
   void drawWatchFace() override {
     sanitizeState();
