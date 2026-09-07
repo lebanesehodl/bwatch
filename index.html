@@ -3,13 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <title>Watch Bitcoin — BWATCH bw–1</title>
 <meta name="description" content="BWATCH bw-1. A wristwatch that keeps Bitcoin's time. No app, no account, no custodian.">
 <meta property="og:title" content="Watch Bitcoin">
 <meta property="og:description" content="BWATCH bw-1. A wristwatch that keeps Bitcoin's time.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://bwatch.xyz">
-<meta property="og:image" content="https://bwatch.xyz/img/hero.jpg">
+<meta property="og:image" content="https://bwatch.xyz/img/hero-a.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://bwatch.xyz">
 <style>
@@ -39,6 +40,9 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mark{position:absolute;top:clamp(18px,3.2vh,38px);left:clamp(20px,3vw,52px);
   z-index:3;display:block;width:clamp(28px,2.8vw,38px);line-height:0}
 .mark svg{display:block;width:100%;height:auto}
+/* the page's global link rules add a background and a border on hover —
+   on the mark that floods an orange block behind an orange block */
+.mark,.mark:hover{background:none;border:0;text-decoration:none}
 @media(max-width:960px){
   .mark{top:16px;left:18px;width:30px}
 }
@@ -49,7 +53,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .kick{display:flex;align-items:center;gap:10px;font-size:clamp(10.5px,1vw,13px);
   letter-spacing:.22em;font-weight:600;text-transform:uppercase;margin-bottom:14px}
 .kick i{display:block;width:clamp(16px,1.6vw,26px);height:3px;background:var(--orange)}
-h1{font-size:clamp(30px,4.4vw,80px);font-weight:500;letter-spacing:-.022em;line-height:.9;
+h1{font-size:clamp(44px,7.4vw,112px);font-weight:500;letter-spacing:-.022em;line-height:.9;
   text-transform:uppercase;font-synthesis:none;font-kerning:normal}
 h1 span,h1 em{display:block;font-style:normal}
 /* Same size, same tracking, flush left. Two attempts at squaring the right
@@ -59,6 +63,7 @@ h1 span,h1 em{display:block;font-style:normal}
 h1{font-weight:600}
 h1 .l1{margin-left:0}
 h1 .l2{margin-left:0}
+h1 .l3{margin-left:0}
 .sub{margin-top:clamp(14px,1.8vh,24px);max-width:none;font-size:clamp(13px,1.24vw,17px);
   font-weight:500;line-height:1.45;text-wrap:balance}
 .sub mark{background:var(--orange);color:#fff;padding:.04em .16em .12em;font-weight:400;
@@ -100,8 +105,8 @@ h1 .l2{margin-left:0}
   </a>
   <div class="txt">
     <div class="kick"><i></i>A timechain instrument</div>
-    <h1><span class="l1">Watch</span><em class="l2">Bitcoin</em><em class="l2">All Day</em></h1>
-    <p class="sub"><mark>BWATCH bw&ndash;1</mark>is a wristwatch that keeps<br>
+    <h1><span class="l1">Watch</span><em class="l2">Bitcoin</em><span class="l3">all day</span></h1>
+    <p class="sub"><mark>BWATCH bw&ndash;1</mark>, a wristwatch that keeps<br>
       Bitcoin's time. No app, no account, no custodian.</p>
     <span class="soon">Currently in field testing</span>
     <p class="note">Stay tuned, or say
