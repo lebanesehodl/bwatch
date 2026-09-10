@@ -192,10 +192,6 @@ footer{border-top:1px solid var(--line);margin-top:clamp(70px,11vh,130px);
 .instructions a:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
 mark.hl{background:var(--orange);color:#fff;padding:.04em .16em .12em;
   box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:400}
-.rv{opacity:0;transform:translateY(22px);
-  transition:opacity 1.15s cubic-bezier(.16,.68,.3,1),
-             transform 1.15s cubic-bezier(.16,.68,.3,1)}
-.rv.in{opacity:1;transform:none}
 .rv.d1{transition-delay:.13s}
 .rv.d2{transition-delay:.26s}
 .rv.d3{transition-delay:.39s}
@@ -212,67 +208,17 @@ footer{padding:60px 0 90px}
    Full-width statements alternating with photographs. One idea per screen,
    nothing to click, and the argument built by scrolling rather than by
    chapter headings. */
-section{position:relative}
-.stw,.edw,.spw{max-width:1180px;margin:0 auto;padding:0 clamp(20px,4vw,52px)}
 
-.st{padding:clamp(90px,17vh,190px) 0}
-.st h2{font-size:clamp(30px,5.2vw,74px);font-weight:600;letter-spacing:-.022em;
-  line-height:1.03;margin:0;text-wrap:balance}
-.sk{font-family:"SF Mono",ui-monospace,"Courier New",monospace;font-size:11px;
-  letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin:0 0 20px}
-.sp{margin:24px 0 0;max-width:46ch;font-size:clamp(15px,1.2vw,17px);
-  line-height:1.6;color:var(--dim);font-weight:400}
-.st.invert{background:var(--ink)}
-.st.invert h2{color:var(--paper)}
-.st.invert .sk{color:#8f8a7d}
-.st.invert .sp{color:#b9b3a5}
 
 /* a photograph on its own, full width */
-.sh{margin:0}
-.sh img{display:block;width:100%;height:min(74svh,760px);object-fit:cover}
-.sh .cap{max-width:1180px;margin:14px auto 0;padding:0 clamp(20px,4vw,52px);
-  font-family:"SF Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.14em;
-  text-transform:uppercase;color:var(--dim)}
 
 /* text beside a screen */
-.pr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-  gap:clamp(28px,5vw,80px);align-items:center;
-  max-width:1180px;margin:0 auto;padding:clamp(70px,13vh,150px) clamp(20px,4vw,52px)}
-.pr.flip .prt{order:2}
-.pr img{display:block;width:100%;height:auto}
-.pr h3{font-size:clamp(26px,3.6vw,48px);font-weight:600;letter-spacing:-.022em;
-  line-height:1.06;margin:0;text-wrap:balance}
 
 /* editions */
-.ed{padding:clamp(80px,15vh,170px) 0;border-top:1px solid var(--rule)}
-.ed h2{font-size:clamp(28px,4.4vw,58px);font-weight:600;letter-spacing:-.022em;
-  line-height:1.04;margin:0 0 44px;
-  font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
-  gap:clamp(18px,2.6vw,34px)}
-.card{border:2px solid var(--ink);padding:clamp(22px,3vw,34px)}
-.cn{font-family:"SF Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.24em;
-  text-transform:uppercase;color:var(--dim);margin:0 0 12px}
-.cp{font-size:clamp(24px,3vw,36px);font-weight:600;letter-spacing:-.022em;margin:0 0 14px}
-.cd{margin:0;color:var(--dim);font-size:15px;line-height:1.55}
-.ed .hello{margin-top:32px;font-size:14px}
 
 /* specification */
-.sp2{padding:clamp(70px,12vh,140px) 0;border-top:1px solid var(--rule)}
-.spec{margin:0;border-top:2px solid var(--ink)}
-.spec>div{display:grid;grid-template-columns:minmax(120px,180px) 1fr;gap:clamp(14px,2vw,32px);
-  padding:15px 0;border-bottom:1px solid var(--rule)}
-.spec dt{font-family:"SF Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.2em;
-  text-transform:uppercase;color:var(--orange);font-weight:700;margin:0}
-.spec dd{margin:0;color:var(--ink);font-weight:400;font-size:15.5px;line-height:1.5}
-.spec dd a{color:var(--ink);border-bottom:1px solid var(--orange);text-decoration:none}
 
 /* the close */
-.close{padding:clamp(90px,18vh,200px) 0 clamp(120px,20vh,220px);
-  border-top:1px solid var(--rule)}
-.cl{font-size:clamp(30px,5.4vw,74px);font-weight:600;letter-spacing:-.022em;line-height:1.04;
-  margin:0}
-.cl em{font-style:normal;color:var(--orange)}
 
 @media(max-width:820px){
   .pr{grid-template-columns:1fr;gap:26px}
@@ -281,9 +227,6 @@ section{position:relative}
 }
 
 
-.rv{opacity:0;transform:translateY(14px);
-  transition:opacity .6s cubic-bezier(.2,.6,.2,1),transform .6s cubic-bezier(.2,.6,.2,1)}
-.rv.in{opacity:1;transform:none}
 @media(prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}}
 
 /* ── the list ────────────────────────────────────────────────────────
@@ -355,158 +298,6 @@ section{position:relative}
 </div>
 
 
-<section class="st ">
-  <div class="stw">
-    <p class="sk">Why</p>
-    <h2>Every clock you own<br>is set by someone else.</h2>
-    <p class="sp">Your phone is set by a carrier. Your laptop by a time server. The hour on your wall moves twice a year because a government says so. Every one of them can be changed by somebody who is not you.</p>
-  </div>
-</section>
-
-<section class="st invert">
-  <div class="stw">
-    <p class="sk">What we made</p>
-    <h2>One that can't be.</h2>
-    <p class="sp">Since January 2009 the Bitcoin network has kept its own time — a block roughly every ten minutes, paid for in work, adjusted by nothing but difficulty. It is the only clock in the world that nobody sets. This is the first one you can wear.</p>
-  </div>
-</section>
-
-<section class="pr">
-  <div class="prt">
-    <p class="sk">Honesty</p>
-    <h3>It never shows a number<br>it cannot defend.</h3>
-    <p class="sp">Height is fetched, never inferred. The moment a fetch fails the face says so — <span class='mono'>EST +36 BLK +/-6</span> — because the size of its ignorance is more useful than a confident number that is quietly wrong.</p>
-  </div>
-  <img src="img/fig1-price.jpg" alt="The price mode showing a full figure" loading="lazy" decoding="async">
-</section>
-
-<section class="pr flip">
-  <div class="prt">
-    <p class="sk">Scarcity, counted</p>
-    <h3>Twenty&#8209;one million,<br>worked out on your wrist.</h3>
-    <p class="sp">Every coin issued and every coin left, to the hundredth — derived on the watch from the block height alone. No API is involved, because the height is the calendar.</p>
-  </div>
-  <img src="img/fig2-supply.jpg" alt="The supply mode" loading="lazy" decoding="async">
-</section>
-
-<section class="st ">
-  <div class="stw">
-    <p class="sk">What it refuses</p>
-    <h2>Everything the cloud promises.<br>Nothing it takes.</h2>
-    <p class="sp">No app. No account. No custodian. No telemetry, no subscription, and no opinion about your step count. It reads a public chain and shows you what it found.</p>
-  </div>
-</section>
-
-<section class="pr">
-  <div class="prt">
-    <p class="sk">The wallet</p>
-    <h3>It can be paid.<br>It cannot spend.</h3>
-    <p class="sp">A watch-only zpub derives addresses and holds no key, so losing the watch loses no coins. Hold DOWN and the balance goes behind dashes while the receive code keeps working.</p>
-  </div>
-  <img src="img/fig3-wallet.jpg" alt="The wallet mode with a receive code" loading="lazy" decoding="async">
-</section>
-
-<section class="sh">
-  <img src="img/fig7-sand.jpg" alt="The watch half covered in sand" loading="lazy" decoding="async">
-  <p class="cap">An afternoon on the sand, and a chain that carried on regardless.</p>
-</section>
-
-<section class="st ">
-  <div class="stw">
-    <p class="sk">The plain face</p>
-    <h2>And a mode that<br>shows nothing at all.</h2>
-    <p class="sp">Four digits, a date, and no height, no price, no strip — nothing to tell anyone what you are wearing. Tap once and the chain comes back for a single glance.</p>
-  </div>
-</section>
-
-<section class="st ">
-  <div class="stw">
-    <p class="sk">Time travel</p>
-    <h2>Go to any block.<br>Come back.</h2>
-    <p class="sp">The subsidy, the supply, the epoch and the halving are all functions of height, so none of them need a network. The watch will take you to block 2,279,279, show you the face as it will read in 2051, and label every projection as one.</p>
-  </div>
-</section>
-
-<section class="st invert">
-  <div class="stw">
-    <p class="sk">One alarm</p>
-    <h2>It will ring once,<br>and never again.</h2>
-    <p class="sp">At block 1,000,000 — roughly May 2027 — the watch clears the screen, buzzes ten times and tells you what just happened. Then it writes to flash so it can never do it twice. Every one of these watches is waiting for the same moment.</p>
-  </div>
-</section>
-
-<section class="pr flip">
-  <div class="prt">
-    <p class="sk">The object</p>
-    <h3>Machined, numbered,<br>and dated by the chain.</h3>
-    <p class="sp">CNC aluminium, bead blasted and anodised, thirty grams. The caseback carries your number and the block that confirmed your payment — a date nobody can reissue or fake.</p>
-  </div>
-  <img src="img/fig5-case.png" alt="The machined case" loading="lazy" decoding="async">
-</section>
-
-<section class="st ">
-  <div class="stw">
-    <p class="sk">The last thing it does</p>
-    <h2>When it runs out, it leaves<br>the last block it saw.</h2>
-    <p class="sp">E-paper holds its image with the power off, so the watch does not freeze mid-face or brown out halfway through a refresh. It puts up one screen and stops, showing the height it last knew. The chain carried on without it.</p>
-  </div>
-</section>
-
-<section class="st ">
-  <div class="stw">
-    <p class="sk">The record</p>
-    <h2>Twenty&#8209;five faults.<br>All of them published.</h2>
-    <p class="sp">The calendar was nine years wrong. The balance was missing my change. The watch that would not charge was reading a full cell as empty. Every one is written down with its fix, because a claim you cannot check is only advertising.</p>
-  </div>
-</section>
-
-<section class="ed" id="genesis">
-  <div class="edw">
-    <p class="sk">Editions</p>
-    <h2>Two ways to have one.</h2>
-    <div class="cards">
-      <article class="card">
-        <p class="cn">Genesis 21</p>
-        <p class="cp">1,000,000 sats</p>
-        <p class="cd">Twenty-one watches, orange anodised, numbered, and engraved with the block
-          that confirmed payment. Assembled, flashed and worn for a day before it ships.
-          The list opens first: everyone on it hears before anyone else.</p>
-      </article>
-      <article class="card">
-        <p class="cn">Build your own</p>
-        <p class="cp">Free, forever</p>
-        <p class="cd">The firmware is MIT and runs on stock Watchy hardware. Flash it, set WiFi,
-          paste a zpub, calibrate the battery once, and it is the same watch.</p>
-      </article>
-    </div>
-    <p class="hello">Reserve one, or ask anything —
-      <a href="mailto:hello@bwatch.xyz?subject=BWATCH%20bw-1">hello@bwatch.xyz</a></p>
-  </div>
-</section>
-
-<section class="sp2">
-  <div class="spw">
-    <p class="sk">Specification</p>
-    <dl class="spec">
-      <div><dt>Panel</dt><dd>200 x 200 e-paper, one bit, holds its image with the power off</dd></div>
-      <div><dt>Processor</dt><dd>ESP32-S3, 2.4 GHz WiFi</dd></div>
-      <div><dt>Case</dt><dd>CNC 6061 aluminium, anodised, 40.40 x 50.36 x 14.55 mm, 30 g</dd></div>
-      <div><dt>Water</dt><dd>Rain proof, not swim proof</dd></div>
-      <div><dt>Wallet</dt><dd>Watch-only from a zpub. No key is stored, none can be</dd></div>
-      <div><dt>Modes</dt><dd>Height, price, sats, market cap, fees, supply, halving, wallet, plain</dd></div>
-      <div><dt>Firmware</dt><dd>MIT licensed, on stock Watchy v3 hardware</dd></div>
-      <div><dt>Manual</dt><dd><a href="bwatch-manual.html">Every mode, every button, in six minutes</a></dd></div>
-    </dl>
-  </div>
-</section>
-
-<section class="close">
-  <div class="stw">
-    <h2 class="cl">Time is scarce.<br>Bitcoin is scarce.<br><em>Bitcoin is time.</em></h2>
-  </div>
-</section>
-
-
 <div class="foot">
   <span><a href="https://btctech.xyz">BTC&nbsp;TECHNOLOGIES</a> / DIV-001</span>
   <span>Block <b id="tip">------</b></span>
@@ -556,18 +347,5 @@ section{position:relative}
 })();
 </script>
 
-<script>
-// Sections rise slightly as they enter. One idea per screen means the movement
-// should be almost nothing — enough to feel like arrival, not enough to notice.
-(function(){
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  var els = document.querySelectorAll('.st .stw, .pr .prt, .pr img, .sh img, .sh .cap, .edw, .spw');
-  els.forEach(function(el){ el.classList.add('rv'); });
-  var io = new IntersectionObserver(function(en){
-    en.forEach(function(e){ if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
-  }, { rootMargin: '0px 0px -12% 0px', threshold: 0.06 });
-  els.forEach(function(el){ io.observe(el); });
-})();
-</script>
 </body>
 </html>
