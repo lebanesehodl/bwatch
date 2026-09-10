@@ -338,7 +338,7 @@ section{position:relative}
       <span class="cnt"><b id="left">21</b> of 21 unclaimed</span>
     </div>
 
-    <form class="wl" action="FORM_ENDPOINT" method="POST">
+    <form class="wl" action="https://formspree.io/f/xljeaawd" method="POST">
       <label for="e" class="vh">Your email address or Nostr npub</label>
       <input id="e" type="text" name="contact" required
              placeholder="you@example.com  or  npub1&hellip;"
@@ -346,6 +346,7 @@ section{position:relative}
              pattern="(^[^@\s]+@[^@\s]+\.[^@\s]{2,}$)|(^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$)"
              title="An email address, or an npub beginning npub1">
       <input type="hidden" name="_subject" value="BWATCH bw-1 — Genesis 21 list">
+      <input type="hidden" name="_next" value="https://bwatch.xyz/thanks.html">
       <button type="submit">Join the list</button>
     </form>
     <p class="hello">or say <a href="mailto:hello@bwatch.xyz?subject=BWATCH%20bw-1">hello@bwatch.xyz</a></p>
