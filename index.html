@@ -23,17 +23,20 @@
   font-weight:500;font-style:normal;font-display:swap}
 
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
+html{scroll-behavior:smooth}   /* the page scrolls now: it is the document */
 body{background:var(--paper);color:var(--ink);
-  font-family:"Archivo","Neue Haas Grotesk Display Pro","Helvetica Neue",Helvetica,Arial,sans-serif;
-  -webkit-font-smoothing:antialiased;overflow:hidden}
+  font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+/* Archivo sets the voice; Helvetica sets the reading. */
+h1,h2,h3,.kick,.soon,.cn,.cp,.cl,.sub{
+  font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif}
 /* the texture belongs to the paper, not to the photograph: it sits below
    the plate, so the image reads as a clean print on a textured page */
 body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:repeating-linear-gradient(0deg,rgba(0,0,0,.016) 0 1px,transparent 1px 3px)}
 
 .page{position:relative;display:grid;grid-template-columns:minmax(0,0.82fr) minmax(0,1.18fr);
-  height:100%;align-items:center}
+  min-height:100svh;align-items:center}
 .txt{padding:clamp(28px,5vh,64px) clamp(20px,3vw,52px);position:relative;z-index:2}
 /* The mark, top right. The field is the case: 40.40 x 50.36 with a 5.4
    corner radius, the watch's own proportion. */
@@ -47,7 +50,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   .mark{top:16px;left:18px;width:30px}
 }
 
-.shot{align-self:stretch;height:100%;background-size:cover;
+.shot{align-self:stretch;min-height:100svh;background-size:cover;
   background-position:50% 46%;background-repeat:no-repeat;position:relative;z-index:1}
 
 .kick{display:flex;align-items:center;gap:10px;font-size:clamp(10.5px,1vw,13px);
@@ -71,12 +74,13 @@ h1 .l3{margin-left:0}
 .soon{display:inline-block;margin-top:clamp(20px,2.8vh,34px);padding:13px 24px;
   border:1px solid var(--ink);background:var(--ink);color:var(--paper);
   font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;font-weight:700}
-.note{margin-top:12px;font-size:12px;letter-spacing:.02em;color:var(--dim);
+.hello{margin-top:12px;font-size:12px;letter-spacing:.02em;color:var(--dim);
   line-height:1.5;white-space:nowrap}
-.note a{color:var(--ink);text-decoration:none;
+.hello a{color:var(--ink);text-decoration:none;
   border-bottom:1px solid var(--orange);padding-bottom:1px}
-.note a:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
-.foot{position:fixed;left:0;right:0;bottom:0;z-index:2;display:flex;
+.hello a:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
+.foot{position:fixed;bottom:0;left:0;right:0;z-index:120;
+  background:linear-gradient(to top,var(--paper) 60%,transparent);position:fixed;left:0;right:0;bottom:0;z-index:2;display:flex;
   justify-content:space-between;gap:14px;padding:14px clamp(20px,3vw,52px);
   font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--dim);
   border-top:1px solid var(--rule);background:var(--paper)}
@@ -85,11 +89,227 @@ h1 .l3{margin-left:0}
 .foot b{color:var(--orange);font-weight:700;font-family:"SF Mono","Courier New",monospace}
 
 @media(max-width:960px){
-  body{overflow:auto}
-  .page{grid-template-columns:1fr;height:auto;min-height:100%}
+  .page{grid-template-columns:1fr;min-height:auto}
   .shot{height:46svh;order:-1}
   .txt{padding-bottom:90px}
 }
+
+
+/* ── the document ────────────────────────────────────────────────────
+   Everything below the hero. The masthead above is untouched: these rules
+   are appended so nothing here can win against it. */
+.col{max-width:1180px;margin:0 auto;padding:0 clamp(20px,4vw,52px)}
+.col{max-width:none;margin:0;padding:0 clamp(20px,4vw,44px)}
+.top{padding-top:clamp(96px,17vh,190px);padding-bottom:clamp(36px,6vh,72px)}
+.chead{display:grid;grid-template-columns:auto 1fr;gap:clamp(16px,3vw,36px);
+  align-items:start;margin:clamp(56px,9vh,110px) 0 26px;scroll-margin-top:84px;
+  padding-top:clamp(28px,4vh,48px);border-top:1px solid var(--rule)}
+.chead:first-of-type{border-top:0;padding-top:0}
+.cnum{font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-weight:800;font-size:clamp(40px,7vw,86px);line-height:.8;
+  color:var(--bg);-webkit-text-stroke:2px var(--ink)}
+h2{display:block;margin:0;font-size:clamp(26px,4.6vw,58px);font-weight:800;
+  letter-spacing:-.03em;line-height:.9;text-transform:uppercase}
+h2 i{font-style:normal;color:var(--red);letter-spacing:.3em}
+h3{font-size:clamp(24px,3.4vw,44px);font-weight:700;letter-spacing:-.03em;line-height:1.06;
+  margin:0 0 22px;text-transform:none}
+h3 em{font-style:normal;color:var(--orange)}
+dl{margin:0 0 26px;border-top:2px solid var(--ink)}
+dl{margin:0 0 18px}
+dt{font-family:"SF Mono",ui-monospace,"Courier New",monospace;
+  font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--orange);
+  font-weight:700;padding:16px 0 0}
+dd{margin:0 0 16px;padding:4px 0 16px;border-bottom:1px solid var(--rule);
+  color:var(--ink);font-weight:300;max-width:64ch}
+.log{counter-reset:f;margin:8px 0 26px}
+.log{font-family:"SF Mono","Courier New",monospace;font-size:14px;line-height:1.55;
+  border-top:1px solid var(--line)}
+.log>div{counter-increment:f;display:grid;grid-template-columns:44px 1fr;
+  gap:16px;padding:16px 0;border-top:1px solid var(--rule);align-items:baseline}
+.log>div>b{font-family:"SF Mono",ui-monospace,monospace;font-size:13px;
+  font-weight:700;color:var(--orange)}
+.log>div>span{color:var(--dim);font-weight:300;max-width:62ch}
+.log>div>span b{color:var(--ink);font-weight:600}
+ul{list-style:none;margin:0 0 26px;padding:0;border-top:2px solid var(--ink)}
+li{display:grid;grid-template-columns:64px 1fr;gap:18px;padding:14px 0;
+  border-bottom:1px solid var(--rule);align-items:baseline;
+  color:var(--dim);font-weight:300}
+li>b{font-family:"SF Mono",ui-monospace,monospace;font-size:13px;
+  letter-spacing:.12em;color:var(--orange);font-weight:700}
+li>span b{color:var(--ink);font-weight:600}
+.chead p{margin:14px 0 0;color:var(--dim);font-size:16px;font-weight:300;
+  max-width:62ch}
+p{margin:0 0 18px;color:var(--dim);font-weight:300;max-width:none}
+p b{color:var(--ink);font-weight:400}
+p.lead{font-size:clamp(21px,2.6vw,30px);line-height:1.3;color:var(--ink);font-weight:300;
+  margin-bottom:24px}
+s{color:var(--faint)}
+.live{background:var(--orange);color:#fff;padding:2px 9px 3px;
+  font-family:"SF Mono",monospace;font-size:.74em;letter-spacing:.06em;white-space:nowrap;
+  font-weight:700}
+figure{margin:clamp(34px,5vh,60px) 0;max-width:560px}
+figure img{display:block;width:100%;height:auto;filter:contrast(1.02) brightness(1.03)}
+figure img{cursor:zoom-in}
+figcaption{margin-top:12px;font-size:12.5px;color:var(--faint);font-weight:300;max-width:52ch}
+figcaption b{color:var(--orange);font-weight:400;font-family:"SF Mono",monospace;
+  font-size:11.5px;letter-spacing:.1em}
+footer{border-top:1px solid var(--line);margin-top:clamp(70px,11vh,130px);
+  padding:34px 0 90px;font-size:12px;color:var(--faint)}
+.figpair{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(12px,1.6vw,22px);
+  margin:clamp(34px,5vh,60px) 0;max-width:1180px}
+.figpair.four{grid-template-columns:repeat(4,1fr);max-width:1460px}
+.figpair.two{grid-template-columns:1fr 1fr;max-width:1100px}
+.figpair.two img{background:#fff}
+.figpair figure{margin:0;max-width:none}
+#lb{position:fixed;inset:0;z-index:300;display:none;place-items:center;
+  background:rgba(18,17,13,.94);padding:clamp(18px,4vw,56px);cursor:zoom-out}
+#lb.on{display:grid}
+#lb img{max-width:100%;max-height:82vh;height:auto;display:block;margin:0 auto;
+  box-shadow:0 40px 90px rgba(0,0,0,.6)}
+#lb .cap{margin:16px auto 0;max-width:56ch;text-align:center;color:#cfccc2;
+  font-size:13.5px;line-height:1.45}
+#lb .cap b{color:var(--orange);font-family:"SF Mono","Courier New",monospace;
+  font-size:12px;letter-spacing:.1em;font-weight:400}
+#lb .x{position:fixed;top:18px;right:22px;font-size:11px;letter-spacing:.24em;
+  text-transform:uppercase;color:#8d8a80}
+.acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:clamp(20px,2.8vh,34px)}
+.cta{display:inline-block;padding:13px 22px;background:var(--ink);color:#f4f2ec !important;
+  font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;font-weight:700;
+  text-decoration:none;border:1px solid var(--ink);transition:.16s}
+.cta:visited{color:#f4f2ec}
+.cta:hover{background:var(--orange);border-color:var(--orange);color:#fff !important}
+.cta.ghost{background:transparent;color:var(--ink) !important;border-color:var(--rule)}
+.cta.ghost:hover{background:transparent;border-color:var(--ink);color:var(--ink) !important}
+.say{margin-top:clamp(14px,1.8vh,24px);font-size:14px;color:var(--dim)}
+.say{line-height:1.5}
+.instructions{display:flex;flex-wrap:wrap;align-items:baseline;gap:14px;
+  margin:26px 0 4px;padding:14px 0;border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule)}
+.instructions span{font-family:"SF Mono",ui-monospace,monospace;font-size:10px;
+  letter-spacing:.24em;text-transform:uppercase;color:var(--dim)}
+.instructions a{font-weight:600;color:var(--ink);text-decoration:none;
+  border-bottom:2px solid var(--orange);padding-bottom:1px}
+.instructions a:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
+mark.hl{background:var(--orange);color:#fff;padding:.04em .16em .12em;
+  box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:400}
+.rv{opacity:0;transform:translateY(22px);
+  transition:opacity 1.15s cubic-bezier(.16,.68,.3,1),
+             transform 1.15s cubic-bezier(.16,.68,.3,1)}
+.rv.in{opacity:1;transform:none}
+.rv.d1{transition-delay:.13s}
+.rv.d2{transition-delay:.26s}
+.rv.d3{transition-delay:.39s}
+.no-js .rv{opacity:1;transform:none}
+.mono{font-family:"SF Mono","Courier New",monospace}
+.seg{font-family:'DSEG7',monospace}
+
+/* the page scrolls now, so the hero is one screen and the document follows */
+.page{min-height:100svh}
+footer{padding:60px 0 90px}
+
+
+/* ── the narrative ───────────────────────────────────────────────────
+   Full-width statements alternating with photographs. One idea per screen,
+   nothing to click, and the argument built by scrolling rather than by
+   chapter headings. */
+section{position:relative}
+.stw,.edw,.spw{max-width:1180px;margin:0 auto;padding:0 clamp(20px,4vw,52px)}
+
+.st{padding:clamp(90px,17vh,190px) 0}
+.st h2{font-size:clamp(30px,5.2vw,74px);font-weight:600;letter-spacing:-.022em;
+  line-height:1.03;margin:0;text-wrap:balance}
+.sk{font-family:"SF Mono",ui-monospace,"Courier New",monospace;font-size:11px;
+  letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin:0 0 20px}
+.sp{margin:24px 0 0;max-width:46ch;font-size:clamp(15px,1.2vw,17px);
+  line-height:1.6;color:var(--dim);font-weight:400}
+.st.invert{background:var(--ink)}
+.st.invert h2{color:var(--paper)}
+.st.invert .sk{color:#8f8a7d}
+.st.invert .sp{color:#b9b3a5}
+
+/* a photograph on its own, full width */
+.sh{margin:0}
+.sh img{display:block;width:100%;height:min(74svh,760px);object-fit:cover}
+.sh .cap{max-width:1180px;margin:14px auto 0;padding:0 clamp(20px,4vw,52px);
+  font-family:"SF Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--dim)}
+
+/* text beside a screen */
+.pr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:clamp(28px,5vw,80px);align-items:center;
+  max-width:1180px;margin:0 auto;padding:clamp(70px,13vh,150px) clamp(20px,4vw,52px)}
+.pr.flip .prt{order:2}
+.pr img{display:block;width:100%;height:auto}
+.pr h3{font-size:clamp(26px,3.6vw,48px);font-weight:600;letter-spacing:-.022em;
+  line-height:1.06;margin:0;text-wrap:balance}
+
+/* editions */
+.ed{padding:clamp(80px,15vh,170px) 0;border-top:1px solid var(--rule)}
+.ed h2{font-size:clamp(28px,4.4vw,58px);font-weight:600;letter-spacing:-.022em;
+  line-height:1.04;margin:0 0 44px;
+  font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:clamp(18px,2.6vw,34px)}
+.card{border:2px solid var(--ink);padding:clamp(22px,3vw,34px)}
+.cn{font-family:"SF Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--dim);margin:0 0 12px}
+.cp{font-size:clamp(24px,3vw,36px);font-weight:600;letter-spacing:-.022em;margin:0 0 14px}
+.cd{margin:0;color:var(--dim);font-size:15px;line-height:1.55}
+.ed .hello{margin-top:32px;font-size:14px}
+
+/* specification */
+.sp2{padding:clamp(70px,12vh,140px) 0;border-top:1px solid var(--rule)}
+.spec{margin:0;border-top:2px solid var(--ink)}
+.spec>div{display:grid;grid-template-columns:minmax(120px,180px) 1fr;gap:clamp(14px,2vw,32px);
+  padding:15px 0;border-bottom:1px solid var(--rule)}
+.spec dt{font-family:"SF Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--orange);font-weight:700;margin:0}
+.spec dd{margin:0;color:var(--ink);font-weight:400;font-size:15.5px;line-height:1.5}
+.spec dd a{color:var(--ink);border-bottom:1px solid var(--orange);text-decoration:none}
+
+/* the close */
+.close{padding:clamp(90px,18vh,200px) 0 clamp(120px,20vh,220px);
+  border-top:1px solid var(--rule)}
+.cl{font-size:clamp(30px,5.4vw,74px);font-weight:600;letter-spacing:-.022em;line-height:1.04;
+  margin:0}
+.cl em{font-style:normal;color:var(--orange)}
+
+@media(max-width:820px){
+  .pr{grid-template-columns:1fr;gap:26px}
+  .pr.flip .prt{order:0}
+  .sh img{height:min(56svh,520px)}
+}
+
+
+.rv{opacity:0;transform:translateY(14px);
+  transition:opacity .6s cubic-bezier(.2,.6,.2,1),transform .6s cubic-bezier(.2,.6,.2,1)}
+.rv.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}}
+
+/* ── the list ────────────────────────────────────────────────────────
+   A plain form. No script, no embed, no third party loaded on the way in:
+   the page stays silent until someone chooses to speak, which is the same
+   promise the watch makes. */
+.status{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;
+  margin-top:clamp(20px,2.8vh,34px)}
+.cnt{font-family:"SF Mono",ui-monospace,"Courier New",monospace;font-size:11px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.cnt b{color:var(--orange);font-weight:700}
+
+.wl{display:flex;gap:8px;margin-top:16px;max-width:470px;flex-wrap:wrap}
+.wl input[type=text]{flex:1 1 200px;min-width:0;padding:13px 14px;
+  border:1px solid var(--ink);background:transparent;color:var(--ink);
+  font-family:inherit;font-size:14px;border-radius:0}
+.wl input[type=text]::placeholder{color:#9b9689}
+.wl input[type=text]:focus{outline:none;border-color:var(--orange);
+  box-shadow:inset 0 0 0 1px var(--orange)}
+.wl button{padding:13px 20px;border:1px solid var(--ink);background:var(--ink);
+  color:var(--paper);font-family:inherit;font-size:10.5px;letter-spacing:.22em;
+  text-transform:uppercase;font-weight:700;cursor:pointer;transition:.16s}
+.wl button:hover{background:var(--orange);border-color:var(--orange)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);
+  white-space:nowrap}
+
 </style>
 </head>
 <body>
@@ -105,15 +325,186 @@ h1 .l3{margin-left:0}
   </a>
   <div class="txt">
     <div class="kick"><i></i>A timechain instrument</div>
-    <h1><span class="l1">Watch</span><em class="l2">Your</em><span class="l3">Bitcoin</span></h1>
-    <p class="sub"><mark>BWATCH bw&ndash;1</mark> is a wristwatch that keeps<br>
+    <h1><span class="l1">Watch</span><em class="l2">Bitcoin</em><span class="l3">all day</span></h1>
+    <p class="sub"><mark>BWATCH bw&ndash;1</mark>, a wristwatch that keeps<br>
       Bitcoin's time. No app, no account, no custodian.</p>
-    <span class="soon">Currently in field testing</span>
-    <p class="note">Stay tuned, or say
-      <a href="mailto:hello@bwatch.xyz?subject=BWATCH%20bw-1">hello@bwatch.xyz</a></p>
+    <div class="status">
+      <span class="soon">Currently in field testing</span>
+      <!-- One number, and it only ever falls. A list count was here too, but
+           an empty list advertises that nobody is interested yet, and you
+           only launch once. Edited by hand when a watch is actually paid for:
+           a counter that moved when someone joined a list would be
+           manufacturing the scarcity rather than reporting it. -->
+      <span class="cnt"><b id="left">21</b> of 21 unclaimed</span>
+    </div>
+
+    <form class="wl" action="FORM_ENDPOINT" method="POST">
+      <label for="e" class="vh">Your email address or Nostr npub</label>
+      <input id="e" type="text" name="contact" required
+             placeholder="you@example.com  or  npub1&hellip;"
+             autocomplete="email" spellcheck="false"
+             pattern="(^[^@\s]+@[^@\s]+\.[^@\s]{2,}$)|(^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$)"
+             title="An email address, or an npub beginning npub1">
+      <input type="hidden" name="_subject" value="BWATCH bw-1 — Genesis 21 list">
+      <button type="submit">Join the list</button>
+    </form>
+    <p class="hello">or say <a href="mailto:hello@bwatch.xyz?subject=BWATCH%20bw-1">hello@bwatch.xyz</a></p>
   </div>
   <div class="shot" id="shot" role="img" aria-label="BWATCH bw-1"></div>
 </div>
+
+
+<section class="st ">
+  <div class="stw">
+    <p class="sk">Why</p>
+    <h2>Every clock you own<br>is set by someone else.</h2>
+    <p class="sp">Your phone is set by a carrier. Your laptop by a time server. The hour on your wall moves twice a year because a government says so. Every one of them can be changed by somebody who is not you.</p>
+  </div>
+</section>
+
+<section class="st invert">
+  <div class="stw">
+    <p class="sk">What we made</p>
+    <h2>One that can't be.</h2>
+    <p class="sp">Since January 2009 the Bitcoin network has kept its own time — a block roughly every ten minutes, paid for in work, adjusted by nothing but difficulty. It is the only clock in the world that nobody sets. This is the first one you can wear.</p>
+  </div>
+</section>
+
+<section class="pr">
+  <div class="prt">
+    <p class="sk">Honesty</p>
+    <h3>It never shows a number<br>it cannot defend.</h3>
+    <p class="sp">Height is fetched, never inferred. The moment a fetch fails the face says so — <span class='mono'>EST +36 BLK +/-6</span> — because the size of its ignorance is more useful than a confident number that is quietly wrong.</p>
+  </div>
+  <img src="img/fig1-price.jpg" alt="The price mode showing a full figure" loading="lazy" decoding="async">
+</section>
+
+<section class="pr flip">
+  <div class="prt">
+    <p class="sk">Scarcity, counted</p>
+    <h3>Twenty&#8209;one million,<br>worked out on your wrist.</h3>
+    <p class="sp">Every coin issued and every coin left, to the hundredth — derived on the watch from the block height alone. No API is involved, because the height is the calendar.</p>
+  </div>
+  <img src="img/fig2-supply.jpg" alt="The supply mode" loading="lazy" decoding="async">
+</section>
+
+<section class="st ">
+  <div class="stw">
+    <p class="sk">What it refuses</p>
+    <h2>Everything the cloud promises.<br>Nothing it takes.</h2>
+    <p class="sp">No app. No account. No custodian. No telemetry, no subscription, and no opinion about your step count. It reads a public chain and shows you what it found.</p>
+  </div>
+</section>
+
+<section class="pr">
+  <div class="prt">
+    <p class="sk">The wallet</p>
+    <h3>It can be paid.<br>It cannot spend.</h3>
+    <p class="sp">A watch-only zpub derives addresses and holds no key, so losing the watch loses no coins. Hold DOWN and the balance goes behind dashes while the receive code keeps working.</p>
+  </div>
+  <img src="img/fig3-wallet.jpg" alt="The wallet mode with a receive code" loading="lazy" decoding="async">
+</section>
+
+<section class="sh">
+  <img src="img/fig7-sand.jpg" alt="The watch half covered in sand" loading="lazy" decoding="async">
+  <p class="cap">An afternoon on the sand, and a chain that carried on regardless.</p>
+</section>
+
+<section class="st ">
+  <div class="stw">
+    <p class="sk">The plain face</p>
+    <h2>And a mode that<br>shows nothing at all.</h2>
+    <p class="sp">Four digits, a date, and no height, no price, no strip — nothing to tell anyone what you are wearing. Tap once and the chain comes back for a single glance.</p>
+  </div>
+</section>
+
+<section class="st ">
+  <div class="stw">
+    <p class="sk">Time travel</p>
+    <h2>Go to any block.<br>Come back.</h2>
+    <p class="sp">The subsidy, the supply, the epoch and the halving are all functions of height, so none of them need a network. The watch will take you to block 2,279,279, show you the face as it will read in 2051, and label every projection as one.</p>
+  </div>
+</section>
+
+<section class="st invert">
+  <div class="stw">
+    <p class="sk">One alarm</p>
+    <h2>It will ring once,<br>and never again.</h2>
+    <p class="sp">At block 1,000,000 — roughly May 2027 — the watch clears the screen, buzzes ten times and tells you what just happened. Then it writes to flash so it can never do it twice. Every one of these watches is waiting for the same moment.</p>
+  </div>
+</section>
+
+<section class="pr flip">
+  <div class="prt">
+    <p class="sk">The object</p>
+    <h3>Machined, numbered,<br>and dated by the chain.</h3>
+    <p class="sp">CNC aluminium, bead blasted and anodised, thirty grams. The caseback carries your number and the block that confirmed your payment — a date nobody can reissue or fake.</p>
+  </div>
+  <img src="img/fig5-case.png" alt="The machined case" loading="lazy" decoding="async">
+</section>
+
+<section class="st ">
+  <div class="stw">
+    <p class="sk">The last thing it does</p>
+    <h2>When it runs out, it leaves<br>the last block it saw.</h2>
+    <p class="sp">E-paper holds its image with the power off, so the watch does not freeze mid-face or brown out halfway through a refresh. It puts up one screen and stops, showing the height it last knew. The chain carried on without it.</p>
+  </div>
+</section>
+
+<section class="st ">
+  <div class="stw">
+    <p class="sk">The record</p>
+    <h2>Twenty&#8209;five faults.<br>All of them published.</h2>
+    <p class="sp">The calendar was nine years wrong. The balance was missing my change. The watch that would not charge was reading a full cell as empty. Every one is written down with its fix, because a claim you cannot check is only advertising.</p>
+  </div>
+</section>
+
+<section class="ed" id="genesis">
+  <div class="edw">
+    <p class="sk">Editions</p>
+    <h2>Two ways to have one.</h2>
+    <div class="cards">
+      <article class="card">
+        <p class="cn">Genesis 21</p>
+        <p class="cp">1,000,000 sats</p>
+        <p class="cd">Twenty-one watches, orange anodised, numbered, and engraved with the block
+          that confirmed payment. Assembled, flashed and worn for a day before it ships.
+          The list opens first: everyone on it hears before anyone else.</p>
+      </article>
+      <article class="card">
+        <p class="cn">Build your own</p>
+        <p class="cp">Free, forever</p>
+        <p class="cd">The firmware is MIT and runs on stock Watchy hardware. Flash it, set WiFi,
+          paste a zpub, calibrate the battery once, and it is the same watch.</p>
+      </article>
+    </div>
+    <p class="hello">Reserve one, or ask anything —
+      <a href="mailto:hello@bwatch.xyz?subject=BWATCH%20bw-1">hello@bwatch.xyz</a></p>
+  </div>
+</section>
+
+<section class="sp2">
+  <div class="spw">
+    <p class="sk">Specification</p>
+    <dl class="spec">
+      <div><dt>Panel</dt><dd>200 x 200 e-paper, one bit, holds its image with the power off</dd></div>
+      <div><dt>Processor</dt><dd>ESP32-S3, 2.4 GHz WiFi</dd></div>
+      <div><dt>Case</dt><dd>CNC 6061 aluminium, anodised, 40.40 x 50.36 x 14.55 mm, 30 g</dd></div>
+      <div><dt>Water</dt><dd>Rain proof, not swim proof</dd></div>
+      <div><dt>Wallet</dt><dd>Watch-only from a zpub. No key is stored, none can be</dd></div>
+      <div><dt>Modes</dt><dd>Height, price, sats, market cap, fees, supply, halving, wallet, plain</dd></div>
+      <div><dt>Firmware</dt><dd>MIT licensed, on stock Watchy v3 hardware</dd></div>
+      <div><dt>Manual</dt><dd><a href="bwatch-manual.html">Every mode, every button, in six minutes</a></dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="close">
+  <div class="stw">
+    <h2 class="cl">Time is scarce.<br>Bitcoin is scarce.<br><em>Bitcoin is time.</em></h2>
+  </div>
+</section>
+
 
 <div class="foot">
   <span><a href="https://btctech.xyz">BTC&nbsp;TECHNOLOGIES</a> / DIV-001</span>
@@ -147,6 +538,34 @@ h1 .l3{margin-left:0}
       .catch(function(){});
   }
   tick(); setInterval(tick,20000);
+})();
+</script>
+<script>
+(function(){
+  var h=0;
+  function tick(){
+    fetch('https://mempool.space/api/blocks/tip/height').then(function(r){return r.text()})
+    .then(function(t){var n=parseInt(t,10); if(!(n>h))return; h=n;
+      var s=n.toLocaleString();
+      ['tip','tip2'].forEach(function(id){var e=document.getElementById(id); if(e)e.textContent=n;});
+      var a=document.getElementById('tipa'); if(a)a.textContent=s;
+    }).catch(function(){});
+  }
+  tick(); setInterval(tick,20000);
+})();
+</script>
+
+<script>
+// Sections rise slightly as they enter. One idea per screen means the movement
+// should be almost nothing — enough to feel like arrival, not enough to notice.
+(function(){
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var els = document.querySelectorAll('.st .stw, .pr .prt, .pr img, .sh img, .sh .cap, .edw, .spw');
+  els.forEach(function(el){ el.classList.add('rv'); });
+  var io = new IntersectionObserver(function(en){
+    en.forEach(function(e){ if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { rootMargin: '0px 0px -12% 0px', threshold: 0.06 });
+  els.forEach(function(el){ io.observe(el); });
 })();
 </script>
 </body>
