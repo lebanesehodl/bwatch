@@ -102,13 +102,19 @@ const char *FEES_URL = "https://mempool.space/api/v1/fees/recommended";
 const char *TIP_URL  = "https://mempool.space/api/blocks/tip/height";
 const char *TIP_URL2 = "https://blockstream.info/api/blocks/tip/height";
 const char *DIFF_URL = "https://mempool.space/api/v1/difficulty-adjustment";
+// The three-day average: the instantaneous figure swings wildly with luck,
+// and a number that jumps 30% between glances is not a reading.
+const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Watchy v3 routes the charger's status line to GPIO10. Charger status pins
 // are open-drain: held LOW while charging, released HIGH once the charge
 // terminates. That is ground truth for "is the cell actually taking charge",
 // which a voltage reading alone cannot tell you.
 #define CHG_STAT_PIN 10
 
-#define FETCH_EVERY_MIN 15
+#define FETCH_EVERY_MIN 15   // the fallback. The live interval comes from
+                             // fetchEveryMin(), which follows the chain's
+                             // measured pace; this is what it returns if
+                             // avgBlockSec is not yet trustworthy.
 // The single freshness threshold. The corner tag flips LIVE -> OLD here, and
 // the height's unit line starts estimating here: both indicators must change
 // together or a wearer sees LIVE next to an estimate and cannot tell which to
@@ -143,7 +149,7 @@ const char *DIFF_URL = "https://mempool.space/api/v1/difficulty-adjustment";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0129
+#define RTC_LAYOUT_MAGIC 0xB17C012E
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -186,6 +192,16 @@ RTC_DATA_ATTR float    diffChangeEst = 0;   // estimated retarget %, from mempoo
 RTC_DATA_ATTR float    medFee        = 0;   // halfHourFee
 RTC_DATA_ATTR float    lowFee        = 0;   // hourFee
 RTC_DATA_ATTR float    lastRewardBtc = 0;   // subsidy + fees, in BTC
+RTC_DATA_ATTR long     lastTxCount   = 0;   // transactions in that block
+RTC_DATA_ATTR float    netHashEH     = 0;   // network hashrate, exahash/s
+RTC_DATA_ATTR uint32_t usbSeenWake   = 0;    // first wake USB was noticed, so
+                                             // a fresh charge is not mistaken
+                                             // for a finished one
+RTC_DATA_ATTR float    minVoltSeen   = 9.9f; // the lowest true reading ever
+RTC_DATA_ATTR uint32_t minVoltWake   = 0;    // and the wake it happened on
+RTC_DATA_ATTR uint8_t  minVoltFlags  = 0;    // bit0 travelling, bit1 docked
+RTC_DATA_ATTR long     lastCurio     = 0;   // height of the last curiosity
+                                            // marked, so one never repeats
 RTC_DATA_ATTR char     poolName[12]  = {0};  // who mined the last block
 RTC_DATA_ATTR long     rwdHeight     = 0;    // the height the reward/
                                              // miner actually describe
@@ -317,6 +333,10 @@ RTC_DATA_ATTR uint8_t  cellSel[NUM_MODES] = {0};
 // literal, and in IRAM that literal lands after the instruction using it —
 // "dangerous relocation: l32r: literal placed after use".
 volatile int g_isrPin = 0;
+// Set by WiFiManager when the setup form is submitted. The wallet portal can
+// succeed without a WiFi connection — someone pasting only a zpub — so
+// "connected" is not the only way out.
+bool g_portalSaved = false;
 void IRAM_ATTR btnISR0() { g_isrPin = BACK_BTN_PIN; }
 void IRAM_ATTR btnISR1() { g_isrPin = MENU_BTN_PIN; }
 void IRAM_ATTR btnISR2() { g_isrPin = UP_BTN_PIN;   }
@@ -409,6 +429,7 @@ public:
     filter[0]["height"] = true;
     filter[0]["timestamp"] = true;      // when the tip was mined: lets the
                                         // watch age it locally, no polling
+    filter[0]["tx_count"] = true;       // what the block actually carried
     filter[0]["extras"]["reward"] = true;
     filter[0]["extras"]["pool"]["name"] = true;
     JsonDocument doc;
@@ -419,6 +440,8 @@ public:
       rwdHeight = h;
       long long r = doc[0]["extras"]["reward"] | 0LL;
       if (r > 0) lastRewardBtc = r / 1e8;
+      long tc = doc[0]["tx_count"] | 0L;
+      if (tc > 0) lastTxCount = tc;
       uint32_t ts = doc[0]["timestamp"] | 0UL;
       if (ts > 0) tipBlockTime = ts;
       storePool(doc[0]["extras"]["pool"]["name"] | "");
@@ -595,6 +618,19 @@ public:
         }
       }
       http.end(); }
+    // the work behind it all. Filtered to one field: the response carries a
+    // long series of historical points that would eat the heap for nothing.
+    { HTTPClient http; http.setConnectTimeout(4000);
+      if (http.begin(client, HASH_URL) && http.GET() == 200) {
+        JsonDocument filter; filter["currentHashrate"] = true;
+        JsonDocument doc;
+        if (!deserializeJson(doc, http.getStream(),
+                             DeserializationOption::Filter(filter))) {
+          double hs = doc["currentHashrate"] | 0.0;      // hashes per second
+          if (hs > 0) netHashEH = (float)(hs / 1e18);    // -> exahash
+        }
+      }
+      http.end(); }
     // last block's total reward (subsidy + fees) — what mining paid
     { HTTPClient http; http.setConnectTimeout(4000);
       if (http.begin(client, "https://mempool.space/api/v1/blocks") &&
@@ -649,7 +685,7 @@ public:
       travelActive = false;                  // half an hour is long enough to
       Serial.println("[travel] expired");    // look at the future
     }
-    uint32_t every = watchIsIdle() ? FETCH_IDLE_MIN : FETCH_EVERY_MIN;
+    uint32_t every = watchIsIdle() ? FETCH_IDLE_MIN : fetchEveryMin();
     bool due = forceFetch || !haveData ||
                (wakeMin - lastFetchMin >= every);
     if (due && (forceFetch || wakeMin >= nextTryWake)) {
@@ -682,6 +718,12 @@ public:
 
     // the milestone: checked where a new height first becomes known
     if (!sawMillion && blockHeight >= 1000000L) millionScreen();
+
+    // and the curiosities, which are only ever marked once each
+    if (blockHeight > 0 && blockHeight != lastCurio) {
+      const char *why = curiosity(blockHeight);
+      if (why) { lastCurio = blockHeight; curiosityScreen(blockHeight, why); }
+    }
 
     forceFetch   = false;   // wallet scanning moved to the post-render hook
     fetchPending = false;   // the radio has been out: the corner stops saying
@@ -1352,6 +1394,28 @@ public:
   // How long the current tip has stood. Counted from the block's own
   // timestamp against the RTC, so it advances every minute without asking
   // anyone. Returns -1 when no timestamp has been seen yet.
+  // How often to go out, from how fast the chain is actually running.
+  //
+  // A fixed fifteen minutes is right at a ten-minute pace and wrong at both
+  // ends: when the chain speeds up the watch falls further behind between
+  // fetches, and when it slows down we spend radio for nothing. So the
+  // interval follows the measured pace — one and a half blocks' worth —
+  // which lands on the old fifteen at 10 min/blk and tightens on its own
+  // when the chain runs hot.
+  //
+  // Proportional rather than a threshold on purpose: a cliff at 9 min/blk
+  // would thrash every time avgBlockSec wobbled across the line.
+  //
+  // The ceiling is 18, not 20: STALE_AFTER_MIN is 20, and a normal cycle
+  // must never trip the LIVE -> OLD flip on its own.
+  uint32_t fetchEveryMin() {
+    float mins = (avgBlockSec / 60.0f) * 1.5f;
+    if (!(mins > 0)) return FETCH_EVERY_MIN;      // NaN guard
+    if (mins < 10) mins = 10;
+    if (mins > 18) mins = 18;
+    return (uint32_t)(mins + 0.5f);
+  }
+
   int blockAgeMin() {
     if (tipBlockTime == 0) return -1;
     // the system clock is unset until NTP anchors it — after a reflash that
@@ -1948,12 +2012,25 @@ public:
   // assume charging, which is the safe reading and true far more often.
   int chargeState() {
     pinMode(USB_DET_PIN, INPUT);
-    if (digitalRead(USB_DET_PIN) != 1) return 0;
+    if (digitalRead(USB_DET_PIN) != 1) { usbSeenWake = 0; return 0; }
+    if (usbSeenWake == 0) usbSeenWake = wakeMin ? wakeMin : 1;
     pinMode(CHG_STAT_PIN, INPUT_PULLUP);
     delayMicroseconds(60);
     if (digitalRead(CHG_STAT_PIN) == LOW) return 1;      // asserted: charging
-    return (battVoltsTrue() >= 4.05f) ? 2 : 1;           // HIGH needs a second
-  }                                                      // opinion
+
+    // CHG_STAT high means "not actively charging", which is true both of a
+    // finished charge and of the first moments after plugging in, before the
+    // IC has started. The voltage cannot break the tie: with USB attached the
+    // ADC reads the charger rail, not the resting cell, so it shows about
+    // 4.2 V the instant the cable goes in whatever the cell holds. That is
+    // why a watch at 60% jumped straight to 100%.
+    //
+    // So a terminated charge has to earn it: the cable has to have been in
+    // for a while, and only then does the voltage get a say.
+    uint32_t on = (wakeMin >= usbSeenWake) ? wakeMin - usbSeenWake : 0;
+    if (on < 25) return 1;                               // too soon to tell
+    return (battVoltsTrue() >= 4.05f) ? 2 : 1;
+  }
 
   // one ADC sample moves a few points on noise; the median of five drops
   // outliers without averaging a spike back in
@@ -2008,12 +2085,34 @@ public:
   // not accurate to 1%, and never rising while on battery. The latch releases
   // as soon as a charger is attached so it can climb again.
   int batteryPctShown() {
+    // Keep the worst reading the watch has ever taken, and the circumstances.
+    // Four log lines could not tell a flat cell from a bad sample; this can.
+    { float v = battVoltsTrue();
+      if (v > 2.0f && v < minVoltSeen) {
+        minVoltSeen = v; minVoltWake = wakeMin;
+        minVoltFlags = (travelActive ? 1 : 0) | (inDocked ? 2 : 0);
+      } }
     int raw     = (int)(batteryPct() * 100.0f + 0.5f);
     int rounded = ((raw + 2) / 5) * 5;
     if (rounded > 100) rounded = 100;
     if (rounded < 0)   rounded = 0;
-    if (chargeState() != 0) { shownBattPct = rounded; return rounded; }
-    if (shownBattPct < 0 || rounded < shownBattPct) shownBattPct = rounded;
+    int cs = chargeState();
+    if (cs == 2) { shownBattPct = 100; return 100; }   // the IC says finished
+    if (cs == 1) {
+      // Charging. There is no honest number here: the ADC is on the charger
+      // rail, so anything derived from it describes the cable. Hold the last
+      // reading taken on the cell and let the glyph say it is charging.
+      return (shownBattPct >= 0) ? shownBattPct : rounded;
+    }
+    if (shownBattPct < 0) { shownBattPct = rounded; return rounded; }
+    // A real cell does not fall twenty points between two wakes. If it seems
+    // to, that is a bad reading, not a battery — step down by twenty and let
+    // the next wake confirm it. A genuine collapse still gets there, one wake
+    // later; a glitch never poisons the latch again.
+    if (rounded < shownBattPct) {
+      int step = shownBattPct - rounded;
+      shownBattPct = (step > 20) ? shownBattPct - 20 : rounded;
+    }
     return shownBattPct;
   }
 
@@ -2024,7 +2123,12 @@ public:
   //   charging, full         : solid fill
   //   on battery             : proportional fill, '!' below 15%
   void drawBattery(int x, int y) {
-    float pct = batteryPct();
+    // One source of truth. This used to read batteryPct() while About read
+    // batteryPctShown(), so on the charger the glyph filled from the rail
+    // voltage while the number held the cell's last honest figure — a full
+    // glyph above a 60% reading. Both now come from the same place: the
+    // latched, five-percent-quantised value.
+    float pct = batteryPctShown() / 100.0f;
     int cs = chargeState();
     bool charging = (cs == 1);           // the bolt means charging, not plugged in
 
@@ -2179,6 +2283,87 @@ public:
     delay(600);
   }
 
+  // Curiosities. A palindrome comes round about once a week, a repdigit once
+  // in a lifetime. Neither means anything — that is rather the point. The
+  // watch spends the rest of its time being strict about numbers, and this is
+  // the one place it is allowed to enjoy one.
+  //
+  // It can only mark what it actually saw: the tip is read at fetch cadence,
+  // so a block that came and went between fetches passes unremarked. Better
+  // that than pretending to have witnessed it.
+  const char *curiosity(long h) {
+    if (h < 1000) return nullptr;
+    char s[16]; snprintf(s, 16, "%ld", h);
+    int n = strlen(s);
+    bool pal = true, rep = true;
+    for (int i = 0; i < n / 2; i++) if (s[i] != s[n-1-i]) { pal = false; break; }
+    for (int i = 1; i < n; i++)     if (s[i] != s[0])     { rep = false; break; }
+    if (rep) return "REPDIGIT BLOCK";
+    if (pal) return "PALINDROME BLOCK";
+    return nullptr;
+  }
+
+  void curiosityScreen(long h, const char *why) {
+    char s[16]; snprintf(s, 16, "%ld", h);
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+
+    // 1. the number, and nothing else
+    centerText(s, 104, &DSEG7_Classic_Bold_25);
+    display.display(true);
+    delay(240);
+
+    // 2. the two halves closing on the middle
+    //
+    //    There was an axis line down the centre of the number as well. It
+    //    said the same thing the arrows say and the number already shows,
+    //    and it sat between two digits that are meant to mirror each other.
+    for (int k = 0; k < 3; k++) {
+      int off = 26 - k * 8;
+      display.fillTriangle(100 - off, 128, 100 - off - 9, 122,
+                           100 - off - 9, 134, GxEPD_WHITE);
+      display.fillTriangle(100 + off, 128, 100 + off + 9, 122,
+                           100 + off + 9, 134, GxEPD_WHITE);
+      display.display(true);
+      delay(170);
+    }
+
+    // 3. what it is, over two lines. "PALINDROME BLOCK" set at size 2 is
+    //    192 px on a 200 px panel — it fits, with four pixels to spare on
+    //    each side, which is not a margin so much as a coincidence.
+    display.setFont(NULL);
+    display.setTextSize(2);
+    { char a[16], b[8]; const char *sp = strchr(why, ' ');
+      int n = sp ? (int)(sp - why) : (int)strlen(why);
+      if (n > 15) n = 15;
+      memcpy(a, why, n); a[n] = 0;
+      snprintf(b, 8, "%s", sp ? sp + 1 : "");
+      display.setCursor((200 - n * 12) / 2, 146);
+      display.print(a);
+      if (b[0]) {
+        display.setCursor((200 - (int)strlen(b) * 12) / 2, 168);
+        display.print(b);
+      } }
+    display.setTextSize(1);
+    display.display(true);
+    delay(240);
+
+    // 4. and the clean frame that stays up
+    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    display.display(false);
+    buzz(35, 2);
+    Serial.printf("[curio] %ld — %s\n", h, why);
+    delay(2600);
+  }
+
+  // There was a clearPanel() here: a full inverse refresh before the face,
+  // to scrub the residue a black menu left on a white panel. It went when the
+  // menu started following the theme — with both in the same palette there is
+  // no full-panel inversion to leave residue, and the face's own full refresh
+  // on exit is enough. One flash instead of two.
+
   void drawSplash() {
     display.fillScreen(bg());
     display.setTextColor(fg());
@@ -2247,10 +2432,10 @@ public:
   int cellStops(int m) {
     if (m == M_HGHT) {              // reward, miner, retarget, min/blk,
       if (travelActive) return 1;   // travelling: subsidy only
-      return (blockHeight > 0 && blockHeight < 1000000L) ? 7 : 6;
+      return 7;                     // transactions, hashrate, unconfirmed.
+                                    // Block age came out: the corner tag
+                                    // already says how old everything is.
     }
-                                    // block age, unconf, and the countdown
-                                    // to a million while it is still coming
     if (m == M_FEES) return 3;      // high, medium, low
     if (m == M_SUPL) return 2;      // issued, remaining
     return 6;                       // halving almanac, currency dials
@@ -2281,7 +2466,11 @@ public:
     for (int i = 0; i < NUM_MODES; i++) cellSel[i] = 0;
     curIdx = 0;
     for (int i = 0; i < 6; i++) fxRate[i] = 0;
-    lastRewardBtc = 0; mempoolBlocks = 0; poolName[0] = 0; rwdHeight = 0;
+    lastRewardBtc = 0; lastTxCount = 0; netHashEH = 0; lastCurio = 0;
+    minVoltSeen = 9.9f; minVoltWake = 0; minVoltFlags = 0;
+    usbSeenWake = 0;
+    mempoolBlocks = 0;
+    poolName[0] = 0; rwdHeight = 0;
     goldMcapB = 0; lastNtpWake = 0; tipBlockTime = 0; fetchPending = false;
     travelActive = false; travelHeight = 0; travelWake = 0;
     travelPastPrice = 0; travelPastFor = -1;
@@ -2426,10 +2615,16 @@ public:
       wakeMin++;                       // one tick per minute-wake
       joeReveal = false;               // the reveal lasts one glance only
     }
-    // hourly discharge sample
-    if (wakeMin - vlogWake >= 60 || vlogWake == 0) {
+    // Hourly discharge sample.
+    //
+    // Only while running on the cell. It used to log on any wake an hour
+    // apart, charger or not, so a run that ended on the charger filled the
+    // last hours with 4.1 V readings — and those are the shape of a charge,
+    // not a discharge. The log exists to fit the percentage curve, and a
+    // curve fitted to that is worse than no curve.
+    if ((wakeMin - vlogWake >= 60 || vlogWake == 0) && chargeState() == 0) {
       vlogWake = wakeMin;
-      float v = batteryVolts();
+      float v = batteryVolts();     // already the median of five
       vlog[vlogIdx % 24] = (uint8_t)(v * 50.0f);
       vlogIdx++;
       Serial.printf("[vlog] %02d  %.3fV raw  %.3fV true  %d%%\n",
@@ -2714,7 +2909,7 @@ public:
       // the timechain box, in the order that matters: what the last
       // block PAID, WHO found it, what the retarget will DO, what's
       // WAITING. SAT/CAP carry the 3-stop version (24H%% mid-slot).
-      int t = cellSel[dispMode] % cellStops(M_HGHT);   // seven until 1M
+      int t = cellSel[dispMode] % cellStops(M_HGHT);   // seven stops
       if (t == 0) {
         cellLabel = "BTC RWD";         // subsidy + tx fees
         snprintf(cell, 18, "%.2f", lastRewardBtc);
@@ -2735,27 +2930,20 @@ public:
           snprintf(cell, 18, "%s%.1f",
                    btcChange24h < 0 ? "-" : "", fabs(btcChange24h));
         }
-      } else if (t == 6 && dispMode == M_HGHT) {
-        // only exists until it happens, then the dial is one stop shorter
-        cellLabel = "TO 1M";
-        snprintf(cell, 18, "%ld", 1000000L - estHeight());
       } else if (t == 4 && dispMode == M_HGHT) {
-        // age of the tip we KNOW about: right after a fetch this can read
-        // anything from 0M upward, since it counts from the block's own
-        // timestamp rather than from our fetch. It overstates only when a
-        // newer block has landed that we have not seen — which is exactly
-        // when a fetch would be worth making.
-        // DSEG has no letters, so a unit has to come from the text renderer —
-        // the same path the miner name uses. "14 MIN" beats a bare 14.
-        // The age of the tip we hold, whatever its age. Marking it UNKNOWN when
-        // stale was tempting, but every other cell — reward, miner, price,
-        // fees — is equally a last-known value, and the corner tag already
-        // says so for all of them at once. One honesty mechanism, not eight.
-        int a = blockAgeMin();
-        cellLabel = "BLK AGE";
-        if (a < 0) strcpy(cell, "--");
-        else       snprintf(cell, 18, "%d MIN", a);
-        cellIsText = true;
+        // what the block carried. The reward says what it paid, the miner
+        // says who found it; this says how much work it actually settled.
+        cellLabel = "TXS";
+        if (lastTxCount > 0) snprintf(cell, 18, "%ld", lastTxCount);
+        else                 snprintf(cell, 18, "%s", "----");
+      } else if (t == 5 && dispMode == M_HGHT) {
+        // what is actually defending the chain. Exahash keeps it to three or
+        // four digits for years; below 1000 EH/s show a decimal, above it
+        // drop to whole units so the cell never overflows.
+        cellLabel = "EH/S";
+        if (netHashEH >= 1000)     snprintf(cell, 18, "%.0f", netHashEH);
+        else if (netHashEH > 0)    snprintf(cell, 18, "%.1f", netHashEH);
+        else                       snprintf(cell, 18, "%s", "----");
       } else if (t == 3 && dispMode == M_HGHT) {
         // how fast the chain is actually running: the same figure the
         // dead-reckoning uses, so a wearer can see why an estimate drifts
@@ -3062,8 +3250,12 @@ public:
     const char *items[MY_MENU_LEN] = {
       "About BWATCH", "Set Time", "Setup WiFi", "Networks", "Sync NTP",
       "Setup Wallet", "Set Timezone", "Time Travel"};
+    // The menu follows the theme, like everything else. It used to be black
+    // whatever the face was doing, which meant a light-mode wearer went from
+    // a white face to a black menu and back — a full-panel inversion twice,
+    // and the residue from it was the "some of it fades" effect on return.
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
+    display.fillScreen(bg());
     display.setFont(&FreeMonoBold9pt7b);
     int16_t x1, y1; uint16_t w, h;
     for (int i = 0; i < MY_MENU_LEN; i++) {
@@ -3071,16 +3263,16 @@ public:
       display.setCursor(0, yPos);
       if (i == idx) {
         display.getTextBounds(items[i], 0, yPos, &x1, &y1, &w, &h);
-        display.fillRect(x1 - 1, y1 - 10, 200, h + 15, GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
+        display.fillRect(x1 - 1, y1 - 10, 200, h + 15, fg());
+        display.setTextColor(bg());
         display.println(items[i]);
       } else {
-        display.setTextColor(GxEPD_WHITE);
+        display.setTextColor(fg());
         display.println(items[i]);
       }
     }
-    // always partial: the entry flash annoyed the owner, and the
-    // full refresh on exit-to-watchface is the ghost janitor anyway
+    // always partial: the entry flash annoyed the owner, and the menu now
+    // shares the face's palette, so there is no inversion to clean up on exit.
     display.display(true);
     guiState = MAIN_MENU_STATE;
     alreadyInMenu = false;
@@ -3130,17 +3322,17 @@ public:
 
       if (redraw) {
         redraw = false;
-        display.fillScreen(GxEPD_BLACK);
-        display.setTextColor(GxEPD_WHITE);
+        display.fillScreen(bg());
+        display.setTextColor(fg());
         display.setFont(&FreeMonoBold9pt7b);
         display.setCursor(0, 22); display.print("NETWORKS");
-        display.drawFastHLine(0, 30, 200, GxEPD_WHITE);
+        display.drawFastHLine(0, 30, 200, fg());
         for (int i = 0; i < 3; i++) {
           int y = 56 + i * 30;
           if (i == sel) {
-            display.fillRect(0, y - 15, 200, 22, GxEPD_WHITE);
-            display.setTextColor(GxEPD_BLACK);
-          } else display.setTextColor(GxEPD_WHITE);
+            display.fillRect(0, y - 15, 200, 22, fg());
+            display.setTextColor(bg());
+          } else display.setTextColor(fg());
           display.setCursor(4, y);
           if (wifiSsid[i][0]) {
             char s[15]; snprintf(s, 15, "%d %s", i + 1, wifiSsid[i]);
@@ -3150,7 +3342,7 @@ public:
             display.print(s);
           }
         }
-        display.setTextColor(GxEPD_WHITE);
+        display.setTextColor(fg());
         display.setFont(NULL);
         display.setCursor(0, 168); display.print("UP/DOWN  SELECT");
         display.setCursor(0, 180); display.print("HOLD MENU  FORGET");
@@ -3190,9 +3382,9 @@ public:
       if (millis() - lastActivity > 20000) { tzIndex = sel; break; }  // timeout
       if (redraw) {
         redraw = false;
-        display.fillScreen(GxEPD_BLACK);
+        display.fillScreen(bg());
         display.setFont(&FreeMonoBold9pt7b);
-        display.setTextColor(GxEPD_WHITE);
+        display.setTextColor(fg());
         display.setCursor(0, 22); display.println("Timezone");
         time_t utcNow = makeTime(currentTime) - settings.gmtOffset;
         for (int i = 0; i < 5; i++) {
@@ -3202,16 +3394,16 @@ public:
           snprintf(line, 24, "%s  UTC%+ld", tzName(i, utcNow), off / 3600L);
           display.setCursor(16, y);
           if (i == sel) {
-            display.fillRect(8, y - 15, 184, 21, GxEPD_WHITE);
-            display.setTextColor(GxEPD_BLACK);
-          } else display.setTextColor(GxEPD_WHITE);
+            display.fillRect(8, y - 15, 184, 21, fg());
+            display.setTextColor(bg());
+          } else display.setTextColor(fg());
           display.println(line);
         }
         // live preview of the clock in the highlighted zone
         time_t lt = makeTime(currentTime);
         if (sel > 0) lt = utcNow + tzOffsetSec(sel, utcNow);
         tmElements_t dt; breakTime(lt, dt);
-        display.setTextColor(GxEPD_WHITE);
+        display.setTextColor(fg());
         display.setCursor(0, 196);
         char pv[26];
         snprintf(pv, 26, "Now: %02d:%02d  MENU=OK", dt.Hour, dt.Minute);
@@ -3226,6 +3418,28 @@ public:
 
   // Setup Wallet: WiFi portal with a zpub field — customers configure
   // from their phone, no computer, no Arduino. Saved to NVS flash.
+  // The portal, blocking — which is how it has to be.
+  //
+  // There was a non-blocking version here that polled BACK so a failed setup
+  // could be abandoned instead of trapping the wearer for three minutes. It
+  // crashed the watch: when the phone submits the form the library is still
+  // mid-request, and stopping the portal from outside its own loop frees
+  // things the handler is using. A panic wipes RTC memory, so the watch came
+  // back in demo mode having forgotten its networks — a far worse fault than
+  // the one being fixed. Two attempts at a grace period did not settle it.
+  //
+  // So: the library runs its own loop and tears itself down, as it did
+  // before. The timeout is shorter than it was, which is the honest fix for
+  // being stuck — you wait, but not for three minutes.
+  bool runPortal(WiFiManager &wm, uint16_t secs) {
+    g_portalSaved = false;
+    wm.setSaveParamsCallback([]() { g_portalSaved = true; });
+    wm.setConfigPortalBlocking(true);
+    wm.setTimeout(secs);
+    bool ok = wm.startConfigPortal(WIFI_AP_SSID);
+    return ok || g_portalSaved;   // the wallet form can save without a join
+  }
+
   void setupWallet() {
     loadPrefs();
     guiState = APP_STATE;
@@ -3241,9 +3455,9 @@ public:
       lnAddrBuf, 63);
     wm.addParameter(&pLn);
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
+    display.fillScreen(bg());
     display.setFont(&FreeMonoBold9pt7b);
-    display.setTextColor(GxEPD_WHITE);
+    display.setTextColor(fg());
     display.setCursor(0, 25);
     display.println("On your phone,");
     display.println("join WiFi AP:");
@@ -3254,8 +3468,10 @@ public:
     display.println("");
     display.println("Addresses only -");
     display.println("NEVER a seed!");
+    display.println("");
+    display.println("Waits 4 min.");
     display.display(true);   // partial: no flash
-    wm.startConfigPortal(WIFI_AP_SSID);
+    runPortal(wm, 240);      // longer: pasting a zpub takes a while
     const char *lv = pLn.getValue();
     if (lv && strchr(lv, '@')) {
       strncpy(lnAddrBuf, lv, 63); lnAddrBuf[63] = 0;
@@ -3263,7 +3479,7 @@ public:
       savePrefs();
     }
     const char *v = pZpub.getValue();
-    display.fillScreen(GxEPD_BLACK);
+    display.fillScreen(bg());
     display.setCursor(0, 30);
     if (v && strlen(v) > 20 && strncmp(v, zpubBuf, sizeof(zpubBuf)) != 0) {
       strncpy(zpubBuf, v, sizeof(zpubBuf) - 1);
@@ -3377,12 +3593,29 @@ public:
 
   // dump the log: hold DOWN on the About screen
   void dumpVlog() {
-    Serial.println("[vlog] hour  raw    true   (oldest first)");
+    Serial.printf("[vlog] lowest true reading ever: %.3fV at wake %lu%s%s\n",
+                  minVoltSeen, (unsigned long)minVoltWake,
+                  (minVoltFlags & 1) ? " (travelling)" : "",
+                  (minVoltFlags & 2) ? " (docked)" : "");
+    // Count what is actually there first. The old dump printed the ring
+    // position as if it were an hour, so four samples in a fresh log came
+    // out labelled 20, 21, 22, 23 — which reads as twenty hours of history
+    // that does not exist. Label them by age instead, and say how many.
+    int have = 0;
+    for (int i = 0; i < 24; i++) if (vlog[i] != 0) have++;
+    Serial.printf("[vlog] %d sample%s, one an hour, newest last\n",
+                  have, have == 1 ? "" : "s");
+    Serial.println("[vlog]  age   raw    true");
+    int n = 0;
     for (int i = 0; i < 24; i++) {
       int k = (vlogIdx + i) % 24;
       if (vlog[k] == 0) continue;
       float v = vlog[k] / 50.0f;
-      Serial.printf("[vlog]  %2d   %.2f   %.2f\n", i, v,
+      int ago = have - 1 - n;                 // hours before the newest
+      n++;
+      if (ago == 0) Serial.printf("[vlog]  now   %.2f   %.2f\n", v,
+                    v * (4.20f / (battFullV > 3.0f ? battFullV : 4.20f)));
+      else Serial.printf("[vlog] -%2dh   %.2f   %.2f\n", ago, v,
                     v * (4.20f / (battFullV > 3.0f ? battFullV : 4.20f)));
     }
   }
@@ -3474,8 +3707,8 @@ public:
       if (target > 6930000L) target = 6930000L;   // the last subsidy era
 
       display.setFullWindow();
-      display.fillScreen(GxEPD_BLACK);
-      display.setTextColor(GxEPD_WHITE);
+      display.fillScreen(bg());
+      display.setTextColor(fg());
       display.setFont(NULL);
       centerText("TIME TRAVEL", 12, NULL);
 
@@ -3505,14 +3738,14 @@ public:
       double sub = 50.0; for (int i = 0; i < era && i < 33; i++) sub /= 2.0;
       double issued = supplyBTC(target);
 
-      display.drawFastHLine(14, 96, 172, GxEPD_WHITE);
+      display.drawFastHLine(14, 96, 172, fg());
       display.setCursor(14, 106);  display.printf("REWARD  %.8f", sub);
       display.setCursor(14, 120);  display.printf("EPOCH   %d of 33", era + 1);
       display.setCursor(14, 134);  display.printf("ISSUED  %.0f", issued);
       display.setCursor(14, 148);  display.printf("LEFT    %.0f", supplyCapBTC() - issued);
       display.setCursor(14, 162);  display.printf("MINED   %.4f%%", issued / supplyCapBTC() * 100.0);
 
-      display.drawFastHLine(14, 172, 172, GxEPD_WHITE);
+      display.drawFastHLine(14, 172, 172, fg());
       snprintf(line, 34, "TRAVEL BY %s", SNAME[step]);
       centerText(line, 178, NULL);
       centerText("HOLD MENU TO LAUNCH", 190, NULL);
@@ -3541,8 +3774,8 @@ public:
               // a moment of transit, and it names which way you are going:
               // the past is fetched, the future is only ever projected
               display.setFullWindow();
-              display.fillScreen(GxEPD_BLACK);
-              display.setTextColor(GxEPD_WHITE);
+              display.fillScreen(bg());
+              display.setTextColor(fg());
               if (target < blockHeight) {
                 centerText("FETCHING", 92, NULL);
                 centerText("THE RECORD", 108, NULL);
@@ -3586,8 +3819,8 @@ public:
     // drops to the 6 px built-in font, which fits 33.
     guiState = APP_STATE;
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(bg());
+    display.setTextColor(fg());
     display.setFont(&FreeMonoBold9pt7b);
 
     int y = 20;
@@ -3668,16 +3901,16 @@ public:
   void mySyncNTP() {
     guiState = APP_STATE;
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
+    display.fillScreen(bg());
     display.setFont(&FreeMonoBold9pt7b);
-    display.setTextColor(GxEPD_WHITE);
+    display.setTextColor(fg());
     display.setCursor(0, 30);
     display.println("Syncing NTP...");
     display.display(true);   // partial: no flash
     bool ok = false;
     if (myConnectWiFi()) ok = syncNTP();   // RTC keeps UTC (offset 0)
     if (ok) lastNtpWake = wakeMin;
-    display.fillScreen(GxEPD_BLACK);
+    display.fillScreen(bg());
     display.setCursor(0, 30);
     if (ok) {
       RTC.read(currentTime);
@@ -3703,9 +3936,9 @@ public:
   void mySetupWifi() {
     display.epd2.setBusyCallback(0);
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
+    display.fillScreen(bg());
     display.setFont(&FreeMonoBold9pt7b);
-    display.setTextColor(GxEPD_WHITE);
+    display.setTextColor(fg());
     display.setCursor(0, 30);
     display.println("Trying saved");
     display.println("networks...");
@@ -3718,7 +3951,7 @@ public:
       // nothing in range: open the portal AND SAY SO. The field bug:
       // autoConnect started an invisible portal behind a stale
       // "trying..." screen, and timed out unjoined.
-      display.fillScreen(GxEPD_BLACK);
+      display.fillScreen(bg());
       display.setCursor(0, 25);
       display.println("No saved network");
       display.println("in range.");
@@ -3729,16 +3962,34 @@ public:
       display.println("");
       display.println("and pick your");
       display.println("network there.");
+      display.println("");
+      display.println("Waits 2 min.");
       display.display(true);   // partial: no flash
-      wifiManager.setTimeout(180);   // real phone-fumbling time, not 60s
-      ok = wifiManager.startConfigPortal(WIFI_AP_SSID);
+      ok = runPortal(wifiManager, 120);   // enough to fumble a phone,
+                                          // short enough to wait out
     }
     if (!ok) {
-      display.fillScreen(GxEPD_BLACK);
+      display.fillScreen(bg());
       display.setCursor(0, 30);
-      display.println("Setup failed &");
-      display.println("timed out!");
+      display.println("Not connected.");
+      display.println("");
+      display.println("Nothing was saved.");
+      display.println("The watch keeps");
+      display.println("the networks it");
+      display.println("already had.");
+      display.println("");
+      display.println("Any key = back");
       display.display(true);   // partial: no flash
+      pinMode(BACK_BTN_PIN, INPUT); pinMode(MENU_BTN_PIN, INPUT);
+      pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+      unsigned long t0 = millis();
+      while (millis() - t0 < 12000) {         // or it leaves on its own
+        if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
+            digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
+            digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
+            digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) { waitAllRelease(); break; }
+        delay(30);
+      }
     } else {
       saveNetwork(WiFi.SSID(), WiFi.psk());
       forceFetch = true;   // proof of life: next face render fetches,
@@ -3749,7 +4000,7 @@ public:
                            // that would ignore the now-working network
                            // for up to 5 more minutes (the OLD 6H
                            // after a successful setup)
-      display.fillScreen(GxEPD_BLACK);
+      display.fillScreen(bg());
       display.setCursor(0, 30);
       display.println("Connected to:");
       display.println(WiFi.SSID());
@@ -3774,16 +4025,17 @@ public:
         }
         if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
           waitRelease(UP_BTN_PIN);
-          display.fillScreen(GxEPD_BLACK);
+          display.fillScreen(bg());
           display.setCursor(0, 25);
           display.println("On your phone,");
           display.println("join WiFi AP:");
           display.println(WIFI_AP_SSID);
+          display.println("");
+          display.println("Waits 2 min.");
           display.display(true);   // partial: no flash
           WiFi.disconnect(true, false);
           delay(300);
-          wifiManager.setTimeout(180);
-          if (wifiManager.startConfigPortal(WIFI_AP_SSID))
+          if (runPortal(wifiManager, 120))
             saveNetwork(WiFi.SSID(), WiFi.psk());
           break;
         }
@@ -3831,6 +4083,9 @@ public:
                   digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
                   digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
                   digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE);
+    // batteryPct(), not batteryPctShown(): a decision about whether to draw
+    // power wants the reading as it is now, not a display figure that is
+    // deliberately prevented from rising.
     if (!force && batteryPct() < 0.95f) {
       Serial.printf("[dock] charge first: %d%% %.2fV — sleeping so it fills\n",
                     (int)(batteryPct()*100.0f+0.5f), batteryVolts());
