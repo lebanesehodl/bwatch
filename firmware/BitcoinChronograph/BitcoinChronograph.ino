@@ -789,6 +789,33 @@ public:
     p.end();
   }
 
+  // The discharge log, written to flash.
+  //
+  // vlog lived only in RTC memory, which survives deep sleep but not a power
+  // loss — so the one event the log exists to measure, a cell running flat,
+  // was also the event that erased it. Three runs were lost that way before
+  // anyone noticed the shape of the problem.
+  //
+  // Written once an hour alongside the sample, which is nothing against NVS
+  // wear: a year of continuous wear is about nine thousand writes against a
+  // hundred thousand cycle rating.
+  void saveVlog() {
+    Preferences p;
+    p.begin("btcchrono", false);
+    p.putBytes("vlog", (const void *)vlog, sizeof(vlog));
+    p.putUChar("vidx", vlogIdx);
+    p.end();
+  }
+
+  void loadVlog() {
+    Preferences p;
+    p.begin("btcchrono", true);
+    if (p.getBytesLength("vlog") == sizeof(vlog))
+      p.getBytes("vlog", (void *)vlog, sizeof(vlog));
+    vlogIdx = p.getUChar("vidx", 0);
+    p.end();
+  }
+
   // A zpub is an ACCOUNT key with two branches under it: .../0/i receive
   // and .../1/i change. Spending consumes a whole utxo from the receive
   // branch and returns the remainder to the change branch — so a wallet
@@ -2011,9 +2038,10 @@ public:
   // only counts as terminated when the cell's voltage agrees; otherwise we
   // assume charging, which is the safe reading and true far more often.
   int chargeState() {
+    static uint32_t usbSeenMs = 0;        // this boot only; millis() resets
     pinMode(USB_DET_PIN, INPUT);
-    if (digitalRead(USB_DET_PIN) != 1) { usbSeenWake = 0; return 0; }
-    if (usbSeenWake == 0) usbSeenWake = wakeMin ? wakeMin : 1;
+    if (digitalRead(USB_DET_PIN) != 1) { usbSeenWake = 0; usbSeenMs = 0; return 0; }
+    if (usbSeenWake == 0) { usbSeenWake = wakeMin ? wakeMin : 1; usbSeenMs = millis(); }
     pinMode(CHG_STAT_PIN, INPUT_PULLUP);
     delayMicroseconds(60);
     if (digitalRead(CHG_STAT_PIN) == LOW) return 1;      // asserted: charging
@@ -2027,8 +2055,13 @@ public:
     //
     // So a terminated charge has to earn it: the cable has to have been in
     // for a while, and only then does the voltage get a say.
-    uint32_t on = (wakeMin >= usbSeenWake) ? wakeMin - usbSeenWake : 0;
-    if (on < 25) return 1;                               // too soon to tell
+    // Two clocks, because neither runs in every case. wakeMin advances only
+    // on minute wakes, which stop while the watch is docked; millis() runs
+    // while awake but resets on every boot, and a flat cell means a boot.
+    // Either reaching twenty-five minutes is enough.
+    uint32_t onWakes = (wakeMin >= usbSeenWake) ? wakeMin - usbSeenWake : 0;
+    uint32_t onMs    = millis() - usbSeenMs;
+    if (onWakes < 25 && onMs < 25UL * 60UL * 1000UL) return 1;   // too soon
     return (battVoltsTrue() >= 4.05f) ? 2 : 1;
   }
 
@@ -2101,8 +2134,11 @@ public:
     if (cs == 1) {
       // Charging. There is no honest number here: the ADC is on the charger
       // rail, so anything derived from it describes the cable. Hold the last
-      // reading taken on the cell and let the glyph say it is charging.
-      return (shownBattPct >= 0) ? shownBattPct : rounded;
+      // reading taken on the cell — and if there is not one, say so rather
+      // than borrow the rail's. That case is a watch that ran flat and was
+      // plugged in: RTC memory went with the cell, so the last thing it knew
+      // about itself is gone, and 100% would be the worst possible guess.
+      return (shownBattPct >= 0) ? shownBattPct : -1;   // -1: not known
     }
     if (shownBattPct < 0) { shownBattPct = rounded; return rounded; }
     // A real cell does not fall twenty points between two wakes. If it seems
@@ -2128,7 +2164,9 @@ public:
     // voltage while the number held the cell's last honest figure — a full
     // glyph above a 60% reading. Both now come from the same place: the
     // latched, five-percent-quantised value.
-    float pct = batteryPctShown() / 100.0f;
+    int shown = batteryPctShown();
+    bool known = (shown >= 0);           // -1: charging with nothing to go on
+    float pct = known ? shown / 100.0f : 0.0f;
     int cs = chargeState();
     bool charging = (cs == 1);           // the bolt means charging, not plugged in
 
@@ -2487,9 +2525,15 @@ public:
     // 2028 halving by months without anything looking obviously broken.
     avgBlockSec = 600;
     joeReveal = false; captivePortal = false; resting = false;
+    lnFetchedWake = 0;      // a stale stamp can make an old invoice
+                            // look fresh after a layout change
     sawMillion = false;
-    vlogIdx = 0; vlogWake = 0;
-    for (int i = 0; i < 24; i++) vlog[i] = 0;
+    // The log is not cleared here. RTC memory has just been thrown away, but
+    // the samples live in flash and are the whole point of collecting them —
+    // a layout change or a flat cell should not cost a discharge run. Only
+    // the hourly timer resets, so the next sample lands on a fresh hour.
+    vlogWake = 0;
+    loadVlog();
     prefsLoaded = false;                    // NVS reloads the real ones
     memset(wifiSsid, 0, sizeof(wifiSsid));
     memset(wifiPass, 0, sizeof(wifiPass));
@@ -2578,7 +2622,8 @@ public:
 
     // the cell, drawn the way the strip wants it: a rule with a fill under it
     display.fillRect(78, SY, 46, 3, fg());
-    int fw = (int)(46.0f * batteryPctShown() / 100.0f + 0.5f);
+    int bp = batteryPctShown();
+    int fw = (bp >= 0) ? (int)(46.0f * bp / 100.0f + 0.5f) : 0;
     if (fw > 0) display.fillRect(78, SY + 5, fw, 5, fg());
 
     char right[16];
@@ -2627,6 +2672,7 @@ public:
       float v = batteryVolts();     // already the median of five
       vlog[vlogIdx % 24] = (uint8_t)(v * 50.0f);
       vlogIdx++;
+      saveVlog();                   // so a flat cell cannot erase the evidence
       Serial.printf("[vlog] %02d  %.3fV raw  %.3fV true  %d%%\n",
                     vlogIdx % 24, v, battVoltsTrue(), batteryPctShown());
     }
@@ -3829,7 +3875,10 @@ public:
     int cs = chargeState();
     int p  = batteryPctShown();
     y += 20; display.setCursor(0, y);
-    display.printf("Batt %3d%%", p);                                // 9
+    if (p >= 0) display.printf("Batt %3d%%", p);                    // 9
+    else        display.print("Batt  --%");   // charging, and the last
+                                              // on-cell reading died with
+                                              // the cell
 
     y += 18; display.setCursor(0, y);
     // the voltage is diagnostic, not decoration: a stuck percentage means
@@ -3852,7 +3901,9 @@ public:
     y += 18; display.setCursor(0, y);
     if (!haveData) display.print("Data none");
     else {
-      uint32_t age = wakeMin - lastFetchMin;
+      // unsigned: if the counters ever disagree the subtraction wraps to
+      // about four billion and About reports "Data 71582788h old"
+      uint32_t age = (wakeMin >= lastFetchMin) ? wakeMin - lastFetchMin : 0;
       if (age < 60) display.printf("Data %lum old", (unsigned long)age);
       else          display.printf("Data %luh old", (unsigned long)(age / 60));
     }
@@ -3860,7 +3911,7 @@ public:
     y += 18; display.setCursor(0, y);
     if (lastNtpWake == 0) display.print("Sync never");
     else {
-      uint32_t a2 = wakeMin - lastNtpWake;
+      uint32_t a2 = (wakeMin >= lastNtpWake) ? wakeMin - lastNtpWake : 0;
       if (a2 < 60) display.printf("Sync %lum ago", (unsigned long)a2);
       else         display.printf("Sync %luh ago", (unsigned long)(a2 / 60));
     }
@@ -4083,12 +4134,19 @@ public:
                   digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
                   digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
                   digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE);
-    // batteryPct(), not batteryPctShown(): a decision about whether to draw
-    // power wants the reading as it is now, not a display figure that is
-    // deliberately prevented from rising.
-    if (!force && batteryPct() < 0.95f) {
-      Serial.printf("[dock] charge first: %d%% %.2fV — sleeping so it fills\n",
-                    (int)(batteryPct()*100.0f+0.5f), batteryVolts());
+    // Ask the charge IC, not the ADC.
+    //
+    // This gate used to read batteryPct() < 0.95, which never once fired: with
+    // USB attached the ADC is on the charger rail, so batteryPct() returns
+    // about 100% from the instant the cable goes in, whatever the cell holds.
+    // The rule was written for exactly this situation and was dead in it.
+    //
+    // chargeState() == 2 means the charge IC has terminated AND the cell reads
+    // above 4.05 V after the cable has been in long enough to be believed.
+    // That is the only trustworthy "it is full" this watch has.
+    if (!force && chargeState() != 2) {
+      Serial.printf("[dock] charge first: state %d %.2fV — sleeping so it fills\n",
+                    chargeState(), batteryVolts());
       inDocked = false;
       return;                       // caller resumes normal minute wakes
     }
@@ -4107,7 +4165,10 @@ public:
     // the same order as the charger supplies — so a docked watch below full
     // charges with the leftovers and appears to stall. Below 90% we enable
     // modem sleep and slow the polls; above it, full realtime dock.
-    bool chargeSaver = batteryPct() < 0.90f;
+    // Same rail problem as the gate above: batteryPct() cannot see the cell
+    // while the cable is in. Terminated means full, anything else means keep
+    // the radio quiet so the charge finishes sooner.
+    bool chargeSaver = (chargeState() != 2);
     WiFi.setSleep(chargeSaver);
     unsigned long lastChargeCheck = 0;
     { pinMode(CHG_STAT_PIN, INPUT_PULLUP);
@@ -4135,7 +4196,7 @@ public:
       // modem sleep and give back the realtime dock
       if (millis() - lastChargeCheck > 60000) {
         lastChargeCheck = millis();
-        bool want = batteryPct() < 0.90f;
+        bool want = (chargeState() != 2);
         if (want != chargeSaver) {
           chargeSaver = want;
           WiFi.setSleep(chargeSaver);
