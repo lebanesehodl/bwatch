@@ -191,7 +191,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0133
+#define RTC_LAYOUT_MAGIC 0xB17C0134
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -294,6 +294,9 @@ RTC_DATA_ATTR uint8_t  lateKind      = 0;      // LATE_NONE / _CHAIN / _LN
 RTC_DATA_ATTR int      lateIdx       = -1;     // receive index the QR showed
 RTC_DATA_ATTR uint64_t lateBase      = 0;      // its funded sum when shown
 RTC_DATA_ATTR uint32_t lateUntil     = 0;      // wakeMin the watch ends
+RTC_DATA_ATTR bool     shipMode      = false;  // asleep in the box: only a
+                                               // held button or USB wakes it
+RTC_DATA_ATTR uint32_t shipSince     = 0;      // RTC epoch it went to sleep
 RTC_DATA_ATTR uint8_t  trackState    = 0;      // TRACK_NONE / _RESOLVE / _ON
 RTC_DATA_ATTR char     trackAddr[64] = {0};    // where the payment landed
 RTC_DATA_ATTR char     trackTxid[65] = {0};
@@ -3245,6 +3248,7 @@ public:
     evQueue = 0; evShown = 0; evWake = 0; evBlockH = 0; evFee = 0; evFeeAt = 0;
     evConfN = 0; evConfSats = 0; evConfBlock = 0; evPaySats = 0; evPayLn = false;
     lateKind = 0; lateIdx = -1; lateBase = 0; lateUntil = 0;
+    shipMode = false; shipSince = 0;
     trackState = 0; trackAddr[0] = 0; trackTxid[0] = 0; trackSats = 0;
     trackHeight = 0; trackShown = 0; trackWake = 0; lastDoneTx[0] = 0;
     fastSsid[0] = 0; fastChan = 0; memset(fastBssid, 0, sizeof(fastBssid));
@@ -3428,6 +3432,10 @@ public:
 
   void drawWatchFace() override {
     sanitizeState();
+    if (shipMode) {                     // USB in: out of the box. Anything else
+      if (usbPresent()) { leaveShipMode("usb"); bootGenesis(); }
+      else { shipSleep(); return; }     // (a reset) goes back to sleep
+    }
 
     // Out of charge: put up the resting screen once and stop. Checked before
     // anything else is drawn, because a panel refresh at 3.3 V is exactly
@@ -4103,12 +4111,14 @@ public:
   }
 
   // ---------------- menu: stock items + Timezone ----------------
-  static const int MY_MENU_LEN = 9;
+  static const int MY_MENU_LEN = 10;
+  static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
+                                           // row's descenders run off the panel
 
   void myShowMenu(byte idx, bool partial) {
     const char *items[MY_MENU_LEN] = {
       "About BWATCH", "Set Time", "Setup WiFi", "Networks", "Sync NTP",
-      "Setup Wallet", "Set Timezone", "Time Travel", "Alarms"};
+      "Setup Wallet", "Set Timezone", "Time Travel", "Alarms", "Ship Mode"};
     // The menu follows the theme, like everything else. It used to be black
     // whatever the face was doing, which meant a light-mode wearer went from
     // a white face to a black menu and back — a full-panel inversion twice,
@@ -4117,8 +4127,10 @@ public:
     display.fillScreen(bg());
     display.setFont(&FreeMonoBold9pt7b);
     int16_t x1, y1; uint16_t w, h;
-    for (int i = 0; i < MY_MENU_LEN; i++) {
-      int16_t yPos = 22 + 22 * i;
+    // more items than rows: the list scrolls so the selection stays on screen
+    int first = (idx >= MENU_ROWS) ? idx - (MENU_ROWS - 1) : 0;
+    for (int i = first; i < MY_MENU_LEN && i < first + MENU_ROWS; i++) {
+      int16_t yPos = 22 + 22 * (i - first);
       display.setCursor(0, yPos);
       if (i == idx) {
         display.getTextBounds(items[i], 0, yPos, &x1, &y1, &w, &h);
@@ -4759,6 +4771,122 @@ public:
         waitAllRelease();
         drawPicker();
       }
+    }
+  }
+
+  // ---------------- ship mode ----------------
+  // For the box. The deepest sleep there is: no minute wakes, no timer, no
+  // radio, the accelerometer powered down. The e-paper holds a card telling
+  // whoever opens it what to do, which costs nothing to keep up. Only a held
+  // button (3 s) or USB brings it back; a button knocked in transit wakes the
+  // chip for a moment, sees it was not held, and sleeps again.
+  bool usbPresent() { pinMode(USB_DET_PIN, INPUT); return digitalRead(USB_DET_PIN) == 1; }
+
+  void drawShipCard() {
+    bool t = themeDark; themeDark = true;          // the card is always dark
+    bootClear();
+    bootCenter("BWATCH", 46, 3);
+    display.drawFastHLine(40, 78, 120, GxEPD_WHITE);
+    bootCenter("HOLD ANY BUTTON", 96, 1);
+    bootCenter("FOR 3 SECONDS TO START", 110, 1);
+    bootCenter("OR PLUG IN TO CHARGE", 134, 1);
+    drawTinyB(97, 174);
+    themeDark = t;
+    display.display(false);                        // full: it has to last
+  }
+
+  // Never returns on v3.
+  void shipSleep() {
+  #ifdef ARDUINO_ESP32S3_DEV
+    WiFi.mode(WIFI_OFF); btStop();
+    sensor.disableAccel();                         // its own few µA, for weeks
+    if (!shipSince) { tmElements_t t; RTC.read(t); shipSince = (uint32_t)makeTime(t); }
+    sleptSince = 0;
+    Serial.println("[ship] asleep - hold a button 3 s or plug in");
+    Serial.flush();
+    display.hibernate();
+    RTC.clearAlarm();
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);   // no timer at all
+    pinMode(USB_DET_PIN, INPUT);
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)USB_DET_PIN,
+                                 digitalRead(USB_DET_PIN) == 1 ? LOW : HIGH);
+    rtc_gpio_set_direction((gpio_num_t)USB_DET_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)USB_DET_PIN);
+    esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_LOW);
+    rtc_gpio_set_direction((gpio_num_t)UP_BTN_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)UP_BTN_PIN);
+    rtc_clk_32k_enable(true);                      // the clock keeps time
+    esp_deep_sleep_start();
+  #endif
+  }
+
+  // Out of the box. The clock kept time the whole way, so the watch knows how
+  // long it slept: everything it holds is that old, and the first thing it
+  // does is fetch.
+  void leaveShipMode(const char *why) {
+    tmElements_t t; RTC.read(t);
+    long el = shipSince ? (long)makeTime(t) - (long)shipSince : 0;
+    if (el > 0) wakeMin += (uint32_t)(el / 60);
+    shipMode = false; shipSince = 0; sleptSince = 0;
+    restState = REST_NONE;
+    awakeTill = wakeMin + PRESS_GRACE_MIN;
+    sensor.enableAccel();
+    forceFetch = true;
+    Serial.printf("[ship] awake (%s) after %ld min\n", why, el / 60);
+    buzz(50, 4);
+  }
+
+  // MENU > Ship Mode. Says what will happen, shows the charge, and refuses
+  // while USB is in (plugging in is one of the ways out).
+  void shipModeScreen() {
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);
+    pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    while (true) {
+      themeDark = darkNow();
+      bool usb = usbPresent();
+      display.setFullWindow();
+      display.fillScreen(bg());
+      display.setTextColor(fg());
+      display.setFont(NULL);
+      centerText("SHIP MODE", 12, NULL);
+      display.drawFastHLine(14, 26, 172, fg());
+      centerSmall("FOR STORAGE AND THE POST:", 38);
+      centerSmall("NO RADIO, NO MINUTE WAKES", 52);
+      centerSmall("WAKES ON A 3 S BUTTON HOLD", 66);
+      centerSmall("OR WHEN PLUGGED IN", 80);
+      char b[28]; int pct = batteryPctShown();
+      if (pct >= 0) snprintf(b, sizeof(b), "BATTERY %d%%", pct);
+      else          snprintf(b, sizeof(b), "BATTERY --");
+      centerText(b, 110, NULL);
+      centerSmall("SHIP AT 40-50% CHARGE", 124);
+      display.drawFastHLine(14, 168, 172, fg());
+      centerSmall(usb ? "UNPLUG USB FIRST" : "HOLD MENU TO SHIP", 176);
+      centerSmall("BACK TO CANCEL", 190);
+      display.display(true);
+
+      int p = waitForPress(60000);
+      if (p < 0) {
+        guiState = WATCHFACE_STATE;
+        RTC.read(currentTime);
+        showWatchFace(false);
+        return;
+      }
+      if (p == BACK_BTN_PIN) { waitAllRelease(); myShowMenu(menuIndex, false); return; }
+      if (p == MENU_BTN_PIN && heldFor(MENU_BTN_PIN, 800)) {
+        if (usbPresent()) { buzz(30, 6); waitAllRelease(); continue; }
+        buzz(50, 4);
+        waitAllRelease();
+        shipMode = true;
+        shipSince = 0;
+        guiState = WATCHFACE_STATE;                // what it wakes into
+        drawShipCard();
+        shipSleep();                               // v3: does not return
+        return;
+      }
+      waitAllRelease();                            // anything else: redraw
     }
   }
 
@@ -5639,6 +5767,7 @@ public:
       case 6: showTimezone(); break;                    // ends in our menu
       case 7: timeTravel(); break;                      // arithmetic, not data
       case 8: alarmsScreen(); break;                    // block and fee
+      case 9: shipModeScreen(); break;                  // asleep for the box
     }
   }
 
@@ -6061,6 +6190,22 @@ public:
   // ---------------- buttons ----------------
   void handleButtonPress() override {
     sanitizeState();
+    if (shipMode) {
+      // a knock in the box wakes the chip; only a 3 s hold wakes the watch
+      uint64_t w = esp_sleep_get_ext1_wakeup_status();
+      int pin = (w & MENU_BTN_MASK) ? MENU_BTN_PIN
+              : (w & BACK_BTN_MASK) ? BACK_BTN_PIN
+              : (w & UP_BTN_MASK)   ? UP_BTN_PIN : DOWN_BTN_PIN;
+      pinMode(pin, (pin == UP_BTN_PIN && !BTN_ACTIVE) ? INPUT_PULLUP : INPUT);
+      if (!heldFor(pin, 3000)) { shipSleep(); return; }
+      leaveShipMode("button");
+      waitAllRelease();
+      bootGenesis();                               // a first start, properly
+      guiState = WATCHFACE_STATE;
+      RTC.read(currentTime);
+      showWatchFace(false);
+      return;
+    }
     wakeMin += catchUpWakeClock();     // a press can cut a long sleep short
     uint64_t wake = esp_sleep_get_ext1_wakeup_status();
     buttonWake = true;                 // don't tick the wake clock
