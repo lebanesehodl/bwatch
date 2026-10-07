@@ -4462,12 +4462,6 @@ public:
     display.drawPixel(x + 3, y + 7, fg());          // the clapper
   }
 
-  void fmtFee(float f, char *out, int n) {          // 4, 12, or 1.5 sat/vB
-    if (!(f > 0)) { snprintf(out, n, "--"); return; }
-    if (f < 10 && fabsf(f - roundf(f)) >= 0.05f) snprintf(out, n, "%.1f", f);
-    else snprintf(out, n, "%.0f", f);
-  }
-
   void fmtGrouped(long long v, char *out, int n) {  // 1,050,000
     char d[24]; snprintf(d, 24, "%lld", v < 0 ? -v : v);
     int len = strlen(d), o = 0;
@@ -4584,7 +4578,7 @@ public:
       display.setFont(NULL);
       centerSmall("SAT/VB", 80);
       centerSmall("BUZZ AT OR BELOW THIS", 102);
-      char a[8], now[28]; fmtFee(fastFee, a, 8);
+      char a[8], now[28]; fmtFee(a, 8, fastFee);
       snprintf(now, 28, "FAST FEE NOW %s", a);
       centerSmall(now, 120);
       display.drawFastHLine(14, 172, 172, fg());
@@ -4633,15 +4627,19 @@ public:
   void fireEvent(uint8_t bit) {
     evQueue |= bit;
     evWake = wakeMin;
+    // the same kind firing again (1/6 then 3/6) carries new numbers: if its
+    // screen is already up, it must be redrawn, not left saying the old ones
+    if (evShown == bit) evShown = 0;
     Serial.printf("[alarm] fired %u (queue %u)\n", bit, evQueue);
-    // each its own pattern, so the wrist knows which before the eyes do
+    // each its own pattern, so the wrist knows which before the eyes do.
+    // Through buzz(): an odd vibMotor length leaves the motor running.
     if (bit == EV_BLOCK) {
-      vibMotor(75, 14);                                     // one long
+      buzz(75, 14);                                         // one long
     } else if (bit == EV_FEE) {
-      vibMotor(75, 4); delay(160); vibMotor(75, 4);         // two short
+      buzz(75, 4); delay(160); buzz(75, 4);                 // two short
     } else {
       int ticks = evConfN >= 6 ? 6 : (evConfN >= 3 ? 3 : 1);
-      for (int i = 0; i < ticks; i++) { vibMotor(40, 2); delay(140); }
+      for (int i = 0; i < ticks; i++) { buzz(40, 2); delay(140); }
     }
   }
 
@@ -4722,9 +4720,9 @@ public:
       }
     } else if (ev == EV_FEE) {
       snprintf(head, 24, "FEES ARE LOW");
-      fmtFee(evFee, big, 20);
+      fmtFee(big, 20, evFee);          // the face's own formatter
       snprintf(l1, 30, "SAT/VB - ALARM AT %u", evFeeAt);
-      char a[8], b[8]; fmtFee(medFee, a, 8); fmtFee(lowFee, b, 8);
+      char a[8], b[8]; fmtFee(a, 8, medFee); fmtFee(b, 8, lowFee);
       snprintf(l2, 30, "30M %s - 1H %s", a, b);
     } else {
       snprintf(head, 24, evConfN >= 6 ? "PAYMENT SETTLED" : "PAYMENT CONFIRMED");
