@@ -677,6 +677,21 @@ public:
     return accelSeeded && (wakeMin - lastMoveWake) >= STILL_AFTER_MIN;
   }
 
+  // offline: back off 5 -> 10 -> 20 -> 40 -> 60 min between radio attempts
+  // instead of a 12 s WiFi search on every single wake. Shared by every path
+  // that goes to the network on its own initiative, so one failure informs
+  // all of them.
+  void backOffRadio() {
+    failCount++;
+    uint32_t backoff = 5u << (failCount > 4 ? 4 : failCount - 1);
+    if (backoff > 60) backoff = 60;
+    nextTryWake = wakeMin + backoff;
+  }
+
+  bool radioBackedOff() {
+    return failCount > 0 && wakeMin < nextTryWake;
+  }
+
   void maybeFetch() {
     if (inDocked) return;   // docked loop schedules fetches itself,
                             // ONE TLS session at a time (heap can't
@@ -701,12 +716,7 @@ public:
           WiFiClient plain;
           captivePortal = portalCheck(plain);
         }
-        // offline: back off 5 -> 10 -> 20 -> 40 -> 60 min between radio
-        // attempts instead of a 10s WiFi timeout on every single wake.
-        failCount++;
-        uint32_t backoff = 5u << (failCount > 4 ? 4 : failCount - 1);
-        if (backoff > 60) backoff = 60;
-        nextTryWake = wakeMin + backoff;
+        backOffRadio();
       }
     }
     // Market cap is price x supply(height), so it needs BOTH. On a reboot
@@ -1273,7 +1283,14 @@ public:
   // means the table below still answers, marked APPROX.
   bool fetchPastPrice(long h) {
     if (h <= 0 || h >= blockHeight) return false;
-    if (!myConnectWiFi()) return false;
+    // Away from every saved network (a demo at a friend's), each trip back
+    // used to spend a full 12 s WiFi search before giving up. If the last
+    // attempt already failed, the anchor table answers at once, marked APPROX.
+    if (radioBackedOff()) {
+      Serial.println("[past] offline backoff - using the table");
+      return false;
+    }
+    if (!myConnectWiFi()) { backOffRadio(); return false; }
     WiFiClientSecure client; client.setInsecure();
     long ts = 0;
 
@@ -3728,30 +3745,71 @@ public:
     savePrefs();
   }
 
+  // Wait for a button, asleep. The picker can be open for minutes while
+  // someone walks the chain forty years out, and it used to spin in a
+  // delay() loop with the chip fully awake the whole time. Light sleep keeps
+  // RAM (target, step) and wakes on the press within milliseconds, so the
+  // screen feels the same at a small fraction of the current.
+  // Returns the pin pressed, or -1 if nothing was pressed in timeoutMs.
+  // Not 0: on v3 the UP button IS GPIO 0, so 0 cannot mean "nothing".
+  int waitForPress(uint32_t timeoutMs) {
+    const int pins[4] = { MENU_BTN_PIN, BACK_BTN_PIN, UP_BTN_PIN, DOWN_BTN_PIN };
+    const gpio_int_type_t lvl = BTN_ACTIVE ? GPIO_INTR_HIGH_LEVEL
+                                           : GPIO_INTR_LOW_LEVEL;
+    unsigned long t0 = millis();          // esp_timer runs on through light sleep
+    while (true) {
+      for (int i = 0; i < 4; i++)
+        if (digitalRead(pins[i]) == BTN_ACTIVE) return pins[i];
+      unsigned long el = millis() - t0;
+      if (el >= timeoutMs) return -1;
+      // The display's busy callback arms a wake on its BUSY line and never
+      // disarms it. BUSY idles low, so left armed it would end every sleep
+      // the instant it began.
+      gpio_wakeup_disable((gpio_num_t)DISPLAY_BUSY);
+      for (int i = 0; i < 4; i++) gpio_wakeup_enable((gpio_num_t)pins[i], lvl);
+      esp_sleep_enable_gpio_wakeup();
+      esp_sleep_enable_timer_wakeup((uint64_t)(timeoutMs - el) * 1000ULL);
+      Serial.flush();
+      esp_light_sleep_start();
+      for (int i = 0; i < 4; i++) gpio_wakeup_disable((gpio_num_t)pins[i]);
+      esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+      esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    }
+  }
+
   // TIME TRAVEL. Everything the chain guarantees is a function of height:
   // the subsidy, the coins issued, the coins left, the epoch, the halving.
   // None of it needs a network. Price, fees and sentiment are NOT functions
   // of height, so this mode does not pretend to know them.
-  //   UP / DOWN  move by the current step
-  //   MENU       cycles the step: block, day, month, year, halving
+  //   UP / DOWN  move by the current step; HOLD to scroll, faster the longer
+  //   MENU       cycles the step: block, day, month, year, halving, decade
+  //   HOLD MENU  launch
   //   BACK       returns
+  // Left alone for a minute it goes back to the face without launching:
+  // a picker forgotten on a table must not hold the chip awake.
   void timeTravel() {
     guiState = APP_STATE;
     long here = travelActive ? blockHeight : estHeight();   // 'now' is real,
     if (here <= 0) here = 964000;                          // even mid-travel
     long target = travelActive ? travelHeight : here;
 
-    const long  STEPS[5] = { 1, 144, 4320, 52560, 210000 };
-    const char *SNAME[5] = { "BLOCK", "DAY", "MONTH", "YEAR", "HALVING" };
+    const int   NSTEP = 6;
+    const long  STEPS[NSTEP] = { 1, 144, 4320, 52560, 210000, 525600 };
+    const char *SNAME[NSTEP] = { "BLOCK", "DAY", "MONTH", "YEAR",
+                                 "HALVING", "DECADE" };
     int step = 3;
+    const uint32_t IDLE_MS = 60000;
+    const long MAX_H = 6930000L;                 // the last subsidy era
 
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
-    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);   // UP has no
+    pinMode(DOWN_BTN_PIN, INPUT);       // external pull-up on v3: floating, it
+                                        // would wake the light sleep at random
+    waitAllRelease();                   // the press that opened us
 
-    while (true) {
-      if (target < 0) target = 0;
-      if (target > 6930000L) target = 6930000L;   // the last subsidy era
+    auto clampT = [&](long t) { return t < 0 ? 0 : (t > MAX_H ? MAX_H : t); };
 
+    auto drawPicker = [&]() {
       display.setFullWindow();
       display.fillScreen(bg());
       display.setTextColor(fg());
@@ -3796,65 +3854,92 @@ public:
       centerText(line, 178, NULL);
       centerText("HOLD MENU TO LAUNCH", 190, NULL);
       display.display(true);
+    };
 
-      // wait for a press
-      while (true) {
-        if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {
-          waitAllRelease(); myShowMenu(menuIndex, false); return;
+    drawPicker();
+    while (true) {
+      int p = waitForPress(IDLE_MS);
+
+      if (p < 0) {                        // nobody is choosing: go home
+        Serial.println("[travel] picker idle - back to the face");
+        guiState = WATCHFACE_STATE;
+        RTC.read(currentTime);
+        showWatchFace(false);
+        return;
+      }
+
+      if (p == BACK_BTN_PIN) {
+        waitAllRelease(); myShowMenu(menuIndex, false); return;
+      }
+
+      if (p == UP_BTN_PIN || p == DOWN_BTN_PIN) {
+        // One step on the press. Held past a short pause, it keeps going and
+        // speeds up: x1 for the first second, then x5, then x10 of the step.
+        // Each redraw is a partial refresh of about a third of a second, so
+        // the panel paces the scroll by itself.
+        int dir = (p == UP_BTN_PIN) ? 1 : -1;
+        target = clampT(target + dir * STEPS[step]);
+        drawPicker();
+        unsigned long held0 = millis();
+        while (digitalRead(p) == BTN_ACTIVE) {
+          unsigned long h = millis() - held0;
+          if (h < 450) { delay(10); continue; }
+          long mult = (h < 1450) ? 1 : (h < 2950 ? 5 : 10);
+          long next = clampT(target + dir * STEPS[step] * mult);
+          if (next == target) { delay(20); continue; }   // at an end
+          target = next;
+          drawPicker();
         }
-        if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
-          target += STEPS[step]; waitAllRelease(); break;
-        }
-        if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
-          target -= STEPS[step]; waitAllRelease(); break;
-        }
-        if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
-          if (heldFor(MENU_BTN_PIN, 800)) {
-            // hold MENU: take the whole watch there. Height, supply and the
-            // halving almanac follow; price, sats, cap, fees and the wallet
-            // blank, because none of them are functions of height.
-            travelActive = (target != here);
-            travelHeight = target;
-            travelWake   = wakeMin;
-            if (travelActive) {
-              // a moment of transit, and it names which way you are going:
-              // the past is fetched, the future is only ever projected
-              display.setFullWindow();
-              display.fillScreen(bg());
-              display.setTextColor(fg());
-              if (target < blockHeight) {
-                centerText("FETCHING", 92, NULL);
-                centerText("THE RECORD", 108, NULL);
-                display.display(true);
-                fetchPastPrice(target);   // real data beats interpolation
-              } else {
-                long dB = target - blockHeight;
-                char ln[26];
-                snprintf(ln, 26, "%ld BLOCKS AHEAD", dB);
-                centerText("TRAVELLING", 92, NULL);
-                centerText(ln, 108, NULL);
-                centerText("NOBODY HAS BEEN HERE", 126, NULL);
-                display.display(true);
-                delay(900);
-              }
+        continue;
+      }
+
+      if (p == MENU_BTN_PIN) {
+        if (heldFor(MENU_BTN_PIN, 800)) {
+          // hold MENU: take the whole watch there. Height, supply and the
+          // halving almanac follow; price, sats, cap, fees and the wallet
+          // blank, because none of them are functions of height.
+          travelActive = (target != here);
+          travelHeight = target;
+          travelWake   = wakeMin;
+          if (travelActive) {
+            // a moment of transit, and it names which way you are going:
+            // the past is fetched, the future is only ever projected
+            display.setFullWindow();
+            display.fillScreen(bg());
+            display.setTextColor(fg());
+            if (target < blockHeight) {
+              centerText("FETCHING", 92, NULL);
+              centerText("THE RECORD", 108, NULL);
+              display.display(true);
+              fetchPastPrice(target);   // real data beats interpolation
+            } else {
+              long dB = target - blockHeight;
+              char ln[26];
+              snprintf(ln, 26, "%ld BLOCKS AHEAD", dB);
+              centerText("TRAVELLING", 92, NULL);
+              centerText(ln, 108, NULL);
+              centerText("NOBODY HAS BEEN HERE", 126, NULL);
+              display.display(true);
+              delay(900);
             }
-            if (travelActive) {
-              // the boot splash, reused: same screen the watch opens with,
-              // and it already shows the height you are leaving behind
-              display.setFullWindow();
-              buzz(50, 4); delay(160); buzz(50, 4);
-              drawSplash();
-            } else buzz(50, 4);
-            waitAllRelease();
-            Serial.printf("[travel] to %ld (%s)\n", target,
-                          travelActive ? "engaged" : "back to now");
-            RTC.read(currentTime);
-            showWatchFace(false);
-            return;
           }
-          step = (step + 1) % 5; waitAllRelease(); break;
+          if (travelActive) {
+            // the boot splash, reused: same screen the watch opens with,
+            // and it already shows the height you are leaving behind
+            display.setFullWindow();
+            buzz(50, 4); delay(160); buzz(50, 4);
+            drawSplash();
+          } else buzz(50, 4);
+          waitAllRelease();
+          Serial.printf("[travel] to %ld (%s)\n", target,
+                        travelActive ? "engaged" : "back to now");
+          RTC.read(currentTime);
+          showWatchFace(false);
+          return;
         }
-        delay(40);
+        step = (step + 1) % NSTEP;
+        waitAllRelease();
+        drawPicker();
       }
     }
   }
