@@ -2889,20 +2889,29 @@ public:
 
   // At random, but never the one shown last time: true randomness repeats
   // itself one boot in four, and a repeat reads as a watch that is stuck.
-  // esp_random() is the chip's hardware generator.
+  // esp_random() is the chip's hardware generator. Except: the first boot of
+  // a new firmware always opens with GENESIS, the best of them. "New" is the
+  // build's own timestamp differing from the one stored last boot, so a
+  // crash or a power cycle on the same firmware stays random.
   void bootAnimation() {
     Preferences p;
     p.begin("btcchrono", false);
     uint8_t last = p.getUChar("bootLast", 0xFF);  // 0xFF: none yet
+    const char *build = __DATE__ " " __TIME__;
+    bool newFirmware = (p.getString("bootFw", "") != String(build));
     uint8_t pick;
-    if (last >= BOOT_SEQS) pick = esp_random() % BOOT_SEQS;
+    if (newFirmware) {
+      pick = 1;                                    // GENESIS
+      p.putString("bootFw", build);
+    } else if (last >= BOOT_SEQS) pick = esp_random() % BOOT_SEQS;
     else {
       pick = esp_random() % (BOOT_SEQS - 1);       // one of the other three
       if (pick >= last) pick++;
     }
     p.putUChar("bootLast", pick);
     p.end();
-    Serial.printf("[boot] sequence %u (last %u)\n", pick, last);
+    Serial.printf("[boot] sequence %u (last %u)%s\n", pick, last,
+                  newFirmware ? " - new firmware" : "");
     switch (pick) {
       case 0:  bootSegmentTest(); break;
       case 1:  bootGenesis();     break;
@@ -3005,6 +3014,16 @@ public:
       0x29,0xab,0x5f,0x49,                        // 2009-01-03 18:15:05 UTC
       0xff,0xff,0x00,0x1d };                      // bits 0x1d00ffff
     const uint32_t NONCE = 2083236893UL;
+
+    // first, that this is a watch starting up, and where it starts from:
+    // the same card SEGMENT TEST ends on, with the line that makes the
+    // mining that follows make sense
+    bootCenter("BWATCH", 64, 3);
+    display.drawFastHLine(40, 96, 120, GxEPD_WHITE);
+    bootCenter("STARTING FROM BLOCK 0", 106, 1);
+    display.display(true);
+    delay(600);
+    display.fillScreen(GxEPD_BLACK);
 
     bootCenter("BLOCK 0", 8, 2);
     bootCenter("03 JAN 2009", 30, 1);
