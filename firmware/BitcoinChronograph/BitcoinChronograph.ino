@@ -120,6 +120,16 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // together or a wearer sees LIVE next to an estimate and cannot tell which to
 // believe. Must stay above FETCH_EVERY_MIN so a normal cycle never trips it.
 #define STALE_AFTER_MIN 20
+// ---- fetch tiers ----
+// Every cycle gets what the faces show live: price, fees, tip, mempool. The
+// rest changes slowly, and each request costs a TLS handshake with the radio
+// on, so it is fetched on its own clock. A long-press UP, or a watch with no
+// data yet, fetches everything regardless.
+#define CANDLES_EVERY_MIN  30   // the 24h sparkline (hourly candles)
+#define GOLD_EVERY_MIN     60   // gold spot, for the BTC/gold ratio
+#define SLOW_EVERY_MIN     60   // difficulty estimate and 3-day hashrate
+#define FNG_EVERY_MIN     180   // Fear & Greed is published once a day
+// (block reward and miner: only when the tip has moved)
 #define FETCH_IDLE_MIN  45   // when the watch has been still for a while it
                              // is on a table, not a wrist: nobody is reading
                              // it, so stop spending radio on their behalf
@@ -170,7 +180,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C012F
+#define RTC_LAYOUT_MAGIC 0xB17C0130
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -245,6 +255,15 @@ RTC_DATA_ATTR bool     resting       = false;  // the cell ran out and the
                                                // panel is holding its last
                                                // image; wake only to check
                                                // whether a charger arrived
+RTC_DATA_ATTR uint32_t candleWake    = 0;      // wakeMin each slow tier was
+RTC_DATA_ATTR uint32_t goldWake      = 0;      // last fetched OK; 0 = never
+RTC_DATA_ATTR uint32_t slowWake      = 0;
+RTC_DATA_ATTR uint32_t fngWake       = 0;
+RTC_DATA_ATTR float    dayAgoUsd     = 0;      // the close 24 h back, so the
+                                               // 24h %% can follow the live price
+RTC_DATA_ATTR char     fastSsid[33]  = {0};    // the access point that answered
+RTC_DATA_ATTR uint8_t  fastBssid[6]  = {0};    // last time, and its channel:
+RTC_DATA_ATTR uint8_t  fastChan      = 0;      // 0 = unknown, scan instead
 RTC_DATA_ATTR uint8_t  restState     = 0;      // REST_NONE / _DAY / _NIGHT
 RTC_DATA_ATTR int8_t   restPose      = 0;      // pose when rest began: a
                                                // turned-over watch is a
@@ -402,6 +421,16 @@ public:
     p.end();
   }
 
+  // note the AP we just joined, for the next fast join
+  void rememberAp() {
+    const uint8_t *b = WiFi.BSSID();
+    int ch = WiFi.channel();
+    if (!b || ch <= 0 || ch > 14) { fastChan = 0; return; }
+    memcpy(fastBssid, b, 6);
+    fastChan = (uint8_t)ch;
+    strncpy(fastSsid, WiFi.SSID().c_str(), 32); fastSsid[32] = 0;
+  }
+
   // roaming connect: home, office, phone hotspot — whichever answers
   bool myConnectWiFi() {
     if (WiFi.status() == WL_CONNECTED) return true;
@@ -421,10 +450,35 @@ public:
       return true;
     }
     WiFi.mode(WIFI_STA);
+    // Fast path: straight to the access point that answered last time, on its
+    // channel, with no scan. The scan alone is a couple of seconds with the
+    // radio on, every fetch, and nearly always finds the same AP. If the
+    // shortcut misses, forget it and roam as before.
+    if (fastChan > 0 && fastSsid[0]) {
+      int k = -1;
+      for (int i = 0; i < 3; i++)
+        if (wifiSsid[i][0] && !strcmp(wifiSsid[i], fastSsid)) { k = i; break; }
+      if (k >= 0) {
+        unsigned long t1 = millis();
+        WiFi.begin(wifiSsid[k], wifiPass[k], fastChan, fastBssid);
+        while (WiFi.status() != WL_CONNECTED && millis() - t1 < 3000) delay(50);
+        if (WiFi.status() == WL_CONNECTED) {
+          Serial.printf("[wifi] fast join %s ch%u in %lu ms\n",
+                        fastSsid, fastChan, millis() - t1);
+          if (k != 0) saveNetwork(WiFi.SSID(), WiFi.psk());   // promote it
+          return true;
+        }
+        Serial.println("[wifi] fast join missed - scanning");
+        WiFi.disconnect();
+        delay(100);
+      }
+      fastChan = 0;            // stale or no longer in the keychain
+    }
     unsigned long t0 = millis();
     while (multi.run(4000) != WL_CONNECTED && millis() - t0 < 12000)
       delay(100);
     if (WiFi.status() == WL_CONNECTED) {
+      rememberAp();
       saveNetwork(WiFi.SSID(), WiFi.psk());   // promote current to front
       return true;
     }
@@ -499,7 +553,7 @@ public:
 
   // ONE call prices BTC in every currency we speak, plus gold in USD
   // (the %% GOLD ratio is currency-invariant, so USD on both legs)
-  bool fetchRates(bool ownRadio) {
+  bool fetchRates(bool ownRadio, bool wantGold = true) {
     if (ownRadio && !myConnectWiFi()) return false;
     WiFiClientSecure client; client.setInsecure();
     bool ok = false;
@@ -522,15 +576,15 @@ public:
         }
       }
       http.end(); }
-    { // gold, USD: XAU spot x ~6.95B above-ground ounces (216k tonnes,
-      // drifts ~1.5%%/yr from mining — revisit the constant eventually)
+    if (wantGold) { // gold, USD: XAU spot x ~6.95B above-ground ounces (216k
+      // tonnes, drifts ~1.5%%/yr from mining — revisit the constant eventually)
       HTTPClient http; http.setConnectTimeout(4000);
       if (http.begin(client, "https://api.coinbase.com/v2/prices/"
                              "XAU-USD/spot") && http.GET() == 200) {
         JsonDocument doc;
         if (!deserializeJson(doc, http.getString())) {
           float oz = atof(doc["data"]["amount"] | "0");
-          if (oz > 0) goldMcapB = oz * 6.95f;   // billions USD
+          if (oz > 0) { goldMcapB = oz * 6.95f; goldWake = tierStamp(); }
         }
       }
       http.end(); }
@@ -582,11 +636,53 @@ public:
     sparkHead = 0;
     float first = closes[nc - 1], last = closes[0];
     if (first > 0) btcChange24h = ((last - first) / first) * 100.0f;
+    if (first > 0) dayAgoUsd = first;   // fetchAll moves the %% with the price
     Serial.printf("[chart] %d candles, 24h %.2f%%\n", nc, btcChange24h);
     return true;   // the %% is USD-derived and reused for every
   }                // currency: fiat drift is ~0.3pp, invisible at 1dp
 
   // ---------------- data ----------------
+  // the fetch tiers' clock: wakeMin, but never 0, which means "never"
+  uint32_t tierStamp() { return wakeMin ? wakeMin : 1; }
+  bool tierDue(uint32_t last, uint32_t everyMin, bool all) {
+    return all || last == 0 || wakeMin < last || wakeMin - last >= everyMin;
+  }
+
+  // GET a small body over the kept-alive mempool session, read whole.
+  // The core reuses an open socket without checking that the last response
+  // was fully read, so anything that might leave bytes behind (an error
+  // status, a failed read) closes it: the next request then starts clean
+  // instead of parsing this one's leftovers. A stale kept-alive socket shows
+  // up as a negative code; that gets one fresh retry.
+  bool mpGet(HTTPClient &http, WiFiClientSecure &client, const char *url,
+             String &out) {
+    out = "";
+    for (int attempt = 0; attempt < 2; attempt++) {
+      if (!http.begin(client, url)) return false;
+      int code = http.GET();
+      if (code == HTTP_CODE_OK) {
+        out = http.getString();
+        int expect = http.getSize();             // -1 when chunked
+        bool whole = out.length() > 0 &&
+                     (expect < 0 || (int)out.length() == expect);
+        if (whole) http.end();
+        else { http.setReuse(false); http.end(); http.setReuse(true); }
+        return whole;
+      }
+      http.setReuse(false); http.end(); http.setReuse(true);
+      if (code > 0) return false;                // it answered: do not nag
+    }
+    return false;
+  }
+
+  // after a request parsed straight off the socket: how much the parser
+  // left unread is unknown, so the socket was opened with Connection: close
+  // and is closed here; the next mpGet opens a fresh one
+  void mpStreamEnd(HTTPClient &http) {
+    http.end();
+    http.setReuse(true);
+  }
+
   bool fetchAll() {
     if (!myConnectWiFi()) return false;
     // the radio is already on: re-anchor the clock every ~6 h. costs one
@@ -601,83 +697,110 @@ public:
     }
     bool ok = false;
     long heightBefore = blockHeight;
+    // everything when asked for (long-press UP) or when there is nothing yet
+    bool all = fetchPending || !haveData;
     WiFiClientSecure client; client.setInsecure();
-    fetchCandles(client);                  // chart + the 24h %%
-    if (fetchRates(false)) haveData = ok = true;   // all six + gold
-    { HTTPClient http; http.setConnectTimeout(4000);
+
+    if (tierDue(candleWake, CANDLES_EVERY_MIN, all) && fetchCandles(client))
+      candleWake = tierStamp();                    // chart + the day-ago close
+    if (fetchRates(false, tierDue(goldWake, GOLD_EVERY_MIN, all)))
+      haveData = ok = true;                        // all six (+ gold when due)
+    // the 24h change follows the live price between chart fetches: today's
+    // price against the cached close from a day ago
+    if (dayAgoUsd > 0 && fxRate[0] > 0)
+      btcChange24h = ((fxRate[0] - dayAgoUsd) / dayAgoUsd) * 100.0f;
+
+    if (tierDue(fngWake, FNG_EVERY_MIN, all)) {
+      HTTPClient http; http.setConnectTimeout(4000);
       if (http.begin(client, FNG_URL) && http.GET() == 200) {
         JsonDocument doc;
-        if (!deserializeJson(doc, http.getString()))
+        if (!deserializeJson(doc, http.getString())) {
           fearGreed = atoi(doc["data"][0]["value"] | "50");
+          fngWake = tierStamp();
+        }
       }
-      http.end(); }
-    { HTTPClient http; http.setConnectTimeout(4000);
-      if (http.begin(client, FEES_URL) && http.GET() == 200) {
+      http.end();
+    }
+
+    // ---- mempool.space: one TLS session for everything it serves ----
+    // Each scoped HTTPClient used to close the socket as it went out of
+    // scope, so every request paid a fresh handshake. One client, kept
+    // alive, pays it once. Small bodies only (mpGet reads them whole);
+    // the two parsed straight off the socket close it after (mpStreamEnd).
+    { HTTPClient mp; mp.setConnectTimeout(4000); mp.setReuse(true);
+      String body;
+      if (mpGet(mp, client, FEES_URL, body)) {
         JsonDocument doc;
-        if (!deserializeJson(doc, http.getString()))
-          fastFee = doc["fastestFee"] | fastFee;   // float-safe
+        if (!deserializeJson(doc, body)) {
+          fastFee = doc["fastestFee"]  | fastFee;   // float-safe
           medFee  = doc["halfHourFee"] | medFee;
           lowFee  = doc["hourFee"]     | lowFee;
-      }
-      http.end(); }
-    { const char *tips[2] = {TIP_URL, TIP_URL2};
-      for (int i = 0; i < 2; i++) {
-        HTTPClient http; http.setConnectTimeout(4000);
-        bool got = false;
-        if (http.begin(client, tips[i]) && http.GET() == 200) {
-          long h = http.getString().toInt();
-          if (h >= 100000) {                      // sanity: a real height
-            if (h > blockHeight) blockHeight = h; // only moves forward
-            lastHeightWake = wakeMin;             // height-specific stamp
-            got = true;
-          }
-        }
-        http.end();
-        if (got) break;                           // fallback only on failure
-      } }
-    { HTTPClient http; http.setConnectTimeout(4000);
-      if (http.begin(client, DIFF_URL) && http.GET() == 200) {
-        JsonDocument doc;
-        if (!deserializeJson(doc, http.getString())) {
-          diffChangeEst = doc["difficultyChange"] | 0.0f;
-          float ta = doc["timeAvg"] | 0.0f;      // ms, current epoch
-          if (ta > 0) avgBlockSec = constrain(ta / 1000.0f, 300.0f, 1200.0f);
-          if (!(avgBlockSec > 300.0f && avgBlockSec < 1200.0f))
-            avgBlockSec = 600;        // NaN or nonsense: back to ten minutes
         }
       }
-      http.end(); }
-    // the work behind it all. Filtered to one field: the response carries a
-    // long series of historical points that would eat the heap for nothing.
-    { HTTPClient http; http.setConnectTimeout(4000);
-      if (http.begin(client, HASH_URL) && http.GET() == 200) {
-        JsonDocument filter; filter["currentHashrate"] = true;
-        JsonDocument doc;
-        if (!deserializeJson(doc, http.getStream(),
-                             DeserializationOption::Filter(filter))) {
-          double hs = doc["currentHashrate"] | 0.0;      // hashes per second
-          if (hs > 0) netHashEH = (float)(hs / 1e18);    // -> exahash
+      const char *tips[2] = {TIP_URL, TIP_URL2};
+      for (int i = 0; i < 2; i++) {               // fallback only on failure
+        if (!mpGet(mp, client, tips[i], body)) continue;
+        long h = body.toInt();
+        if (h >= 100000) {                        // sanity: a real height
+          if (h > blockHeight) blockHeight = h;   // only moves forward
+          lastHeightWake = wakeMin;               // height-specific stamp
+          break;
         }
       }
-      http.end(); }
-    // last block's total reward (subsidy + fees) — what mining paid
-    { HTTPClient http; http.setConnectTimeout(4000);
-      if (http.begin(client, "https://mempool.space/api/v1/blocks") &&
-          http.GET() == 200) {
-        storeExtras(http.getStream());
-      }
-      http.end(); }
-    // mempool backlog, denominated in blocks (unconfirmed vMB)
-    { HTTPClient http; http.setConnectTimeout(4000);
-      if (http.begin(client, "https://mempool.space/api/mempool") &&
-          http.GET() == 200) {
+      // mempool backlog, denominated in blocks (unconfirmed vMB)
+      if (mpGet(mp, client, "https://mempool.space/api/mempool", body)) {
         JsonDocument doc;
-        if (!deserializeJson(doc, http.getString())) {
+        if (!deserializeJson(doc, body)) {
           long vs = doc["vsize"] | 0L;
           if (vs > 0) mempoolBlocks = vs / 1e6;
         }
       }
-      http.end(); }
+      if (tierDue(slowWake, SLOW_EVERY_MIN, all)) {
+        bool gotDiff = false, gotHash = false;
+        if (mpGet(mp, client, DIFF_URL, body)) {
+          JsonDocument doc;
+          if (!deserializeJson(doc, body)) {
+            diffChangeEst = doc["difficultyChange"] | 0.0f;
+            float ta = doc["timeAvg"] | 0.0f;      // ms, current epoch
+            if (ta > 0) avgBlockSec = constrain(ta / 1000.0f, 300.0f, 1200.0f);
+            if (!(avgBlockSec > 300.0f && avgBlockSec < 1200.0f))
+              avgBlockSec = 600;      // NaN or nonsense: back to ten minutes
+            gotDiff = true;
+          }
+        }
+        // the work behind it all. Filtered to one field: the response carries
+        // a long series of historical points that would eat the heap for nothing.
+        mp.setReuse(false);                       // streamed: close after
+        if (mp.begin(client, HASH_URL) && mp.GET() == 200) {
+          JsonDocument filter; filter["currentHashrate"] = true;
+          JsonDocument doc;
+          if (!deserializeJson(doc, mp.getStream(),
+                               DeserializationOption::Filter(filter))) {
+            double hs = doc["currentHashrate"] | 0.0;    // hashes per second
+            if (hs > 0) { netHashEH = (float)(hs / 1e18); gotHash = true; }
+          }
+        }
+        mpStreamEnd(mp);
+        if (gotDiff && gotHash) slowWake = tierStamp();   // else retry next cycle
+      }
+      // last block's total reward (subsidy + fees) and miner: only when there
+      // is a block we have not described yet. storeExtras is height-stamped,
+      // so a lagging indexer just means asking again next cycle.
+      if (all || blockHeight > rwdHeight) {
+        mp.setReuse(false);                       // streamed: close after
+        if (mp.begin(client, "https://mempool.space/api/v1/blocks") &&
+            mp.GET() == 200) {
+          storeExtras(mp.getStream());
+        }
+        mpStreamEnd(mp);
+      }
+    }
+    Serial.printf("[fetch] %s tiers: chart %s gold %s slow %s fng %s\n",
+                  all ? "ALL" : "due",
+                  candleWake == tierStamp() ? "Y" : "-",
+                  goldWake   == tierStamp() ? "Y" : "-",
+                  slowWake   == tierStamp() ? "Y" : "-",
+                  fngWake    == tierStamp() ? "Y" : "-");
     if (!inDocked) { WiFi.mode(WIFI_OFF); btStop(); }  // docked: stay on
 
     // ---- haptics (after radio off; buzzing draws its own current) ----
@@ -2750,6 +2873,8 @@ public:
     avgBlockSec = 600;
     joeReveal = false; captivePortal = false; resting = false;
     restState = 0; restPose = 0; sleptSince = 0; stillRun = 0;
+    candleWake = 0; goldWake = 0; slowWake = 0; fngWake = 0; dayAgoUsd = 0;
+    fastSsid[0] = 0; fastChan = 0; memset(fastBssid, 0, sizeof(fastBssid));
     awakeTill = 0;
     lnFetchedWake = 0;      // a stale stamp can make an old invoice
                             // look fresh after a layout change
@@ -4298,14 +4423,29 @@ public:
 
     pinMode(BACK_BTN_PIN, INPUT);
     pinMode(MENU_BTN_PIN, INPUT);
-    pinMode(UP_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);   // as the picker
+    pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();                   // the press that opened us
+    // Asleep between presses, like the time-travel picker, and home to the
+    // face after a minute untouched. This screen used to spin awake with no
+    // way out but a button.
     while (true) {
-      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
-          digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) { waitAllRelease(); break; }
-      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE && heldFor(DOWN_BTN_PIN, 700)) {
-        dumpVlog(); buzz(30, 2); waitAllRelease();
+      int p = waitForPress(60000);
+      if (p < 0) {
+        Serial.println("[about] idle - back to the face");
+        guiState = WATCHFACE_STATE;
+        RTC.read(currentTime);
+        showWatchFace(false);
+        return;
       }
-      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE && heldFor(UP_BTN_PIN, 900)) {
+      if (p == BACK_BTN_PIN || p == MENU_BTN_PIN) { waitAllRelease(); break; }
+      if (p == DOWN_BTN_PIN) {
+        if (heldFor(DOWN_BTN_PIN, 700)) {
+          dumpVlog(); buzz(30, 2); waitAllRelease();
+        }
+        continue;                       // a short press does nothing, as before
+      }
+      if (p == UP_BTN_PIN && heldFor(UP_BTN_PIN, 900)) {
         // teach the watch what a terminated charge reads on this board
         battFullV = batteryVolts();
         shownBattPct = -1;
@@ -4316,7 +4456,6 @@ public:
         myShowAbout();
         return;
       }
-      delay(40);
     }
     myShowMenu(menuIndex, false);
   }
