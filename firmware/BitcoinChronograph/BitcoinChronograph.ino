@@ -136,6 +136,8 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 #define EVENT_HOLD_MIN     60   // an unacknowledged alarm screen keeps the
                                 // watch from resting this long, then rest
                                 // may cover it; it shows again on pickup
+#define LATE_WATCH_MIN     60   // after a vigil sees nothing, keep checking
+                                // that address (or invoice) at each fetch
 #define TRACK_GIVEUP_MIN 4320   // stop following a payment that has not
                                 // confirmed in 3 days
 #define FETCH_IDLE_MIN  45   // when the watch has been still for a while it
@@ -188,7 +190,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0132
+#define RTC_LAYOUT_MAGIC 0xB17C0133
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -287,6 +289,10 @@ RTC_DATA_ATTR long long evConfSats   = 0;      // the screen says
 RTC_DATA_ATTR long     evConfBlock   = 0;
 RTC_DATA_ATTR long long evPaySats    = 0;      // a payment seen landing while
 RTC_DATA_ATTR bool     evPayLn       = false;  // the watch was elsewhere
+RTC_DATA_ATTR uint8_t  lateKind      = 0;      // LATE_NONE / _CHAIN / _LN
+RTC_DATA_ATTR int      lateIdx       = -1;     // receive index the QR showed
+RTC_DATA_ATTR uint64_t lateBase      = 0;      // its funded sum when shown
+RTC_DATA_ATTR uint32_t lateUntil     = 0;      // wakeMin the watch ends
 RTC_DATA_ATTR uint8_t  trackState    = 0;      // TRACK_NONE / _RESOLVE / _ON
 RTC_DATA_ATTR char     trackAddr[64] = {0};    // where the payment landed
 RTC_DATA_ATTR char     trackTxid[65] = {0};
@@ -826,6 +832,7 @@ public:
         mpStreamEnd(mp);
       }
     }
+    lateWatchStep();              // a slow sender after the vigil, if any
     trackStep(client);            // a payment on its way in, if any
     Serial.printf("[fetch] %s tiers: chart %s gold %s slow %s fng %s\n",
                   all ? "ALL" : "due",
@@ -1364,6 +1371,7 @@ public:
     if (!myConnectWiFi()) return;            // no network: sleep as usual
     Serial.printf("[vigil] armed 120s (%s)\n", ln ? "lightning" : "on-chain");
     inVigil = true;
+    lateKind = 0;                    // a vigil supersedes any late watch
     bool menu = false, paid = false, polled = false;
     unsigned long start = millis(), lastPoll = 0;
     const unsigned long every = ln ? 5000UL : 15000UL;
@@ -1444,6 +1452,16 @@ public:
     }
     inVigil = false;
     WiFi.mode(WIFI_OFF); btStop();
+    // Nothing yet, but the sender may just be slow (a hardware wallet, a
+    // careful fee choice). Keep an eye on the same address, or the same
+    // invoice, at each regular fetch for the next hour.
+    if (!paid && !menu && (ln ? lnVerify[0] != 0 : haveBase)) {
+      lateKind  = ln ? LATE_LN : LATE_CHAIN;
+      lateIdx   = recvIndex;
+      lateBase  = base;
+      lateUntil = wakeMin + LATE_WATCH_MIN;
+      Serial.printf("[late] watching for %d min\n", LATE_WATCH_MIN);
+    }
     // leaving the QR for the balance normally rescans the wallet at once. It
     // waited, because a rescan during the vigil could count a payment twice
     // (once in the sum, once as the vigil's delta). Do it now.
@@ -1591,6 +1609,9 @@ public:
     scanned += i;
     }
     if (!inDocked) { WiFi.mode(WIFI_OFF); btStop(); }
+    // the scan is the authoritative count: a late watch still running would
+    // add the same payment a second time
+    if (lateKind == LATE_CHAIN) { lateKind = LATE_NONE; Serial.println("[late] scan took over"); }
     if (incoming.length()) armTracking(incoming.c_str());   // resolved at
                                                             // the next fetch
     if (haveWallet && total != walletSats)
@@ -2981,6 +3002,7 @@ public:
     alarmHeight = 0; feeAlarm = 0; feeArmed = true;   // NVS reloads the alarms
     evQueue = 0; evShown = 0; evWake = 0; evBlockH = 0; evFee = 0; evFeeAt = 0;
     evConfN = 0; evConfSats = 0; evConfBlock = 0; evPaySats = 0; evPayLn = false;
+    lateKind = 0; lateIdx = -1; lateBase = 0; lateUntil = 0;
     trackState = 0; trackAddr[0] = 0; trackTxid[0] = 0; trackSats = 0;
     trackHeight = 0; trackShown = 0; trackWake = 0; lastDoneTx[0] = 0;
     fastSsid[0] = 0; fastChan = 0; memset(fastBssid, 0, sizeof(fastBssid));
@@ -4839,6 +4861,66 @@ public:
     evQueue &= (uint8_t)~ev;
     evShown = 0;
     Serial.printf("[alarm] dismissed %u, queue %u\n", ev, evQueue);
+  }
+
+  // ---- late payments ----
+  enum { LATE_NONE = 0, LATE_CHAIN = 1, LATE_LN = 2 };
+
+  // A payment found by anything other than the vigil itself: the same buzz,
+  // the same bookkeeping, and a PAY screen if the wallet face is not up.
+  void paymentLanded(long long sats, bool ln) {
+    vibMotor(60, 4); delay(120);
+    vibMotor(60, 4); delay(120);
+    vibMotor(60, 8);
+    Serial.printf("[late] %s payment arrived: %lld sats\n", ln ? "lightning" : "on-chain", sats);
+    if (dispMode != M_WALT) {
+      evPaySats = sats; evPayLn = ln;
+      fireEvent(EV_PAY);
+    }
+  }
+
+  // Radio on, inside fetchAll: one small request while the watch is on.
+  void lateWatchStep() {
+    if (lateKind == LATE_NONE) return;
+    if ((int32_t)(wakeMin - lateUntil) >= 0) {
+      Serial.println("[late] hour is up - the wallet scan will find anything later");
+      lateKind = LATE_NONE;
+      return;
+    }
+    if (lateKind == LATE_LN) {
+      if (!lnVerify[0]) { lateKind = LATE_NONE; return; }   // consumed or replaced
+      if (lnSettled()) {
+        lnVerify[0] = 0; lnInvoice[0] = 0;                  // invoice is consumed
+        lateKind = LATE_NONE;
+        paymentLanded(LN_REQUEST_SATS, true);
+      }
+      return;
+    }
+    String a = walletAddr(lateIdx);
+    if (!a.length()) { lateKind = LATE_NONE; return; }
+    WiFiClientSecure c; c.setInsecure();
+    HTTPClient http; http.setConnectTimeout(4000);
+    if (http.begin(c, String(ESPLORA_BASE) + a) && http.GET() == 200) {
+      JsonDocument doc;
+      if (!deserializeJson(doc, http.getString())) {
+        uint64_t f =
+          (uint64_t)(doc["chain_stats"]["funded_txo_sum"] | 0ULL) +
+          (uint64_t)(doc["mempool_stats"]["funded_txo_sum"] | 0ULL);
+        if (f > lateBase) {
+          uint64_t delta = f - lateBase;
+          lateKind = LATE_NONE;
+          lastTxSats = (long long)delta;       // the vigil's bookkeeping,
+          walletSats += delta;                 // exactly
+          haveWallet = true;
+          armTracking(a.c_str());
+          if (recvIndex == lateIdx) recvIndex++;   // address used: advance
+          if (qrOnGlass() && walletView == 1) walletView = 0;
+          savePrefs();
+          paymentLanded((long long)delta, false);
+        }
+      }
+    }
+    http.end();
   }
 
   // ---- confirmation tracking ----
