@@ -4804,7 +4804,9 @@ public:
       // on-chain is not final yet, so it says where it is and what comes
       // next; lightning is final the moment it lands, so it says that
       snprintf(head, 24, evPayLn ? "LIGHTNING RECEIVED" : "PAYMENT INCOMING");
-      fmtGrouped(evPaySats, big, 20);
+      // plain digits: drawGrouped draws its own separators, and a comma in
+      // the string prints as a blank digit cell beside them ("10, 000")
+      snprintf(big, 20, "%lld", evPaySats);
       snprintf(l1, 30, evPayLn ? "SATS - SETTLED" : "SATS - IN MEMPOOL");
       if (!evPayLn && trackState != TRACK_NONE)
         snprintf(l2, 30, "TICKS AT 1, 3, 6 CONF");
