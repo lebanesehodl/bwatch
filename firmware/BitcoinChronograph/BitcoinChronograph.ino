@@ -188,7 +188,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0131
+#define RTC_LAYOUT_MAGIC 0xB17C0132
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -285,6 +285,8 @@ RTC_DATA_ATTR uint16_t evFeeAt       = 0;      // later edit or a finished
 RTC_DATA_ATTR uint8_t  evConfN       = 0;      // track cannot change what
 RTC_DATA_ATTR long long evConfSats   = 0;      // the screen says
 RTC_DATA_ATTR long     evConfBlock   = 0;
+RTC_DATA_ATTR long long evPaySats    = 0;      // a payment seen landing while
+RTC_DATA_ATTR bool     evPayLn       = false;  // the watch was elsewhere
 RTC_DATA_ATTR uint8_t  trackState    = 0;      // TRACK_NONE / _RESOLVE / _ON
 RTC_DATA_ATTR char     trackAddr[64] = {0};    // where the payment landed
 RTC_DATA_ATTR char     trackTxid[65] = {0};
@@ -409,7 +411,7 @@ RTC_DATA_ATTR uint8_t  cellSel[NUM_MODES] = {0};
 // static class member: the linker has to place the member's address as a
 // literal, and in IRAM that literal lands after the instruction using it —
 // "dangerous relocation: l32r: literal placed after use".
-volatile int g_isrPin = 0;
+volatile int g_isrPin = -1;   // -1 = none: on v3 the UP button IS GPIO 0
 // Set by WiFiManager when the setup form is submitted. The wallet portal can
 // succeed without a WiFi connection — someone pasting only a zpub — so
 // "connected" is not the only way out.
@@ -1222,8 +1224,9 @@ public:
   void walletToggleView() {
     walletView = (walletView + 1) % (lnConfigured() ? 3 : 2);
     if (walletView == 0) {
-      lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
-                        ? wakeMin - WALLET_EVERY_MIN : 0;
+      if (!inVigil)            // during a vigil the rescan waits for its end
+        lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
+                          ? wakeMin - WALLET_EVERY_MIN : 0;
     } else {
       vigilPending = true;    // wrist: stand watch when a QR shows
     }
@@ -1294,117 +1297,166 @@ public:
     return settled;
   }
 
-  // PAYMENT VIGIL (wrist): showing the QR arms a ~2 minute awake watch
-  // on that address — buzz + flip to a rescanned balance the moment
-  // sats hit the mempool. Costs ~1.3% battery per vigil; a payment
-  // arriving later is still caught by the UP-rescan path.
-  void paymentVigil() {
-    Serial.println("[vigil] armed 120s");
-    pinMode(UP_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
-    // lightning view: poll the invoice's verify URL instead of an
-    // address — settlement lands in seconds, so poll every 5
-    if (walletView == 2) {
-      if (!lnVerify[0]) return;
-      if (!myConnectWiFi()) return;
-      unsigned long start = millis(), lastPoll = 0;
-      while (millis() - start < 120000) {
-        if (millis() - lastPoll > 5000) {
-          lastPoll = millis();
-          if (lnSettled()) {
-            lnVerify[0] = 0; lnInvoice[0] = 0;   // invoice is consumed
-            vibMotor(60, 4); delay(120);
-            vibMotor(60, 4); delay(120);
-            vibMotor(60, 8);
-            Serial.println("[vigil] lightning payment settled!");
-            drawLnPaid(LN_REQUEST_SATS);         // its own moment —
-            delay(3500);                         // the chain balance
-            buttonWake = true;                   // is not involved
-            drawWatchFace();                     // fresh invoice QR
-            display.display(true);
-            WiFi.mode(WIFI_OFF); btStop();
-            return;
-          }
-        }
-        if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
-          waitRelease(UP_BTN_PIN);
-          walletToggleView(); buttonWake = true;
-          drawWatchFace(); display.display(true);
-          break;
-        }
-        if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {
-          backPressed();                 // test the hold BEFORE releasing:
-          waitRelease(BACK_BTN_PIN);     // afterwards there is nothing to
-          buttonWake = true;             // measure and the shortcut dies
-          drawWatchFace(); display.display(true);
-          break;
-        }
-        delay(40);
-      }
-      WiFi.mode(WIFI_OFF); btStop();
-      Serial.println("[vigil] done (ln)");
-      return;
+  // PAYMENT VIGIL (wrist): showing the QR arms a 2 minute awake watch on
+  // that address (or the lightning invoice). Putting the QR away does NOT
+  // end it: the sender usually presses send just after it is put away, so
+  // the watch keeps listening for the rest of the two minutes while every
+  // button does what it does on the face. Sats landing: the payment buzz,
+  // and either the wallet face (if you are on it) or a PAY screen.
+  // Costs ~1.3% battery per vigil, the same as before; a payment arriving
+  // later still turns up at the next wallet scan.
+  bool inVigil = false;
+
+  // UP's short press as the face does it, for the vigil, which reads the
+  // buttons itself. (The long press, fetch everything, is not offered while
+  // the radio is busy listening.)
+  void upShortPress() {
+    if (dispMode == M_JOE) joeReveal = !joeReveal;
+    else if (dispMode == M_WALT) walletToggleView();
+    else if (dispMode == M_PRICE || dispMode == M_SATS || dispMode == M_MCAP) {
+      curIdx = (curIdx + 1) % 6;
+      applyCurrency();
+    } else {
+      cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
     }
-    String a = walletAddr(recvIndex);
-    if (!a.length()) return;
-    if (!myConnectWiFi()) return;           // no network: sleep as usual
+  }
+
+  // One poll of the buttons inside the vigil. Returns true for MENU, which
+  // ends the vigil and opens the menu.
+  bool vigilButtons() {
+    int p = -1;                      // not 0: on v3 UP IS GPIO 0
+    if      (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) p = BACK_BTN_PIN;
+    else if (digitalRead(UP_BTN_PIN)   == BTN_ACTIVE) p = UP_BTN_PIN;
+    else if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) p = DOWN_BTN_PIN;
+    else if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) p = MENU_BTN_PIN;
+    if (p < 0) return false;
+    if (evQueue && evShown && !qrOnGlass()) {    // ANY BUTTON: OK
+      dismissEvent();
+      waitAllRelease();
+    } else if (p == MENU_BTN_PIN) {
+      waitAllRelease();
+      return true;
+    } else if (p == BACK_BTN_PIN) {
+      backPressed();                 // test the hold BEFORE releasing:
+      waitRelease(BACK_BTN_PIN);     // afterwards there is nothing to measure
+    } else if (p == UP_BTN_PIN) {
+      waitRelease(UP_BTN_PIN);
+      upShortPress();
+    } else {
+      downPressed();                 // measures its own hold (privacy)
+      waitRelease(DOWN_BTN_PIN);
+    }
+    buttonWake = true;
+    drawWatchFace();
+    display.display(true);
+    return false;
+  }
+
+  void paymentVigil() {
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    // lightning view: poll the invoice's verify URL instead of an address —
+    // settlement lands in seconds, so poll every 5
+    const bool ln = (walletView == 2);
+    if (ln && !lnVerify[0]) return;
+    String a;
+    if (!ln) { a = walletAddr(recvIndex); if (!a.length()) return; }
+    if (!myConnectWiFi()) return;            // no network: sleep as usual
+    Serial.printf("[vigil] armed 120s (%s)\n", ln ? "lightning" : "on-chain");
+    inVigil = true;
+    bool menu = false, paid = false, polled = false;
     unsigned long start = millis(), lastPoll = 0;
+    const unsigned long every = ln ? 5000UL : 15000UL;
     uint64_t base = 0; bool haveBase = false;
     while (millis() - start < 120000) {
-      if (!haveBase || millis() - lastPoll > 15000) {
+      if (!polled || millis() - lastPoll > every) {
+        polled = true;
         lastPoll = millis();
-        WiFiClientSecure c; c.setInsecure();
-        HTTPClient http; http.setConnectTimeout(4000);
-        if (http.begin(c, String(ESPLORA_BASE) + a) && http.GET() == 200) {
-          JsonDocument doc;
-          if (!deserializeJson(doc, http.getString())) {
-            uint64_t f =
-              (uint64_t)(doc["chain_stats"]["funded_txo_sum"] | 0ULL) +
-              (uint64_t)(doc["mempool_stats"]["funded_txo_sum"] | 0ULL);
-            if (!haveBase) { base = f; haveBase = true; }
-            else if (f > base) {
-              uint64_t delta = f - base;
-              http.end(); c.stop();
+        // something on the face may have used the radio and switched it off
+        // (a scheduled fetch); come back on before asking
+        if (WiFi.status() == WL_CONNECTED || myConnectWiFi()) {
+          if (ln) {
+            if (lnSettled()) {
+              paid = true;
+              lnVerify[0] = 0; lnInvoice[0] = 0;   // invoice is consumed
               vibMotor(60, 4); delay(120);
               vibMotor(60, 4); delay(120);
-              vibMotor(60, 8);                  // payment received!
-              Serial.printf("[vigil] payment received! +%llu sats\n",
-                            (unsigned long long)delta);
-              // trust the observed delta — an instant rescan races the
-              // explorer's indexer and reads pre-payment state
-              lastTxSats = (long long)delta;
-              walletSats += delta;
-              haveWallet = true;
-              armTracking(a.c_str());           // and follow it to 6 confs
-              recvIndex++;                      // address used: advance
-              walletView = 0;                   // show the new balance
-              savePrefs();                      // receipt -> NVS
+              vibMotor(60, 8);
+              Serial.println("[vigil] lightning payment settled!");
+              if (dispMode == M_WALT) {            // its own moment, where
+                drawLnPaid(LN_REQUEST_SATS);       // the wallet is
+                delay(3500);
+              } else {                             // elsewhere: a PAY screen
+                evPaySats = LN_REQUEST_SATS; evPayLn = true;
+                fireEvent(EV_PAY);
+              }
               buttonWake = true;
-              drawWatchFace();
-              display.display(true);
-              WiFi.mode(WIFI_OFF); btStop();
-              return;
+              drawWatchFace();                     // fresh invoice QR, or
+              display.display(true);               // the PAY screen
+              break;
             }
+          } else {
+            WiFiClientSecure c; c.setInsecure();
+            HTTPClient http; http.setConnectTimeout(4000);
+            if (http.begin(c, String(ESPLORA_BASE) + a) && http.GET() == 200) {
+              JsonDocument doc;
+              if (!deserializeJson(doc, http.getString())) {
+                uint64_t f =
+                  (uint64_t)(doc["chain_stats"]["funded_txo_sum"] | 0ULL) +
+                  (uint64_t)(doc["mempool_stats"]["funded_txo_sum"] | 0ULL);
+                if (!haveBase) { base = f; haveBase = true; }
+                else if (f > base) {
+                  uint64_t delta = f - base;
+                  http.end(); c.stop();
+                  paid = true;
+                  vibMotor(60, 4); delay(120);
+                  vibMotor(60, 4); delay(120);
+                  vibMotor(60, 8);                 // payment received!
+                  Serial.printf("[vigil] payment received! +%llu sats\n",
+                                (unsigned long long)delta);
+                  // trust the observed delta — an instant rescan races the
+                  // explorer's indexer and reads pre-payment state
+                  lastTxSats = (long long)delta;
+                  walletSats += delta;
+                  haveWallet = true;
+                  armTracking(a.c_str());          // and follow it to 6 confs
+                  bool away = (dispMode != M_WALT);
+                  recvIndex++;                     // address used: advance
+                  walletView = 0;                  // show the new balance
+                  savePrefs();                     // receipt -> NVS
+                  if (away) {                      // not on the wallet: say so
+                    evPaySats = (long long)delta; evPayLn = false;
+                    fireEvent(EV_PAY);
+                  }
+                  buttonWake = true;
+                  drawWatchFace();
+                  display.display(true);
+                  break;
+                }
+              }
+            }
+            http.end();
           }
         }
-        http.end();
       }
-      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {     // to balance
-        waitRelease(UP_BTN_PIN);
-        walletToggleView(); buttonWake = true;
-        drawWatchFace(); display.display(true);
-        break;
-      }
-      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {   // next mode
-        backPressed();                   // hold first, release after
-        waitRelease(BACK_BTN_PIN);
-        buttonWake = true;
-        drawWatchFace(); display.display(true);
-        break;
-      }
+      if (vigilButtons()) { menu = true; break; }
       delay(40);
     }
+    inVigil = false;
     WiFi.mode(WIFI_OFF); btStop();
-    Serial.println("[vigil] done");
+    // leaving the QR for the balance normally rescans the wallet at once. It
+    // waited, because a rescan during the vigil could count a payment twice
+    // (once in the sum, once as the vigil's delta). Do it now.
+    if (!paid && dispMode == M_WALT && walletView == 0)
+      lastWalletMin = (wakeMin > WALLET_EVERY_MIN) ? wakeMin - WALLET_EVERY_MIN : 0;
+    Serial.printf("[vigil] done%s\n", paid ? " (paid)" : menu ? " (menu)" : "");
+    if (menu) {
+      // The vigil runs inside showWatchFace(), which marks the watch as on
+      // its face when it returns. So show the menu and sleep from here, in
+      // menu state, the way every menu wake ends.
+      myShowMenu(menuIndex, false);
+      longSleep(1);                  // v3: does not return
+    }
   }
 
   int walletListCount() {
@@ -1447,7 +1499,7 @@ public:
   // for the duration, which reads as a freeze.
   void watchButtonsDuringScan(bool on) {
     if (on) {
-      g_isrPin = 0;
+      g_isrPin = -1;
       int edge = (BTN_ACTIVE == 0) ? FALLING : RISING;
       attachInterrupt(digitalPinToInterrupt(BACK_BTN_PIN), btnISR0, edge);
       attachInterrupt(digitalPinToInterrupt(MENU_BTN_PIN), btnISR1, edge);
@@ -1462,14 +1514,14 @@ public:
   }
 
   int pressedButton() {
-    if (g_isrPin) { int p = g_isrPin; g_isrPin = 0; return p; }  // caught
+    if (g_isrPin >= 0) { int p = g_isrPin; g_isrPin = -1; return p; }  // caught
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
     pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
     if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) return BACK_BTN_PIN;
     if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) return MENU_BTN_PIN;
     if (digitalRead(UP_BTN_PIN)   == BTN_ACTIVE) return UP_BTN_PIN;
     if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) return DOWN_BTN_PIN;
-    return 0;
+    return -1;                       // not 0: that is the UP button on v3
   }
 
   bool fetchWallet() {
@@ -1528,7 +1580,7 @@ public:
       // a press cancels the scan. nothing is committed: a partial sum is a
       // wrong balance, and the wrist wants the button more than the number
       int btn = pressedButton();
-      if (btn) {
+      if (btn >= 0) {
         scanCancelled = btn;
         if (!inDocked) { WiFi.mode(WIFI_OFF); btStop(); }
         Serial.printf("[wallet] scan cancelled at %d/%d\n", chain, i);
@@ -2881,7 +2933,7 @@ public:
   bool prePaint = false;      // re-entering the render to show FTCH before
                               // the radio goes out; suppresses the fetch
   bool walletScanArmed = false, inWalletScan = false;
-  int  scanCancelled = 0;      // pin of the button that interrupted a scan
+  int  scanCancelled = -1;     // pin of the button that interrupted a scan
 
   void sanitizeState() {
     if (rtcMagic == RTC_LAYOUT_MAGIC) return;
@@ -2928,7 +2980,7 @@ public:
     candleWake = 0; goldWake = 0; slowWake = 0; fngWake = 0; dayAgoUsd = 0;
     alarmHeight = 0; feeAlarm = 0; feeArmed = true;   // NVS reloads the alarms
     evQueue = 0; evShown = 0; evWake = 0; evBlockH = 0; evFee = 0; evFeeAt = 0;
-    evConfN = 0; evConfSats = 0; evConfBlock = 0;
+    evConfN = 0; evConfSats = 0; evConfBlock = 0; evPaySats = 0; evPayLn = false;
     trackState = 0; trackAddr[0] = 0; trackTxid[0] = 0; trackSats = 0;
     trackHeight = 0; trackShown = 0; trackWake = 0; lastDoneTx[0] = 0;
     fastSsid[0] = 0; fastChan = 0; memset(fastBssid, 0, sizeof(fastBssid));
@@ -3186,7 +3238,7 @@ public:
     if (curIdx > 5) curIdx = 0;
     if (walletView > 2) walletView = 0;  // never dereference
 
-    walletScanArmed = !inWalletScan && (dispMode == M_WALT) &&
+    walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
       (forceFetch || !haveWallet ||
        wakeMin - lastWalletMin >= WALLET_EVERY_MIN);
 
@@ -3256,7 +3308,7 @@ public:
                                 // large black<->white flips (ghost
                                 // "LN..." fragments over the QR in dark
                                 // mode) and a QR must scan crisply
-      if (vigilPending && !inDocked) {
+      if (vigilPending && !inDocked && !inVigil) {
         vigilPending = false;
         paymentVigil();                   // stand watch ~2 min
       }
@@ -3739,7 +3791,7 @@ public:
     // NOW, then the slow address sweep runs, then we re-render.
     if (walletScanArmed && !inWalletScan) {
       inWalletScan = true;
-      scanCancelled = 0;
+      scanCancelled = -1;
       watchButtonsDuringScan(true);
       display.display(true);              // instant frame, tag = SCAN
       bool ok = fetchWallet();
@@ -3749,11 +3801,11 @@ public:
       if (ok) lastWalletMin = wakeMin;
       fetchPending = false;                // the sweep is over either way
       Serial.printf("[wallet] sweep %s\n",
-                    ok ? "OK" : (scanCancelled ? "CANCELLED" : "FAIL"));
+                    ok ? "OK" : (scanCancelled >= 0 ? "CANCELLED" : "FAIL"));
       // the press that cancelled the scan still has to do its job, or the
       // watch just sits there having ignored you
-      if (scanCancelled) {
-        int btn = scanCancelled; scanCancelled = 0;
+      if (scanCancelled >= 0) {
+        int btn = scanCancelled; scanCancelled = -1;
         waitRelease(btn);
         buttonWake = true;
         if (btn == BACK_BTN_PIN) {
@@ -4447,7 +4499,7 @@ public:
   }
 
   // ---------------- alarms ----------------
-  enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4 };
+  enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4, EV_PAY = 8 };
   enum { TRACK_NONE = 0, TRACK_RESOLVE = 1, TRACK_ON = 2 };
 
   bool alarmsArmed() { return alarmHeight > 0 || feeAlarm > 0; }
@@ -4638,7 +4690,10 @@ public:
     Serial.printf("[alarm] fired %u (queue %u)\n", bit, evQueue);
     // each its own pattern, so the wrist knows which before the eyes do.
     // Through buzz(): an odd vibMotor length leaves the motor running.
-    if (bit == EV_BLOCK) {
+    if (bit == EV_PAY) {
+      // silent here: whoever saw it land has already played the payment
+      // pattern, the same one the wallet face has always used
+    } else if (bit == EV_BLOCK) {
       buzz(75, 14);                                         // one long
     } else if (bit == EV_FEE) {
       buzz(75, 4); delay(160); buzz(75, 4);                 // two short
@@ -4703,7 +4758,7 @@ public:
       tmElements_t dt; breakTime(lt, dt);
       char clk[6]; snprintf(clk, 6, "%02d:%02d", dt.Hour, dt.Minute);
       display.setCursor(10, 3); display.print(clk); }
-    const char *tag = (ev == EV_CONF) ? "CONF" : "ALARM";
+    const char *tag = (ev == EV_CONF) ? "CONF" : (ev == EV_PAY) ? "PAY" : "ALARM";
     int tw = (int)strlen(tag) * 6, tx = 188 - tw;
     display.fillRect(tx - 3, 1, tw + 5, 11, fg());
     display.setTextColor(bg());
@@ -4723,6 +4778,14 @@ public:
         char g[16]; fmtGrouped(blockHeight, g, 16);
         snprintf(l1, 30, "TIP NOW %s", g);
       }
+    } else if (ev == EV_PAY) {
+      // on-chain is not final yet, so it says where it is and what comes
+      // next; lightning is final the moment it lands, so it says that
+      snprintf(head, 24, evPayLn ? "LIGHTNING RECEIVED" : "PAYMENT INCOMING");
+      fmtGrouped(evPaySats, big, 20);
+      snprintf(l1, 30, evPayLn ? "SATS - SETTLED" : "SATS - IN MEMPOOL");
+      if (!evPayLn && trackState != TRACK_NONE)
+        snprintf(l2, 30, "TICKS AT 1, 3, 6 CONF");
     } else if (ev == EV_FEE) {
       snprintf(head, 24, "FEES ARE LOW");
       fmtFee(big, 20, evFee);          // the face's own formatter
@@ -5215,6 +5278,9 @@ public:
 
     uint8_t lastMin = currentTime.Minute;
     unsigned long lastTip = 0, lastPrice = 0, lastAddrPoll = 0;
+    // the QR was put away: keep listening a while, like the wrist does
+    unsigned long chainWatchUntil = 0, lnWatchUntil = 0;
+    int lastQr = 0;
     unsigned long lastWifiTry = 0, lastExtrasTry = 0;
     bool extrasWant = false;
     uint64_t addrBaseline = 0; int baselineIdx = -1;
@@ -5317,7 +5383,17 @@ public:
       // poll that address; when sats land in the mempool: triple buzz
       // and flip to the balance, freshly rescanned
       // lightning view: poll invoice settlement fast (it's instant money)
-      if (!dockNetDown && dispMode == M_WALT && walletView == 2 &&
+      { int qrNow = qrOnGlass() ? walletView : 0;
+        if (lastQr && qrNow != lastQr) {
+          if (lastQr == 1) chainWatchUntil = millis() + 120000UL;
+          else             lnWatchUntil    = millis() + 120000UL;
+        }
+        lastQr = qrNow; }
+      const bool watchLn    = (qrOnGlass() && walletView == 2) ||
+                              (long)(lnWatchUntil - millis()) > 0;
+      const bool watchChain = (qrOnGlass() && walletView == 1) ||
+                              (long)(chainWatchUntil - millis()) > 0;
+      if (!dockNetDown && watchLn &&
           lnVerify[0] && millis() - lastAddrPoll > 5000) {
         lastAddrPoll = millis();
         if (lnSettled()) {
@@ -5326,12 +5402,18 @@ public:
           vibMotor(60, 4); delay(120);
           vibMotor(60, 8);
           Serial.println("[dock] lightning payment settled!");
-          drawLnPaid(LN_REQUEST_SATS);           // its own moment
-          delay(3500);
+          lnWatchUntil = 0;
+          if (dispMode == M_WALT) {
+            drawLnPaid(LN_REQUEST_SATS);         // its own moment
+            delay(3500);
+          } else {                               // elsewhere: a PAY screen
+            evPaySats = LN_REQUEST_SATS; evPayLn = true;
+            fireEvent(EV_PAY);
+          }
           redraw = true;                         // then a fresh invoice
         }
       }
-      if (!dockNetDown && dispMode == M_WALT && walletView == 1 &&
+      if (!dockNetDown && watchChain &&
           millis() - lastAddrPoll > (chargeSaver ? 60000UL : 20000UL)) {
         lastAddrPoll = millis();
         String a = walletAddr(recvIndex);
@@ -5361,6 +5443,11 @@ public:
                 walletSats += delta;
                 haveWallet = true;
                 armTracking(a.c_str());   // follow it to 6 confirmations
+                chainWatchUntil = 0;
+                if (dispMode != M_WALT) {     // elsewhere: a PAY screen
+                  evPaySats = (long long)delta; evPayLn = false;
+                  fireEvent(EV_PAY);
+                }
                 recvIndex++;              // this address is used now
                 walletView = 0;           // flip to the updated balance;
                 redraw = true;            // the periodic sweep reconciles
