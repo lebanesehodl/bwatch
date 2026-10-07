@@ -34,6 +34,7 @@
 #include <WiFiMulti.h>     // roaming: try every saved network
 // (docked mode uses fast HTTP polling — no websocket library needed)
 #include <Bitcoin.h>            // uBitcoin: watch-only address derivation
+#include <Hash.h>               // uBitcoin: doubleSha, for the genesis boot
 #include "qrcodegen_local.h"    // ricmoo/QRCode, vendored into the sketch
                                 // folder because the ESP32 core ships its
                                 // own qrcode.h that shadows the library
@@ -2752,7 +2753,7 @@ public:
   // itself instead — the ring fills a sixth at a time, the marker at twelve
   // turns out to be a B, then the words arrive. Roughly three seconds, once
   // per power-on, and it ends on a full refresh so no ghosting is left.
-  void bootAnimation() {
+  void bootRing() {
     const float CX = 100, CY = 100;
     display.setFullWindow();
     display.fillScreen(GxEPD_BLACK);
@@ -2774,7 +2775,9 @@ public:
       display.display(true);
     }
 
-    drawTinyB(97, 7);                           // and twelve is a B
+    // drawTinyB draws in fg(): on this always-black screen that has to be
+    // white, or in the light theme the B was black on black and never showed
+    { bool t = themeDark; themeDark = true; drawTinyB(97, 7); themeDark = t; }
     display.display(true);
 
     display.setFont(NULL);
@@ -2873,6 +2876,217 @@ public:
   // menu started following the theme — with both in the same palette there is
   // no full-panel inversion to leave residue, and the face's own full refresh
   // on exit is enough. One flash instead of two.
+
+  // ---------------- startup sequences ----------------
+  // One per true boot (power-on, reflash, crash), taking turns, so the watch
+  // introduces itself a little differently each time. They share the ring's
+  // rules: e-paper does not move, so each one ASSEMBLES a picture in partial
+  // refreshes (about a third of a second each), lasts about three seconds,
+  // and ends on a full refresh so nothing ghosts. None of them can use live
+  // data: RTC memory is empty at a cold boot. Everything shown is either
+  // timeless or computed here and now.
+  static const int BOOT_SEQS = 4;
+
+  void bootAnimation() {
+    Preferences p;
+    p.begin("btcchrono", false);
+    uint32_t n = p.getUInt("boots", 0);
+    p.putUInt("boots", n + 1);
+    p.end();
+    Serial.printf("[boot] sequence %u\n", (unsigned)(n % BOOT_SEQS));
+    switch (n % BOOT_SEQS) {
+      case 0:  bootSegmentTest(); break;
+      case 1:  bootGenesis();     break;
+      case 2:  bootHalvings();    break;
+      default: bootRing();        break;
+    }
+  }
+
+  // white on black, like the ring: the boot does not follow the theme
+  void bootClear() {
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.setFont(NULL);
+    display.setTextSize(1);
+  }
+
+  void bootCenter(const char *s, int y, int size) {     // built-in font
+    display.setFont(NULL);
+    display.setTextSize(size);
+    display.setCursor((200 - (int)strlen(s) * 6 * size) / 2, y);
+    display.print(s);
+    display.setTextSize(1);
+  }
+
+  // __DATE__ is "Oct  7 2026": the day the firmware was built, as a stamp
+  void buildStamp(char *out, int n) {
+    const char *d = __DATE__;
+    char mon[4] = { (char)toupper(d[0]), (char)toupper(d[1]), (char)toupper(d[2]), 0 };
+    int day = atoi(d + 4);
+    snprintf(out, n, "BUILT %02d %s %s", day, mon, d + 7);
+  }
+
+  // SEGMENT TEST. What the first digital watches did at power-on: light
+  // every segment so you can see none is dead, then show who they are.
+  void bootSegmentTest() {
+    bootClear();
+    display.display(false);                       // clean slate
+
+    // everything on: the clock, every indicator, every cell, every digit
+    display.setFont(&DSEG7_Classic_Bold_14);
+    display.setCursor(6, 17); display.print("88:88");
+    display.drawRect(64, 6, 14, 8, GxEPD_WHITE);  // battery, full
+    display.fillRect(78, 8, 2, 4, GxEPD_WHITE);
+    display.fillRect(66, 8, 11, 4, GxEPD_WHITE);
+    display.fillRect(150, 4, 44, 11, GxEPD_WHITE);   // the tag, lit solid
+    { bool t = themeDark; themeDark = true;         // and the alarm bell
+      drawBell(140, 5); themeDark = t; }
+    centerText("88:88", 92, &DSEG7_Classic_Bold_32);
+    centerText("888888", 138, &DSEG7_Classic_Bold_25);
+    for (int i = 0; i < 9; i++) {                 // the mode strip, all on
+      int a = 5 + (i * 190) / 9, b = 5 + ((i + 1) * 190) / 9;
+      display.fillRect(a, 186, b - a - 1, 13, GxEPD_WHITE);
+    }
+    display.display(true);
+    delay(250);
+
+    // then only the middle segment of each digit: the classic dash pass
+    display.fillScreen(GxEPD_BLACK);
+    display.setFont(&DSEG7_Classic_Bold_14);
+    display.setCursor(6, 17); display.print("--:--");
+    centerText("--:--", 92, &DSEG7_Classic_Bold_32);
+    centerText("------", 138, &DSEG7_Classic_Bold_25);
+    for (int i = 0; i < 9; i++) {
+      int a = 5 + (i * 190) / 9, b = 5 + ((i + 1) * 190) / 9;
+      display.drawRect(a, 186, b - a - 1, 13, GxEPD_WHITE);
+    }
+    display.display(true);
+    delay(150);
+
+    // and who it is
+    bootClear();
+    bootCenter("BWATCH", 64, 3);
+    display.drawFastHLine(40, 96, 120, GxEPD_WHITE);
+    bootCenter("SEGMENT TEST OK", 106, 1);
+    display.display(true);
+    char b[32]; buildStamp(b, sizeof(b));
+    bootCenter(b, 124, 1);
+    bootCenter("BITCOIN IS TIME", 176, 1);
+    display.display(true);
+
+    display.display(false);                       // full refresh: no ghosts
+    delay(600);
+  }
+
+  // GENESIS. The watch re-mines block 0: the real 80-byte genesis header,
+  // double SHA-256, for the last five nonces before Satoshi's. The first
+  // four come out ordinary; the fifth comes out with ten leading zeros,
+  // because it does. Nothing here is a picture of a hash.
+  void bootGenesis() {
+    bootClear();
+    display.display(false);
+
+    // version 1 | previous block: none | merkle root | time | bits | nonce
+    static const uint8_t HDR[76] = {
+      0x01,0x00,0x00,0x00,
+      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+      0x3b,0xa3,0xed,0xfd,0x7a,0x7b,0x12,0xb2,0x7a,0xc7,0x2c,0x3e,0x67,0x76,0x8f,0x61,
+      0x7f,0xc8,0x1b,0xc3,0x88,0x8a,0x51,0x32,0x3a,0x9f,0xb8,0xaa,0x4b,0x1e,0x5e,0x4a,
+      0x29,0xab,0x5f,0x49,                        // 2009-01-03 18:15:05 UTC
+      0xff,0xff,0x00,0x1d };                      // bits 0x1d00ffff
+    const uint32_t NONCE = 2083236893UL;
+
+    bootCenter("BLOCK 0", 8, 2);
+    bootCenter("03 JAN 2009", 30, 1);
+    bootCenter("MINING THE GENESIS HEADER", 46, 1);
+    display.drawFastHLine(10, 58, 180, GxEPD_WHITE);
+    display.display(true);
+
+    uint8_t hdr[80];
+    memcpy(hdr, HDR, 76);
+    for (int k = 4; k >= 0; k--) {
+      uint32_t nonce = NONCE - k;
+      hdr[76] = nonce & 0xff;         hdr[77] = (nonce >> 8) & 0xff;
+      hdr[78] = (nonce >> 16) & 0xff; hdr[79] = (nonce >> 24) & 0xff;
+      uint8_t h[32];
+      doubleSha(hdr, 80, h);
+      char hex[13];                               // shown big-endian, as
+      for (int i = 0; i < 6; i++)                 // block hashes always are
+        snprintf(hex + i * 2, 3, "%02x", h[31 - i]);
+      char line[34];
+      snprintf(line, sizeof(line), "%10lu %s", (unsigned long)nonce, hex);
+      int y = 66 + (4 - k) * 14;
+      if (k == 0) {                               // the one that worked
+        display.fillRect(10, y - 3, 180, 13, GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+      }
+      display.setFont(NULL);
+      display.setCursor((200 - (int)strlen(line) * 6) / 2, y);
+      display.print(line);
+      display.setTextColor(GxEPD_WHITE);
+      display.display(true);
+    }
+
+    display.drawFastHLine(10, 140, 180, GxEPD_WHITE);
+    bootCenter("BLOCK 0 FOUND", 148, 1);
+    bootCenter("THE TIMES 03/JAN/2009", 168, 1);
+    bootCenter("CHANCELLOR ON BRINK...", 180, 1);
+    display.display(true);
+
+    display.display(false);
+    delay(600);
+  }
+
+  // HALVINGS. Bitcoin's own calendar: every 210,000 blocks the subsidy
+  // halves, about every four years. The counter walks the epochs so far and
+  // the next one; the bar is all 33 epochs that will ever pay a subsidy.
+  void bootHalvings() {
+    // drawGrouped draws its separators in fg(): white on this black, whatever
+    // the face's theme is, and the theme comes back after
+    bool savedTheme = themeDark;
+    themeDark = true;
+    bootClear();
+    display.display(false);
+
+    static const char *YEAR[6]    = { "2009", "2012", "2016", "2020", "2024", "~2028" };
+    static const char *SUBSIDY[6] = { "50", "25", "12.5", "6.25", "3.125", "1.5625" };
+    bootCenter("HALVINGS", 10, 2);
+    // 33 epochs across the bottom, 4 px each with a 1 px gap, clear of the
+    // bezel on both sides
+    const int CW = 4, CP = 5, BW = 33 * CP - 1;
+    const int BX = (200 - BW) / 2, BY = 160;
+    for (int e = 0; e < 33; e++)
+      display.drawRect(BX + e * CP, BY, CW, 9, GxEPD_WHITE);
+    display.setCursor(BX, BY + 13);                 display.print("EPOCH 1");
+    display.setCursor(BX + BW - 2 * 6 + 1, BY + 13); display.print("33");
+
+    for (int i = 0; i < 6; i++) {
+      display.fillRect(0, 34, 200, 120, GxEPD_BLACK);   // the number area
+      char h[12]; snprintf(h, sizeof(h), "%ld", (long)i * 210000L);
+      drawGrouped(h, 84, fitFont(h));
+      display.setFont(NULL);
+      char l[28];
+      snprintf(l, sizeof(l), "BLOCK HEIGHT - %s", YEAR[i]);
+      bootCenter(l, 98, 1);
+      snprintf(l, sizeof(l), "%s BTC PER BLOCK", SUBSIDY[i]);
+      bootCenter(l, 116, 1);
+      if (i == 5) bootCenter("NEXT", 134, 1);
+      // fill the epoch this height opens (the next one only outlined)
+      if (i < 5) display.fillRect(BX + i * CP, BY, CW, 9, GxEPD_WHITE);
+      display.display(true);
+      delay(i == 0 || i == 5 ? 250 : 80);         // linger on the ends
+    }
+
+    display.fillRect(0, 34, 200, 120, GxEPD_BLACK);
+    bootCenter("BITCOIN", 70, 2);
+    bootCenter("IS TIME", 94, 2);
+    display.display(true);
+
+    display.display(false);
+    delay(600);
+    themeDark = savedTheme;
+  }
 
   void drawSplash() {
     display.fillScreen(bg());
