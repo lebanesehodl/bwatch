@@ -3204,7 +3204,7 @@ public:
     }
     if (!prePaint) maybeFetch();
     // an alarm someone has not seen yet takes the glass until a press
-    if (!prePaint && evQueue && showEvent(timerWake)) return;
+    if (!prePaint && evQueue && !qrOnGlass() && showEvent(timerWake)) return;
     display.fillScreen(bg());
     display.setTextColor(fg());
     display.setFont(NULL);   // 6x8 built-in for all small text
@@ -4452,6 +4452,11 @@ public:
 
   bool alarmsArmed() { return alarmHeight > 0 || feeAlarm > 0; }
 
+  // A receive QR (on-chain or lightning) belongs to whoever is scanning it.
+  // An alarm still buzzes when it fires, but its screen waits until the QR
+  // is put away, and buttons keep doing what the QR screen says they do.
+  bool qrOnGlass() { return dispMode == M_WALT && walletView > 0; }
+
   // the armed indicator: a 7x8 bell, drawn in the status row just left of
   // the corner tag
   void drawBell(int x, int y) {
@@ -5420,7 +5425,7 @@ public:
       if (checkAlarms()) redraw = true;      // the dock polls on its own
 
       // ANY BUTTON: OK on an alarm screen, here as on the wrist
-      if (evQueue && evShown &&
+      if (evQueue && evShown && !qrOnGlass() &&
           (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
            digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
            digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
@@ -5555,7 +5560,7 @@ public:
     stillRun = 0;                            // minutes of the full face
     // ANY BUTTON: OK. The press acknowledges the alarm on the glass and does
     // nothing else; the next one waiting (or the face) takes its place.
-    if (evQueue && guiState == WATCHFACE_STATE) {
+    if (evQueue && guiState == WATCHFACE_STATE && !qrOnGlass()) {
       if (evShown) dismissEvent();     // only what has actually been seen
       pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
       pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
