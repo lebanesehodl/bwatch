@@ -2878,8 +2878,8 @@ public:
   // on exit is enough. One flash instead of two.
 
   // ---------------- startup sequences ----------------
-  // One per true boot (power-on, reflash, crash), taking turns, so the watch
-  // introduces itself a little differently each time. They share the ring's
+  // One per true boot (power-on, reflash, crash), picked at random, so the
+  // watch introduces itself a little differently each time. They share the ring's
   // rules: e-paper does not move, so each one ASSEMBLES a picture in partial
   // refreshes (about a third of a second each), lasts about three seconds,
   // and ends on a full refresh so nothing ghosts. None of them can use live
@@ -2887,14 +2887,23 @@ public:
   // timeless or computed here and now.
   static const int BOOT_SEQS = 4;
 
+  // At random, but never the one shown last time: true randomness repeats
+  // itself one boot in four, and a repeat reads as a watch that is stuck.
+  // esp_random() is the chip's hardware generator.
   void bootAnimation() {
     Preferences p;
     p.begin("btcchrono", false);
-    uint32_t n = p.getUInt("boots", 0);
-    p.putUInt("boots", n + 1);
+    uint8_t last = p.getUChar("bootLast", 0xFF);  // 0xFF: none yet
+    uint8_t pick;
+    if (last >= BOOT_SEQS) pick = esp_random() % BOOT_SEQS;
+    else {
+      pick = esp_random() % (BOOT_SEQS - 1);       // one of the other three
+      if (pick >= last) pick++;
+    }
+    p.putUChar("bootLast", pick);
     p.end();
-    Serial.printf("[boot] sequence %u\n", (unsigned)(n % BOOT_SEQS));
-    switch (n % BOOT_SEQS) {
+    Serial.printf("[boot] sequence %u (last %u)\n", pick, last);
+    switch (pick) {
       case 0:  bootSegmentTest(); break;
       case 1:  bootGenesis();     break;
       case 2:  bootHalvings();    break;
