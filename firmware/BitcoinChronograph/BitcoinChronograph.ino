@@ -125,6 +125,27 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
                              // it, so stop spending radio on their behalf
 #define STILL_AFTER_MIN 60   // minutes of no movement before that kicks in
 #define MOVE_THRESHOLD  90   // raw counts; a wrist easily clears this
+// ---- rest and night ----
+// E-paper costs nothing to hold, so the saving is in WAKES, not pixels. When
+// nobody can be reading the watch it puts up a face that stays true without
+// a clock (the chain, AS OF when it was fetched) and sleeps for minutes at a
+// time instead of one. Any button brings it straight back.
+#define NIGHT_FROM_H     0   // 00:00 local ...
+#define NIGHT_TO_H       6   // ... to 06:00: no radio, no minute wakes
+#define PRESS_GRACE_MIN  3   // after any press the full face stays this long,
+                             // or a watch on a table would rest again at once
+#define REST_WAKE_MIN    5   // resting by day: check for a pickup this often
+#define FLAT_STILL_MIN  10   // flat on its back and dead still this long = on
+                             // a table, not a wrist
+// The next three are starting guesses. The [accel] serial line prints delta,
+// x, y, z and the pose on every minute wake: wear it a day, leave it on a
+// table a night, and set these from what it says.
+#define STILL_DELTA     24   // raw counts; tighter than MOVE_THRESHOLD. A
+                             // wrist has tremor, a table has sensor noise
+#define FLAT_XY        180   // |x| and |y| under ~10 degrees off level
+#define FLAT_Z         900   // and nearly all of 1 g (~1024) on z
+#define FACE_UP_Z_SIGN   1   // sign of z lying face-up. If the log shows a
+                             // face-up watch reading DOWN, flip this to -1
 // ---- haptics ----
 // BUZZ_ON_BLOCK: one short tick when new block(s) are discovered at a
 //   fetch. NOTE: the watch deep-sleeps, so this fires at fetch cadence
@@ -149,7 +170,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C012E
+#define RTC_LAYOUT_MAGIC 0xB17C012F
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -224,6 +245,14 @@ RTC_DATA_ATTR bool     resting       = false;  // the cell ran out and the
                                                // panel is holding its last
                                                // image; wake only to check
                                                // whether a charger arrived
+RTC_DATA_ATTR uint8_t  restState     = 0;      // REST_NONE / _DAY / _NIGHT
+RTC_DATA_ATTR int8_t   restPose      = 0;      // pose when rest began: a
+                                               // turned-over watch is a
+                                               // picked-up watch
+RTC_DATA_ATTR uint32_t sleptSince    = 0;      // RTC epoch a long sleep began,
+                                               // so wakeMin can catch up
+RTC_DATA_ATTR uint16_t stillRun      = 0;      // consecutive flat dead-still wakes
+RTC_DATA_ATTR uint32_t awakeTill     = 0;      // wakeMin the last press lasts to
 RTC_DATA_ATTR bool     joeReveal     = false;  // tap UP in JOE and the date
                                                // line shows the block height
                                                // for one refresh
@@ -665,12 +694,190 @@ public:
   // "is this on an arm or on a table".
   bool movedSinceLastWake() {
     Accel a;
+    accDelta = -1; accPose = POSE_TILTED;      // unknown until proven
     if (!sensor.getAccel(a)) return true;      // no reading: assume worn
     long d = labs((long)a.x - lastAx) + labs((long)a.y - lastAy)
            + labs((long)a.z - lastAz);
     lastAx = a.x; lastAy = a.y; lastAz = a.z;
+    // Pose: lying level (on its back or on its face) or anything else. Only a
+    // level watch can be on a table; a wrist is almost never within ten
+    // degrees of flat for long.
+    bool level = labs((long)a.x) < FLAT_XY && labs((long)a.y) < FLAT_XY &&
+                 labs((long)a.z) > FLAT_Z;
+    if (level) accPose = ((long)a.z * FACE_UP_Z_SIGN > 0) ? POSE_FACE_UP
+                                                          : POSE_FACE_DOWN;
+    Serial.printf("[accel] d=%ld x=%d y=%d z=%d pose=%s rest=%d run=%u\n",
+                  d, a.x, a.y, a.z,
+                  accPose == POSE_FACE_UP ? "UP" :
+                  accPose == POSE_FACE_DOWN ? "DOWN" : "TILT",
+                  restState, stillRun);
     if (!accelSeeded) { accelSeeded = true; lastMoveWake = wakeMin; return true; }
+    accDelta = d;
     return d > MOVE_THRESHOLD;
+  }
+
+  // ---------------- rest and night ----------------
+  enum { REST_NONE = 0, REST_DAY = 1, REST_NIGHT = 2 };
+  enum { POSE_TILTED = 0, POSE_FACE_UP = 1, POSE_FACE_DOWN = 2 };
+  long accDelta = -1;          // this wake's movement, -1 if not measured
+  int  accPose  = POSE_TILTED; // this wake's pose
+  bool restExitFull = false;   // the face after a rest gets a full refresh
+
+  // Local wall-clock minutes since midnight, the same arithmetic the status
+  // row uses so the night window and the printed clock cannot disagree.
+  int localMinuteOfDay() {
+    time_t lt = makeTime(currentTime);
+    if (tzIndex > 0) {
+      time_t utc = lt - settings.gmtOffset;
+      lt = utc + tzOffsetSec(tzIndex, utc);
+    }
+    tmElements_t dt; breakTime(lt, dt);
+    return dt.Hour * 60 + dt.Minute;
+  }
+
+  bool inNightWindow() {
+    int h = localMinuteOfDay() / 60;
+    return (NIGHT_FROM_H <= NIGHT_TO_H) ? (h >= NIGHT_FROM_H && h < NIGHT_TO_H)
+                                        : (h >= NIGHT_FROM_H || h < NIGHT_TO_H);
+  }
+
+  // minutes from now until the clock reads hh:00 local
+  int minutesUntilHour(int hh) {
+    int d = hh * 60 - localMinuteOfDay();
+    return d <= 0 ? d + 1440 : d;
+  }
+
+  // A long sleep stops the minute wakes, but wakeMin is the watch's clock for
+  // every cadence and every staleness: fetches, OLD tags, the hourly battery
+  // sample. So on the way back in, add the minutes that actually passed.
+  long catchUpWakeClock() {
+    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {   // a real boot ends any rest
+      restState = REST_NONE; sleptSince = 0;
+      return 0;
+    }
+    if (!sleptSince) return 0;
+    tmElements_t t; RTC.read(t);
+    long s = (long)makeTime(t) - (long)sleptSince;
+    sleptSince = 0;
+    if (s < 0 || s > 26L * 3600) return 0;   // the clock was set meanwhile:
+                                             // a jump is worse than a gap
+    return (s + 30) / 60;
+  }
+
+  // Everything that must keep the watch fully awake. Resting is a saving, so
+  // anything doing something on the wearer's behalf wins.
+  bool restAllowed() {
+    return guiState == WATCHFACE_STATE && !inDocked && chargeState() == 0 &&
+           !travelActive && !fetchPending && !prePaint && !inWalletScan &&
+           !vigilPending && !(dispMode == M_WALT && walletView > 0) &&
+           haveData && blockHeight > 0;
+  }
+
+  // Deep sleep for whole minutes, waking on the minute like the library does.
+  // Mirrors Watchy::deepSleep() for the v3 board with a longer timer; it does
+  // not return. The panel keeps its image with the power off.
+  bool longSleep(uint32_t minutes) {
+  #ifdef ARDUINO_ESP32S3_DEV
+    if (minutes < 2) return false;            // the library's own sleep does 1
+    tmElements_t t; RTC.read(t);
+    sleptSince = (uint32_t)makeTime(t);
+    uint64_t sec = (uint64_t)(60 - t.Second) + (uint64_t)(minutes - 1) * 60;
+    Serial.printf("[rest] sleeping %lu min (state %d)\n",
+                  (unsigned long)minutes, restState);
+    Serial.flush();
+    display.hibernate();
+    RTC.clearAlarm();
+    pinMode(USB_DET_PIN, INPUT);
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)USB_DET_PIN,
+                                 digitalRead(USB_DET_PIN) == 1 ? LOW : HIGH);
+    rtc_gpio_set_direction((gpio_num_t)USB_DET_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)USB_DET_PIN);
+    esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_LOW);
+    rtc_gpio_set_direction((gpio_num_t)UP_BTN_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)UP_BTN_PIN);
+    rtc_clk_32k_enable(true);
+    esp_sleep_enable_timer_wakeup(sec * 1000000ULL);
+    esp_deep_sleep_start();
+  #endif
+    return false;      // other boards: minute wakes, but no redraws
+  }
+
+  // How long to sleep from here. By night, to the top of the next hour (so
+  // the hourly battery sample keeps its hours) or to the end of the night.
+  // By day, a few minutes, but never past the start of the night.
+  uint32_t restSleepMinutes() {
+    if (restState == REST_NIGHT) {
+      int toEnd = minutesUntilHour(NIGHT_TO_H);
+      int toHour = 60 - localMinuteOfDay() % 60;
+      return (uint32_t)(toHour < toEnd ? toHour : toEnd);
+    }
+    int toNight = minutesUntilHour(NIGHT_FROM_H);
+    return (uint32_t)(REST_WAKE_MIN < toNight ? REST_WAKE_MIN : toNight);
+  }
+
+  // Back to the full face. The data has aged while the radio was off, so if
+  // it is past fresh, fetch before anyone has to ask.
+  void endRest(const char *why) {
+    Serial.printf("[rest] end (%s)\n", why);
+    restState = REST_NONE;
+    stillRun = 0;
+    restExitFull = true;
+    if (staleMinutes() >= STALE_AFTER_MIN ||
+        heightStaleMinutes() >= STALE_AFTER_MIN) forceFetch = true;
+  }
+
+  // Called on every timer wake once the accelerometer has been read. Returns
+  // true when this wake is a rest wake: the panel is handled here, and on v3
+  // this does not return at all (the watch goes straight back to sleep).
+  bool handleRest() {
+    bool pressed = wakeMin < awakeTill;      // someone is using it
+    bool night = inNightWindow() && !pressed;
+    bool still = accDelta >= 0 && accDelta < STILL_DELTA;
+
+    if (restState != REST_NONE) {
+      if (!restAllowed()) { endRest("busy"); return false; }
+      if (restState == REST_NIGHT) {
+        if (!inNightWindow()) { endRest("morning"); return false; }
+      } else {
+        // a pickup: real movement, or set down a different way up
+        if (accDelta < 0 || accDelta > MOVE_THRESHOLD || accPose != restPose) {
+          endRest("moved"); return false;
+        }
+        if (night) {                          // dozed into the night
+          restState = REST_NIGHT;
+          drawRestFace(); display.display(false);
+          longSleep(restSleepMinutes());
+          return true;
+        }
+      }
+      // still resting, nothing changed: the panel already says it. Straight
+      // back to sleep, no refresh at all.
+      if (!longSleep(restSleepMinutes())) drawRestFace();
+      return true;
+    }
+
+    // awake: should it rest?
+    if (accPose == POSE_FACE_UP && still) stillRun++;
+    else stillRun = 0;
+    if (!restAllowed() || pressed) return false;
+
+    uint8_t want = REST_NONE;
+    const char *why = "";
+    if (night)                                           { want = REST_NIGHT; why = "night"; }
+    else if (accPose == POSE_FACE_DOWN && accDelta >= 0 &&
+             accDelta <= MOVE_THRESHOLD)                 { want = REST_DAY; why = "face down"; }
+    else if (stillRun >= FLAT_STILL_MIN)                 { want = REST_DAY; why = "on a table"; }
+    else if (watchIsIdle())                              { want = REST_DAY; why = "still an hour"; }
+    if (want == REST_NONE) return false;
+
+    Serial.printf("[rest] begin (%s)\n", why);
+    restState = want;
+    restPose  = accPose;
+    drawRestFace();
+    display.display(false);     // full refresh: this image may hold for hours,
+                                // so it starts clean of any ghosting
+    longSleep(restSleepMinutes());
+    return true;                // other boards: the library re-sends it
   }
 
   bool watchIsIdle() {
@@ -2525,6 +2732,8 @@ public:
     // 2028 halving by months without anything looking obviously broken.
     avgBlockSec = 600;
     joeReveal = false; captivePortal = false; resting = false;
+    restState = 0; restPose = 0; sleptSince = 0; stillRun = 0;
+    awakeTill = 0;
     lnFetchedWake = 0;      // a stale stamp can make an old invoice
                             // look fresh after a layout change
     sawMillion = false;
@@ -2583,6 +2792,71 @@ public:
     else if (d == 4) { fill(0,0,T,(1+T)/2,fg()); fill(1-T,0,T,1,fg());
                        fill(0,(1-T)/2,1,T,fg()); }
     else if (d == 7) { fill(0,0,1,T,fg()); fill(1-T,0,T,1,fg()); }
+  }
+
+  // The resting face. Everything on it has to stay true with nobody redrawing
+  // it for half an hour or a whole night, so nothing on it is a clock: the
+  // chain as it was last heard, and AS OF when that was. The tag sits where
+  // LIVE does, and the strip that normally steers between modes says the one
+  // thing anyone picking it up needs to know.
+  void drawRestFace() {
+    bool night = (restState == REST_NIGHT);
+    themeDark = darkNow();
+    display.setFullWindow();
+    display.fillScreen(bg());
+    display.setTextColor(fg());
+    display.setFont(NULL);
+
+    drawBattery(10, 3);
+    const char *tag = night ? "NIGHT" : "REST";
+    display.setCursor(188 - (int)strlen(tag) * 6, 3);
+    display.print(tag);
+
+    if (night) {                                   // a crescent, two circles
+      display.fillCircle(100, 34, 9, fg());
+      display.fillCircle(105, 30, 8, bg());
+    }
+
+    // the height we were TOLD, never an estimate: AS OF dates it
+    char big[16]; snprintf(big, 16, "%ld", blockHeight);
+    int base = night ? 92 : 80;
+    drawGrouped(big, base, fitFont(big));
+    display.setFont(NULL);
+
+    // AS OF the older of the two figures on the face, so the stamp is true
+    // of both of them
+    long age = staleMinutes();
+    if (heightStaleMinutes() > age) age = heightStaleMinutes();
+    int asOf = localMinuteOfDay() - (int)age;
+    while (asOf < 0) asOf += 1440;
+    char line[26];
+    snprintf(line, 26, "AS OF %02d:%02d", asOf / 60, asOf % 60);
+    centerSmall(line, base + 10);
+
+    if (btcPrice > 0) {
+      char p[16]; snprintf(p, 16, "%ld", (long)(btcPrice + 0.5f));
+      char g[20]; int o = 0, len = strlen(p);
+      for (int i = 0; i < len && o < 18; i++) {      // group the thousands
+        g[o++] = p[i];
+        int left = len - i - 1;
+        if (left > 0 && left % 3 == 0) g[o++] = ',';
+      }
+      g[o] = 0;
+      snprintf(line, 26, "%s %s", g, CUR_CODES[curIdx < 6 ? curIdx : 0]);
+      centerSmall(line, night ? 126 : 136);
+    }
+    if (night) {
+      snprintf(line, 26, "RADIO OFF TO %02d:00", NIGHT_TO_H);
+      centerSmall(line, 146);
+    }
+
+    display.drawRect(5, 186, 190, 13, fg());       // where the mode strip was
+    centerSmall("ANY BUTTON WAKES", 189);
+  }
+
+  void centerSmall(const char *s, int y) {          // built-in 6x8 font
+    display.setCursor((200 - (int)strlen(s) * 6) / 2, y);
+    display.print(s);
   }
 
   // JOE. Four digits, each one filling a quarter of the panel, with nothing
@@ -2656,9 +2930,13 @@ public:
     if (dispMode == M_JOE) { drawJoeFace(); return; }
     loadPrefs();
     themeDark = darkNow();
+    long carried = catchUpWakeClock();   // minutes a long sleep skipped
     if (!buttonWake) {
-      wakeMin++;                       // one tick per minute-wake
+      wakeMin += carried > 1 ? carried : 1;   // one tick per minute-wake,
+                                              // or as many as were slept
       joeReveal = false;               // the reveal lasts one glance only
+    } else {
+      wakeMin += carried;
     }
     // Hourly discharge sample.
     //
@@ -2678,6 +2956,8 @@ public:
     }
     if (!accelSeeded) scanAdcPins();   // once per cold boot
     chargeDiag();                      // silent unless a charger is present
+    bool timerWake = !buttonWake && !prePaint &&
+                     esp_reset_reason() == ESP_RST_DEEPSLEEP;
     if (!buttonWake && !inDocked) {
       bool wasIdle = watchIsIdle();
       if (movedSinceLastWake()) {
@@ -2688,6 +2968,9 @@ public:
       }
     }
     buttonWake = false;
+    // Rest and night. Only on the minute wake: a button press always gets the
+    // full face, and the press itself ends a rest (see handleButtonPress).
+    if (timerWake && !inDocked && handleRest()) return;
     // BITCOIN IS TIME on every true boot (power-on, reflash, crash) —
     // but never on the once-a-minute deep-sleep wake. Reset reason has
     // real semantics; a sticky RTC flag survives too many resets.
@@ -3237,6 +3520,10 @@ public:
       display.drawFastHLine(6, 179, tx - 10, fg());
       display.drawFastHLine(tx + w + 4, 179, 194 - (tx + w + 4), fg()); }
     drawModeStrip();
+    if (restExitFull) {           // first face after a rest: full refresh, so
+      restExitFull = false;       // the hours-old image leaves no ghost
+      display.display(false);
+    }
 
     // first WAL entry / due rescan: the face above goes to the panel
     // NOW, then the slow address sweep runs, then we re-render.
@@ -4488,8 +4775,24 @@ public:
   // ---------------- buttons ----------------
   void handleButtonPress() override {
     sanitizeState();
+    wakeMin += catchUpWakeClock();     // a press can cut a long sleep short
     uint64_t wake = esp_sleep_get_ext1_wakeup_status();
     buttonWake = true;                 // don't tick the wake clock
+    // ANY BUTTON WAKES, and that is all the first press does: it would be
+    // rude for the press that woke the watch to also change its mode.
+    if (restState != REST_NONE && guiState == WATCHFACE_STATE) {
+      awakeTill = wakeMin + PRESS_GRACE_MIN;
+      endRest("button");
+      restExitFull = false;            // showWatchFace(false) is already full
+      pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+      pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+      waitAllRelease();
+      RTC.read(currentTime);
+      showWatchFace(false);
+      return;
+    }
+    awakeTill = wakeMin + PRESS_GRACE_MIN;   // every press buys a few
+    stillRun = 0;                            // minutes of the full face
     if (guiState == WATCHFACE_STATE) {
       if (wake & MENU_BTN_MASK) {
         myShowMenu(menuIndex, false);
