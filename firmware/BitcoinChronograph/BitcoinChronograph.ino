@@ -4553,6 +4553,112 @@ public:
     out[o] = 0;
   }
 
+  // Exact BTC, trailing zeros dropped: 1, 0.75, 0.1, 0.12345678. A receipt
+  // never rounds what was paid.
+  void fmtBtcExact(long long sats, char *out, int n) {
+    long long w = sats / 100000000LL, fr = sats % 100000000LL;
+    if (fr == 0) { snprintf(out, n, "%lld", w); return; }
+    char f[12]; snprintf(f, 12, "%08lld", fr);
+    for (int i = 7; i > 0 && f[i] == '0'; i--) f[i] = 0;
+    snprintf(out, n, "%lld.%s", w, f);
+  }
+
+  // Under 0.1 BTC an amount reads in sats; from 0.1 up, in BTC.
+  bool amountInBtc(long long sats) { return sats >= 10000000LL; }
+
+  // the inked box of one glyph
+  void glyphBox(const GFXfont *f, char c, int &xo, int &yo, int &w, int &h) {
+    int first = (int)pgm_read_byte(&f->first);
+    const GFXglyph *g = &f->glyph[(int)c - first];
+    w  = (int)pgm_read_byte(&g->width);
+    h  = (int)pgm_read_byte(&g->height);
+    xo = (int)(int8_t)pgm_read_byte(&g->xOffset);
+    yo = (int)(int8_t)pgm_read_byte(&g->yOffset);
+  }
+
+  int amountCommaW(const GFXfont *f) {      // as drawGrouped spaces them
+    return (f == &DSEG7_Classic_Bold_32) ? 6 : (f == &DSEG7_Classic_Bold_25) ? 4 : 3;
+  }
+
+  // ink width of an amount string in a face: plain digits (grouped from five
+  // up, like drawGrouped) or a decimal (DSEG's point has no advance)
+  int amountInkW(const char *s, const GFXfont *f) {
+    int n = (int)strlen(s), digits = 0;
+    bool dec = strchr(s, '.') != nullptr;
+    for (int i = 0; i < n; i++) if (s[i] >= '0' && s[i] <= '9') digits++;
+    int raw = dec ? digits * digitAdvance(f)
+                  : n * digitAdvance(f) + ((digits >= 5) ? (digits - 1) / 3 : 0) * amountCommaW(f);
+    return raw - glyphLeft(f, s[0]) - glyphRightGap(f, s[n - 1]);
+  }
+
+  // ₿ in the font's own terms. A seven-segment display has no B: its B is an
+  // 8. So the sign is the font's 8 with the two Bitcoin strokes standing
+  // above and below it, about a segment thick. Drawn from its ink edge.
+  void drawBtcSign(const GFXfont *f, int inkX, int y) {
+    int xo, yo, w, h; glyphBox(f, '8', xo, yo, w, h);
+    display.setFont(f);
+    display.setCursor(inkX - xo, y);
+    display.print('8');
+    int th  = (w / 6 < 1) ? 1 : w / 6;      // about a segment thick
+    int len = th * 2 + 1;                   // long enough that it never
+                                            // reads as a plain 8
+    int sx  = inkX + w / 3;
+    for (int k = 0; k < 2; k++) {
+      int x = sx + k * th * 2;
+      display.fillRect(x, y + yo - len, th, len, fg());
+      display.fillRect(x, y + yo + h,   th, len, fg());
+    }
+  }
+
+  // A payment amount as a headline: ₿ then the number, centred together by
+  // their ink. The largest face that fits; 1,000,000 sats and up steps down.
+  // Returns true when it was set in BTC.
+  bool drawAmount(long long sats, int y) {
+    char s[24];
+    bool btc = amountInBtc(sats);
+    if (btc) fmtBtcExact(sats, s, 24); else snprintf(s, 24, "%lld", sats);
+    const GFXfont *ladder[4] = { &DSEG7_Classic_Bold_32, &DSEG7_Classic_Bold_25,
+                                 &DSEG7_Classic_Bold_18, &DSEG7_Classic_Bold_14 };
+    const GFXfont *f = ladder[3];
+    int numW = 0, signW = 0, gap = 0;
+    for (int i = 0; i < 4; i++) {
+      int xo, yo, w, h; glyphBox(ladder[i], '8', xo, yo, w, h);
+      // twice the space between two digits: any less and the sign reads
+      // as one more digit (5000 became 85000)
+      f = ladder[i]; signW = w; gap = 2 * (digitAdvance(ladder[i]) - w);
+      numW = amountInkW(s, f);
+      if (signW + gap + numW <= 188) break;   // ~6 px of margin each side
+    }
+    int x = (200 - (signW + gap + numW)) / 2;
+    if (x < 0) x = 0;
+    drawBtcSign(f, x, y);
+    // the number, from its first ink column
+    int nx = x + signW + gap - glyphLeft(f, s[0]);
+    display.setFont(f);
+    if (strchr(s, '.')) {                     // decimals: one size, DSEG's own point
+      display.setCursor(nx, y);
+      display.print(s);
+    } else {
+      int digits = (int)strlen(s), cw = amountCommaW(f);
+      for (int i = 0; s[i]; i++) {
+        char c[2] = { s[i], 0 };
+        display.setCursor(nx, y);
+        display.print(c);
+        nx += digitAdvance(f);
+        int left = digits - i - 1;
+        if (digits >= 5 && left > 0 && left % 3 == 0) {   // as drawGrouped
+          int o = (cw - 2) / 2;
+          display.fillRect(nx + o, y - 3, 2, 3, fg());
+          display.drawPixel(nx + o, y, fg());
+          display.drawPixel(nx + o - 1, y + 1, fg());
+          nx += cw;
+        }
+      }
+    }
+    display.setFont(NULL);
+    return btc;
+  }
+
   time_t localFromUtc(time_t utc) {
     return utc + (tzIndex > 0 ? tzOffsetSec(tzIndex, utc) : settings.gmtOffset);
   }
@@ -4804,10 +4910,9 @@ public:
       // on-chain is not final yet, so it says where it is and what comes
       // next; lightning is final the moment it lands, so it says that
       snprintf(head, 24, evPayLn ? "LIGHTNING RECEIVED" : "PAYMENT INCOMING");
-      // plain digits: drawGrouped draws its own separators, and a comma in
-      // the string prints as a blank digit cell beside them ("10, 000")
-      snprintf(big, 20, "%lld", evPaySats);
-      snprintf(l1, 30, evPayLn ? "SATS - SETTLED" : "SATS - IN MEMPOOL");
+      big[0] = 0;                      // drawn by drawAmount, with its ₿
+      const char *unit = amountInBtc(evPaySats) ? "BTC" : "SATS";
+      snprintf(l1, 30, "%s - %s", unit, evPayLn ? "SETTLED" : "IN MEMPOOL");
       if (!evPayLn && trackState != TRACK_NONE)
         snprintf(l2, 30, "TICKS AT 1, 3, 6 CONF");
     } else if (ev == EV_FEE) {
@@ -4820,13 +4925,16 @@ public:
       snprintf(head, 24, evConfN >= 6 ? "PAYMENT SETTLED" : "PAYMENT CONFIRMED");
       snprintf(big, 20, "%d", evConfN);
       snprintf(l1, 30, "OF 6 CONFIRMATIONS");
-      char g[20]; fmtGrouped(evConfSats, g, 20);
-      snprintf(l2, 30, "+%s SATS", g);
+      char g[24];
+      if (amountInBtc(evConfSats)) { fmtBtcExact(evConfSats, g, 24);
+                                     snprintf(l2, 30, "+%s BTC", g); }
+      else { fmtGrouped(evConfSats, g, 24); snprintf(l2, 30, "+%s SATS", g); }
       char hb[16]; fmtGrouped(evConfBlock, hb, 16);
       snprintf(l3, 30, "IN BLOCK %s", hb);
     }
     centerSmall(head, 40);
-    drawGrouped(big, 92, fitFont(big));
+    if (ev == EV_PAY) drawAmount(evPaySats, 92);
+    else drawGrouped(big, 92, fitFont(big));
     display.setFont(NULL);
     if (l1[0]) centerSmall(l1, 112);
     if (l2[0]) centerSmall(l2, 128);
