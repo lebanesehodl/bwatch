@@ -130,6 +130,14 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 #define SLOW_EVERY_MIN     60   // difficulty estimate and 3-day hashrate
 #define FNG_EVERY_MIN     180   // Fear & Greed is published once a day
 // (block reward and miner: only when the tip has moved)
+// ---- alarms and confirmations ----
+#define ALARM_NEAR_BLOCKS   2   // within this many blocks of a block alarm,
+#define ALARM_NEAR_EVERY    3   // fetch every 3 min so it lands on time
+#define EVENT_HOLD_MIN     60   // an unacknowledged alarm screen keeps the
+                                // watch from resting this long, then rest
+                                // may cover it; it shows again on pickup
+#define TRACK_GIVEUP_MIN 4320   // stop following a payment that has not
+                                // confirmed in 3 days
 #define FETCH_IDLE_MIN  45   // when the watch has been still for a while it
                              // is on a table, not a wrist: nobody is reading
                              // it, so stop spending radio on their behalf
@@ -180,7 +188,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0130
+#define RTC_LAYOUT_MAGIC 0xB17C0131
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -264,6 +272,27 @@ RTC_DATA_ATTR float    dayAgoUsd     = 0;      // the close 24 h back, so the
 RTC_DATA_ATTR char     fastSsid[33]  = {0};    // the access point that answered
 RTC_DATA_ATTR uint8_t  fastBssid[6]  = {0};    // last time, and its channel:
 RTC_DATA_ATTR uint8_t  fastChan      = 0;      // 0 = unknown, scan instead
+RTC_DATA_ATTR long     alarmHeight   = 0;      // block alarm, 0 = off  (NVS)
+RTC_DATA_ATTR uint16_t feeAlarm      = 0;      // sat/vB, 0 = off       (NVS)
+RTC_DATA_ATTR bool     feeArmed      = true;   // false after firing, until
+                                               // fees rise well above again
+RTC_DATA_ATTR uint8_t  evQueue       = 0;      // EV_* bits waiting to be seen
+RTC_DATA_ATTR uint8_t  evShown       = 0;      // the one on the glass now
+RTC_DATA_ATTR uint32_t evWake        = 0;      // wakeMin the last one fired
+RTC_DATA_ATTR long     evBlockH      = 0;      // what each screen reports,
+RTC_DATA_ATTR float    evFee         = 0;      // captured when it fired so a
+RTC_DATA_ATTR uint16_t evFeeAt       = 0;      // later edit or a finished
+RTC_DATA_ATTR uint8_t  evConfN       = 0;      // track cannot change what
+RTC_DATA_ATTR long long evConfSats   = 0;      // the screen says
+RTC_DATA_ATTR long     evConfBlock   = 0;
+RTC_DATA_ATTR uint8_t  trackState    = 0;      // TRACK_NONE / _RESOLVE / _ON
+RTC_DATA_ATTR char     trackAddr[64] = {0};    // where the payment landed
+RTC_DATA_ATTR char     trackTxid[65] = {0};
+RTC_DATA_ATTR long long trackSats    = 0;      // paid to that address
+RTC_DATA_ATTR long     trackHeight   = 0;      // block it confirmed in, 0 = not yet
+RTC_DATA_ATTR uint8_t  trackShown    = 0;      // last count announced: 0/1/3/6
+RTC_DATA_ATTR uint32_t trackWake     = 0;      // wakeMin tracking began
+RTC_DATA_ATTR char     lastDoneTx[9] = {0};    // txid prefix already reported
 RTC_DATA_ATTR uint8_t  restState     = 0;      // REST_NONE / _DAY / _NIGHT
 RTC_DATA_ATTR int8_t   restPose      = 0;      // pose when rest began: a
                                                // turned-over watch is a
@@ -795,6 +824,7 @@ public:
         mpStreamEnd(mp);
       }
     }
+    trackStep(client);            // a payment on its way in, if any
     Serial.printf("[fetch] %s tiers: chart %s gold %s slow %s fng %s\n",
                   all ? "ALL" : "due",
                   candleWake == tierStamp() ? "Y" : "-",
@@ -893,7 +923,8 @@ public:
     return guiState == WATCHFACE_STATE && !inDocked && chargeState() == 0 &&
            !travelActive && !fetchPending && !prePaint && !inWalletScan &&
            !vigilPending && !(dispMode == M_WALT && walletView > 0) &&
-           haveData && blockHeight > 0;
+           haveData && blockHeight > 0 &&
+           !(evQueue && wakeMin - evWake < EVENT_HOLD_MIN);
   }
 
   // Deep sleep for whole minutes, waking on the minute like the library does.
@@ -901,7 +932,7 @@ public:
   // not return. The panel keeps its image with the power off.
   bool longSleep(uint32_t minutes) {
   #ifdef ARDUINO_ESP32S3_DEV
-    if (minutes < 2) return false;            // the library's own sleep does 1
+    if (minutes < 1) return false;
     tmElements_t t; RTC.read(t);
     sleptSince = (uint32_t)makeTime(t);
     uint64_t sec = (uint64_t)(60 - t.Second) + (uint64_t)(minutes - 1) * 60;
@@ -1031,6 +1062,11 @@ public:
       Serial.println("[travel] expired");    // look at the future
     }
     uint32_t every = watchIsIdle() ? FETCH_IDLE_MIN : fetchEveryMin();
+    // a block alarm about to ring: look more often, so it lands within a few
+    // minutes of the block instead of up to a whole cycle late
+    if (!watchIsIdle() && alarmHeight > 0 && blockHeight > 0 &&
+        alarmHeight - blockHeight <= ALARM_NEAR_BLOCKS && every > ALARM_NEAR_EVERY)
+      every = ALARM_NEAR_EVERY;
     bool due = forceFetch || !haveData ||
                (wakeMin - lastFetchMin >= every);
     if (due && (forceFetch || wakeMin >= nextTryWake)) {
@@ -1055,6 +1091,8 @@ public:
     // again — up to a full cycle later. Recompute once the fetch is done.
     if (btcPrice > 0 && blockHeight > 0)
       btcMcapB = btcPrice * supplyBTC(blockHeight) / 1e9;
+
+    checkAlarms();                 // block, fee, confirmations: arithmetic
 
     // the milestone: checked where a new height first becomes known
     if (!sawMillion && blockHeight >= 1000000L) millionScreen();
@@ -1090,11 +1128,16 @@ public:
     }
     battFullV = p.getFloat("bfv", 4.20f);
     sawMillion = p.getBool("m1", false);
+    alarmHeight = p.getLong("alH", 0);
+    feeAlarm    = p.getUShort("alF", 0);
+    // read BEFORE end(): it used to be read after, which always returned the
+    // empty default, so a lightning address set on the watch was replaced by
+    // the compiled-in one after every power loss or reflash
+    String ln = p.getString("lnaddr", "");
     p.end();
     if (z.length() > 20) strncpy(zpubBuf, z.c_str(), sizeof(zpubBuf) - 1);
     else                 strncpy(zpubBuf, WALLET_ZPUB, sizeof(zpubBuf) - 1);
     zpubBuf[sizeof(zpubBuf) - 1] = 0;
-    String ln = p.getString("lnaddr", "");
     if (ln.indexOf('@') > 0) strncpy(lnAddrBuf, ln.c_str(), 63);
     else strncpy(lnAddrBuf, LN_ADDRESS, 63);
     lnAddrBuf[63] = 0;
@@ -1126,6 +1169,8 @@ public:
                                            // reflashes and power loss
     p.putFloat("bfv", battFullV);
     p.putBool("m1", sawMillion);
+    p.putLong("alH", alarmHeight);
+    p.putUShort("alF", feeAlarm);
     p.end();
   }
 
@@ -1329,6 +1374,7 @@ public:
               lastTxSats = (long long)delta;
               walletSats += delta;
               haveWallet = true;
+              armTracking(a.c_str());           // and follow it to 6 confs
               recvIndex++;                      // address used: advance
               walletView = 0;                   // show the new balance
               savePrefs();                      // receipt -> NVS
@@ -1441,6 +1487,7 @@ public:
     // own change comes back. Only chain 0 sets the next receive index.
     int chains = (listN > 0) ? 1 : 2;
     int scanned = 0;                 // addresses walked across both branches
+    String incoming;                 // first receive address with mempool funds
     for (int chain = 0; chain < chains; chain++) {
     int unusedRun = 0, i = 0;
     while (true) {
@@ -1460,6 +1507,9 @@ public:
           uint64_t mFund  = doc["mempool_stats"]["funded_txo_sum"] | 0ULL;
           uint64_t mSpent = doc["mempool_stats"]["spent_txo_sum"]  | 0ULL;
           total += (funded + mFund) - (spent + mSpent);
+          // money arriving at a receive address that no vigil saw land
+          if (chain == 0 && mFund > 0 && !incoming.length())
+            incoming = addr;
           long txs = (doc["chain_stats"]["tx_count"] | 0L)
                    + (doc["mempool_stats"]["tx_count"] | 0L);
           if (txs > 0) { if (chain == 0) lastUsed = i; unusedRun = 0; }
@@ -1489,6 +1539,8 @@ public:
     scanned += i;
     }
     if (!inDocked) { WiFi.mode(WIFI_OFF); btStop(); }
+    if (incoming.length()) armTracking(incoming.c_str());   // resolved at
+                                                            // the next fetch
     if (haveWallet && total != walletSats)
       lastTxSats = (long long)total - (long long)walletSats;
     walletSats = total;
@@ -2874,6 +2926,11 @@ public:
     joeReveal = false; captivePortal = false; resting = false;
     restState = 0; restPose = 0; sleptSince = 0; stillRun = 0;
     candleWake = 0; goldWake = 0; slowWake = 0; fngWake = 0; dayAgoUsd = 0;
+    alarmHeight = 0; feeAlarm = 0; feeArmed = true;   // NVS reloads the alarms
+    evQueue = 0; evShown = 0; evWake = 0; evBlockH = 0; evFee = 0; evFeeAt = 0;
+    evConfN = 0; evConfSats = 0; evConfBlock = 0;
+    trackState = 0; trackAddr[0] = 0; trackTxid[0] = 0; trackSats = 0;
+    trackHeight = 0; trackShown = 0; trackWake = 0; lastDoneTx[0] = 0;
     fastSsid[0] = 0; fastChan = 0; memset(fastBssid, 0, sizeof(fastBssid));
     awakeTill = 0;
     lnFetchedWake = 0;      // a stale stamp can make an old invoice
@@ -2953,6 +3010,7 @@ public:
     const char *tag = night ? "NIGHT" : "REST";
     display.setCursor(188 - (int)strlen(tag) * 6, 3);
     display.print(tag);
+    if (alarmsArmed()) drawBell(188 - (int)strlen(tag) * 6 - 9, 3);
 
     if (night) {                                   // a crescent, two circles
       display.fillCircle(100, 34, 9, fg());
@@ -3145,6 +3203,8 @@ public:
       prePaint = false;
     }
     if (!prePaint) maybeFetch();
+    // an alarm someone has not seen yet takes the glass until a press
+    if (!prePaint && evQueue && showEvent(timerWake)) return;
     display.fillScreen(bg());
     display.setTextColor(fg());
     display.setFont(NULL);   // 6x8 built-in for all small text
@@ -3187,6 +3247,7 @@ public:
     }
     display.setCursor(188 - (int)strlen(tag) * 6, 3);
     display.print(tag);
+    if (alarmsArmed()) drawBell(188 - (int)strlen(tag) * 6 - 9, 3);
 
     if (dispMode == M_WALT && walletView > 0) {
       if (walletView == 2) drawLightning();
@@ -3429,13 +3490,20 @@ public:
       strcpy(cell, "----");     // balance, so it hides behind the same switch
     } else if (dispMode == M_WALT) {
       cellLabel = "TX";         // the wallet's last movement: received
-      long long a = lastTxSats < 0 ? -lastTxSats : lastTxSats;
-      const char *plus = lastTxSats > 0 ? "+" : "";   // deposits wear
-      if (lastTxSats == 0) snprintf(cell, 18, "----"); // their sign
+      long long shown = lastTxSats;
+      static char confLbl[6];
+      if (trackState != TRACK_NONE) {   // a payment on its way in: its
+        snprintf(confLbl, 6, "%d/6", trackConfs());   // confirmations so far
+        cellLabel = confLbl;
+        if (trackState == TRACK_ON && trackSats > 0) shown = trackSats;
+      }
+      long long a = shown < 0 ? -shown : shown;
+      const char *plus = shown > 0 ? "+" : "";   // deposits wear
+      if (shown == 0) snprintf(cell, 18, "----"); // their sign
       else if (a < 100000)
-        snprintf(cell, 18, "%s%lld", plus, lastTxSats);
+        snprintf(cell, 18, "%s%lld", plus, shown);
       else {                    // large moves read better in BTC
-        double b = lastTxSats / 1e8;
+        double b = shown / 1e8;
         snprintf(cell, 18, (fabs(b) < 10) ? "%s%.3f" : "%s%.1f", plus, b);
       }
     } else {
@@ -3719,12 +3787,12 @@ public:
   }
 
   // ---------------- menu: stock items + Timezone ----------------
-  static const int MY_MENU_LEN = 8;
+  static const int MY_MENU_LEN = 9;
 
   void myShowMenu(byte idx, bool partial) {
     const char *items[MY_MENU_LEN] = {
       "About BWATCH", "Set Time", "Setup WiFi", "Networks", "Sync NTP",
-      "Setup Wallet", "Set Timezone", "Time Travel"};
+      "Setup Wallet", "Set Timezone", "Time Travel", "Alarms"};
     // The menu follows the theme, like everything else. It used to be black
     // whatever the face was doing, which meant a light-mode wearer went from
     // a white face to a black menu and back — a full-panel inversion twice,
@@ -4199,11 +4267,17 @@ public:
   //   BACK       returns
   // Left alone for a minute it goes back to the face without launching:
   // a picker forgotten on a table must not hold the chip awake.
-  void timeTravel() {
+  // forAlarm: the same picker sets the block alarm instead of travelling.
+  // Returns 1 when it launched or set, 0 on BACK, -1 when it timed out
+  // (and has already gone back to the face).
+  int timeTravel(bool forAlarm = false) {
     guiState = APP_STATE;
     long here = travelActive ? blockHeight : estHeight();   // 'now' is real,
     if (here <= 0) here = 964000;                          // even mid-travel
     long target = travelActive ? travelHeight : here;
+    if (forAlarm)            // the armed height, or the next halving
+      target = (alarmHeight > here) ? alarmHeight
+                                    : (here / 210000L + 1) * 210000L;
 
     const int   NSTEP = 6;
     const long  STEPS[NSTEP] = { 1, 144, 4320, 52560, 210000, 525600 };
@@ -4226,14 +4300,16 @@ public:
       display.fillScreen(bg());
       display.setTextColor(fg());
       display.setFont(NULL);
-      centerText("TIME TRAVEL", 12, NULL);
+      centerText(forAlarm ? "BLOCK ALARM" : "TIME TRAVEL", 12, NULL);
 
       char big[16]; snprintf(big, 16, "%ld", target);
       drawGrouped(big, 52, fitFont(big));
       display.setFont(NULL);
-      centerText(travelActive ? "BLOCK HEIGHT - TRAVELLING"
-                              : (target == here ? "BLOCK HEIGHT - NOW"
-                                                : "BLOCK HEIGHT"), 66, NULL);
+      centerText(forAlarm ? (target <= here ? "ALREADY MINED"
+                                            : "ALARM AT HEIGHT")
+                 : travelActive ? "BLOCK HEIGHT - TRAVELLING"
+                 : (target == here ? "BLOCK HEIGHT - NOW"
+                                   : "BLOCK HEIGHT"), 66, NULL);
 
       // when: blocks from now at the chain's measured pace
       long dBlocks = target - here;
@@ -4264,7 +4340,8 @@ public:
       display.drawFastHLine(14, 172, 172, fg());
       snprintf(line, 34, "TRAVEL BY %s", SNAME[step]);
       centerText(line, 178, NULL);
-      centerText("HOLD MENU TO LAUNCH", 190, NULL);
+      centerText(forAlarm ? "HOLD MENU TO SET" : "HOLD MENU TO LAUNCH",
+                 190, NULL);
       display.display(true);
     };
 
@@ -4277,11 +4354,13 @@ public:
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
         showWatchFace(false);
-        return;
+        return -1;
       }
 
       if (p == BACK_BTN_PIN) {
-        waitAllRelease(); myShowMenu(menuIndex, false); return;
+        waitAllRelease();
+        if (!forAlarm) myShowMenu(menuIndex, false);   // alarms redraws itself
+        return 0;
       }
 
       if (p == UP_BTN_PIN || p == DOWN_BTN_PIN) {
@@ -4307,6 +4386,17 @@ public:
 
       if (p == MENU_BTN_PIN) {
         if (heldFor(MENU_BTN_PIN, 800)) {
+          if (forAlarm) {
+            if (target <= here) {          // the past cannot ring: refuse
+              buzz(30, 6); waitAllRelease(); drawPicker(); continue;
+            }
+            alarmHeight = target;
+            savePrefs();                   // survives power loss
+            buzz(50, 4);
+            waitAllRelease();
+            Serial.printf("[alarm] block alarm set for %ld\n", target);
+            return 1;
+          }
           // hold MENU: take the whole watch there. Height, supply and the
           // halving almanac follow; price, sats, cap, fees and the wallet
           // blank, because none of them are functions of height.
@@ -4347,12 +4437,441 @@ public:
                         travelActive ? "engaged" : "back to now");
           RTC.read(currentTime);
           showWatchFace(false);
-          return;
+          return 1;
         }
         step = (step + 1) % NSTEP;
         waitAllRelease();
         drawPicker();
       }
+    }
+  }
+
+  // ---------------- alarms ----------------
+  enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4 };
+  enum { TRACK_NONE = 0, TRACK_RESOLVE = 1, TRACK_ON = 2 };
+
+  bool alarmsArmed() { return alarmHeight > 0 || feeAlarm > 0; }
+
+  // the armed indicator: a 7x8 bell, drawn in the status row just left of
+  // the corner tag
+  void drawBell(int x, int y) {
+    display.drawPixel(x + 3, y, fg());              // the loop
+    display.drawFastHLine(x + 2, y + 1, 3, fg());
+    display.fillRect(x + 1, y + 2, 5, 3, fg());     // the body
+    display.drawFastHLine(x, y + 5, 7, fg());       // the lip
+    display.drawPixel(x + 3, y + 7, fg());          // the clapper
+  }
+
+  void fmtFee(float f, char *out, int n) {          // 4, 12, or 1.5 sat/vB
+    if (!(f > 0)) { snprintf(out, n, "--"); return; }
+    if (f < 10 && fabsf(f - roundf(f)) >= 0.05f) snprintf(out, n, "%.1f", f);
+    else snprintf(out, n, "%.0f", f);
+  }
+
+  void fmtGrouped(long long v, char *out, int n) {  // 1,050,000
+    char d[24]; snprintf(d, 24, "%lld", v < 0 ? -v : v);
+    int len = strlen(d), o = 0;
+    if (v < 0 && o < n - 1) out[o++] = '-';
+    for (int i = 0; i < len && o < n - 1; i++) {
+      out[o++] = d[i];
+      int left = len - i - 1;
+      if (left > 0 && left % 3 == 0 && o < n - 1) out[o++] = ',';
+    }
+    out[o] = 0;
+  }
+
+  time_t localFromUtc(time_t utc) {
+    return utc + (tzIndex > 0 ? tzOffsetSec(tzIndex, utc) : settings.gmtOffset);
+  }
+
+  // ALARMS: two rows, block and fee. UP/DOWN picks a row, MENU edits it,
+  // holding MENU turns it off, BACK leaves. Asleep between presses, home to
+  // the face after a minute, like every other screen now.
+  void alarmsScreen() {
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);
+    pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    int row = 0;
+    while (true) {
+      themeDark = darkNow();
+      display.setFullWindow();
+      display.fillScreen(bg());
+      display.setTextColor(fg());
+      display.setFont(NULL);
+      centerText("ALARMS", 12, NULL);
+      for (int r = 0; r < 2; r++) {
+        int y0 = 28 + r * 68;
+        bool sel = (row == r);
+        if (sel) display.fillRect(6, y0, 188, 62, fg());
+        else     display.drawRect(6, y0, 188, 62, fg());
+        display.setTextColor(sel ? bg() : fg());
+        display.setCursor(14, y0 + 8);
+        display.print(r == 0 ? "BLOCK" : "FEE");
+        char v[20], sub[32]; sub[0] = 0;
+        if (r == 0) {
+          if (alarmHeight > 0) {
+            fmtGrouped(alarmHeight, v, 20);
+            long d = alarmHeight - blockHeight;
+            if (blockHeight <= 0)  sub[0] = 0;
+            else if (d <= 0)       snprintf(sub, 32, "REACHED");
+            else if (d < 144)      snprintf(sub, 32, "IN %ld BLOCKS", d);
+            else {
+              long days = (long)(d * (double)avgBlockSec / 86400.0);
+              if (days < 800) snprintf(sub, 32, "IN ~%ld DAYS", days);
+              else            snprintf(sub, 32, "IN ~%ld YEARS", days / 365);
+            }
+          } else snprintf(v, 20, "OFF");
+        } else {
+          if (feeAlarm > 0) {
+            snprintf(v, 20, "<= %u", feeAlarm);
+            if (feeArmed) snprintf(sub, 32, "SAT/VB");
+            else snprintf(sub, 32, "FIRED - REARMS AT %u+",
+                          feeAlarm + (feeAlarm / 2 > 2 ? feeAlarm / 2 : 2));
+          } else snprintf(v, 20, "OFF");
+        }
+        display.setTextSize(2);
+        display.setCursor(14, y0 + 22); display.print(v);
+        display.setTextSize(1);
+        if (sub[0]) { display.setCursor(14, y0 + 46); display.print(sub); }
+        display.setTextColor(fg());
+      }
+      centerSmall("MENU EDIT - HOLD MENU OFF", 170);
+      centerSmall("UP/DOWN PICK - BACK DONE", 184);
+      display.display(true);
+
+      int p = waitForPress(60000);
+      if (p < 0) {                                  // nobody: home
+        guiState = WATCHFACE_STATE;
+        RTC.read(currentTime);
+        showWatchFace(false);
+        return;
+      }
+      if (p == BACK_BTN_PIN) { waitAllRelease(); myShowMenu(menuIndex, false); return; }
+      if (p == UP_BTN_PIN || p == DOWN_BTN_PIN) { row ^= 1; waitAllRelease(); continue; }
+      if (p == MENU_BTN_PIN) {
+        if (heldFor(MENU_BTN_PIN, 800)) {           // hold: off
+          if (row == 0) alarmHeight = 0;
+          else { feeAlarm = 0; feeArmed = true; }
+          savePrefs();
+          buzz(30, 2);
+          waitAllRelease();
+          Serial.printf("[alarm] %s alarm off\n", row == 0 ? "block" : "fee");
+          continue;
+        }
+        waitAllRelease();
+        if (row == 0) { if (timeTravel(true) < 0) return; }
+        else          { if (!editFee()) return; }
+      }
+    }
+  }
+
+  // The fee threshold. UP/DOWN change it (hold to run), HOLD MENU sets it,
+  // BACK leaves it as it was. Returns false if it timed out to the face.
+  bool editFee() {
+    int v = feeAlarm > 0 ? feeAlarm : (fastFee >= 2 ? (int)fastFee - 1 : 1);
+    auto clampF = [](int x) { return x < 1 ? 1 : (x > 999 ? 999 : x); };
+    auto draw = [&]() {
+      themeDark = darkNow();
+      display.setFullWindow();
+      display.fillScreen(bg());
+      display.setTextColor(fg());
+      display.setFont(NULL);
+      centerText("FEE ALARM", 12, NULL);
+      char big[8]; snprintf(big, 8, "%d", v);
+      drawGrouped(big, 70, fitFont(big));
+      display.setFont(NULL);
+      centerSmall("SAT/VB", 80);
+      centerSmall("BUZZ AT OR BELOW THIS", 102);
+      char a[8], now[28]; fmtFee(fastFee, a, 8);
+      snprintf(now, 28, "FAST FEE NOW %s", a);
+      centerSmall(now, 120);
+      display.drawFastHLine(14, 172, 172, fg());
+      centerSmall("UP/DOWN TO CHANGE", 178);
+      centerSmall("HOLD MENU TO SET", 190);
+      display.display(true);
+    };
+    draw();
+    while (true) {
+      int p = waitForPress(60000);
+      if (p < 0) {
+        guiState = WATCHFACE_STATE;
+        RTC.read(currentTime);
+        showWatchFace(false);
+        return false;
+      }
+      if (p == BACK_BTN_PIN) { waitAllRelease(); return true; }
+      if (p == UP_BTN_PIN || p == DOWN_BTN_PIN) {
+        int dir = (p == UP_BTN_PIN) ? 1 : -1;
+        v = clampF(v + dir); draw();
+        unsigned long held0 = millis();             // hold: run, then x5
+        while (digitalRead(p) == BTN_ACTIVE) {
+          unsigned long h = millis() - held0;
+          if (h < 450) { delay(10); continue; }
+          int next = clampF(v + dir * (h < 1950 ? 1 : 5));
+          if (next == v) { delay(20); continue; }
+          v = next; draw();
+        }
+        continue;
+      }
+      if (p == MENU_BTN_PIN) {
+        if (heldFor(MENU_BTN_PIN, 800)) {
+          feeAlarm = (uint16_t)v; feeArmed = true;
+          savePrefs();
+          buzz(50, 4);
+          waitAllRelease();
+          Serial.printf("[alarm] fee alarm set at %d sat/vB\n", v);
+          return true;
+        }
+        waitAllRelease();                           // a tap does nothing
+      }
+    }
+  }
+
+  // ---- events: what fired, queued until someone has seen it ----
+  void fireEvent(uint8_t bit) {
+    evQueue |= bit;
+    evWake = wakeMin;
+    Serial.printf("[alarm] fired %u (queue %u)\n", bit, evQueue);
+    // each its own pattern, so the wrist knows which before the eyes do
+    if (bit == EV_BLOCK) {
+      vibMotor(75, 14);                                     // one long
+    } else if (bit == EV_FEE) {
+      vibMotor(75, 4); delay(160); vibMotor(75, 4);         // two short
+    } else {
+      int ticks = evConfN >= 6 ? 6 : (evConfN >= 3 ? 3 : 1);
+      for (int i = 0; i < ticks; i++) { vibMotor(40, 2); delay(140); }
+    }
+  }
+
+  // Arithmetic only: called after every fetch and on the dock's own polls.
+  // Returns true if anything fired.
+  bool checkAlarms() {
+    bool fired = false;
+    if (alarmHeight > 0 && blockHeight > 0 && blockHeight >= alarmHeight) {
+      evBlockH = alarmHeight;
+      alarmHeight = 0;                   // a block alarm rings once
+      savePrefs();
+      fireEvent(EV_BLOCK); fired = true;
+    }
+    if (feeAlarm > 0 && fastFee > 0) {
+      uint16_t rearm = feeAlarm + (feeAlarm / 2 > 2 ? feeAlarm / 2 : 2);
+      if (feeArmed && fastFee <= feeAlarm) {
+        evFee = fastFee; evFeeAt = feeAlarm;
+        feeArmed = false;                // quiet until fees rise again
+        fireEvent(EV_FEE); fired = true;
+      } else if (!feeArmed && fastFee >= rearm) {
+        feeArmed = true;
+        Serial.printf("[alarm] fee alarm re-armed (%.1f)\n", fastFee);
+      }
+    }
+    if (trackState == TRACK_ON && trackHeight > 0 && blockHeight >= trackHeight) {
+      long n = blockHeight - trackHeight + 1;
+      uint8_t stage = n >= 6 ? 6 : (n >= 3 ? 3 : 1);
+      if (stage > trackShown) {          // a jump (say 0 -> 4 while resting)
+        trackShown = stage;              // announces only the highest reached
+        evConfN = stage; evConfSats = trackSats; evConfBlock = trackHeight;
+        fireEvent(EV_CONF); fired = true;
+      }
+      if (stage >= 6) {                  // settled: stop following it
+        strncpy(lastDoneTx, trackTxid, 8); lastDoneTx[8] = 0;
+        trackState = TRACK_NONE;
+        Serial.println("[track] settled");
+      }
+    }
+    return fired;
+  }
+
+  // The alarm screens. One layout for all three: an inverted tag (the only
+  // filled tag on the watch), what happened, one big number, context, and
+  // the one thing to do about it.
+  void drawEventScreen(uint8_t ev) {
+    themeDark = darkNow();
+    display.setFullWindow();
+    display.fillScreen(bg());
+    display.setTextColor(fg());
+    display.setFont(NULL);
+    { time_t lt = makeTime(currentTime);
+      if (tzIndex > 0) {
+        time_t utc = lt - settings.gmtOffset;
+        lt = utc + tzOffsetSec(tzIndex, utc);
+      }
+      tmElements_t dt; breakTime(lt, dt);
+      char clk[6]; snprintf(clk, 6, "%02d:%02d", dt.Hour, dt.Minute);
+      display.setCursor(10, 3); display.print(clk); }
+    const char *tag = (ev == EV_CONF) ? "CONF" : "ALARM";
+    int tw = (int)strlen(tag) * 6, tx = 188 - tw;
+    display.fillRect(tx - 3, 1, tw + 5, 11, fg());
+    display.setTextColor(bg());
+    display.setCursor(tx, 3); display.print(tag);
+    display.setTextColor(fg());
+
+    char head[24], big[20], l1[30], l2[30], l3[30];
+    l1[0] = l2[0] = l3[0] = 0;
+    if (ev == EV_BLOCK) {
+      snprintf(head, 24, "BLOCK REACHED");
+      snprintf(big, 20, "%ld", evBlockH);
+      if (rwdHeight == evBlockH && tipBlockTime > 0) {   // its own block's
+        tmElements_t d; breakTime(localFromUtc(tipBlockTime), d);   // facts
+        snprintf(l1, 30, "MINED %02d:%02d", d.Hour, d.Minute);
+        if (poolName[0]) snprintf(l2, 30, "BY %s", poolName);
+      } else if (blockHeight > evBlockH) {
+        char g[16]; fmtGrouped(blockHeight, g, 16);
+        snprintf(l1, 30, "TIP NOW %s", g);
+      }
+    } else if (ev == EV_FEE) {
+      snprintf(head, 24, "FEES ARE LOW");
+      fmtFee(evFee, big, 20);
+      snprintf(l1, 30, "SAT/VB - ALARM AT %u", evFeeAt);
+      char a[8], b[8]; fmtFee(medFee, a, 8); fmtFee(lowFee, b, 8);
+      snprintf(l2, 30, "30M %s - 1H %s", a, b);
+    } else {
+      snprintf(head, 24, evConfN >= 6 ? "PAYMENT SETTLED" : "PAYMENT CONFIRMED");
+      snprintf(big, 20, "%d", evConfN);
+      snprintf(l1, 30, "OF 6 CONFIRMATIONS");
+      char g[20]; fmtGrouped(evConfSats, g, 20);
+      snprintf(l2, 30, "+%s SATS", g);
+      char hb[16]; fmtGrouped(evConfBlock, hb, 16);
+      snprintf(l3, 30, "IN BLOCK %s", hb);
+    }
+    centerSmall(head, 40);
+    drawGrouped(big, 92, fitFont(big));
+    display.setFont(NULL);
+    if (l1[0]) centerSmall(l1, 112);
+    if (l2[0]) centerSmall(l2, 128);
+    if (l3[0]) centerSmall(l3, 144);
+    display.drawRect(5, 186, 190, 13, fg());
+    centerSmall("ANY BUTTON: OK", 189);
+  }
+
+  uint8_t firstEvent() {
+    for (uint8_t b = 1; b; b <<= 1) if (evQueue & b) return b;
+    return 0;
+  }
+
+  // Put the oldest waiting event on the glass. On a minute wake, if it is
+  // already there, nothing is redrawn: the watch just sleeps another minute.
+  bool showEvent(bool timerWake) {
+    uint8_t ev = firstEvent();
+    if (!ev) return false;
+    if (timerWake && !inDocked && evShown == ev) {
+      if (!longSleep(1)) drawEventScreen(ev);     // v3 does not return
+      return true;
+    }
+    drawEventScreen(ev);
+    evShown = ev;
+    if (timerWake && !inDocked) {                 // first sight: a full
+      display.display(false);                     // refresh, then sleep
+      longSleep(1);                               // without a second one
+    }
+    return true;                                  // otherwise the caller
+  }                                               // sends it to the panel
+
+  void dismissEvent() {
+    uint8_t ev = firstEvent();
+    evQueue &= (uint8_t)~ev;
+    evShown = 0;
+    Serial.printf("[alarm] dismissed %u, queue %u\n", ev, evQueue);
+  }
+
+  // ---- confirmation tracking ----
+  // The Esplora instance the wallet already trusts, so a payment's txid goes
+  // nowhere the addresses have not already been.
+  String esploraRoot() {
+    String s = ESPLORA_BASE;                       // ".../api/address/"
+    int k = s.lastIndexOf("address/");
+    return k > 0 ? s.substring(0, k) : s;
+  }
+
+  // a payment was seen arriving at addr: follow it (one at a time)
+  void armTracking(const char *addr) {
+    if (trackState != TRACK_NONE || !addr || !addr[0]) return;
+    strncpy(trackAddr, addr, 63); trackAddr[63] = 0;
+    trackTxid[0] = 0; trackSats = 0; trackHeight = 0; trackShown = 0;
+    trackWake = wakeMin;
+    trackState = TRACK_RESOLVE;
+    Serial.printf("[track] armed for %s\n", trackAddr);
+  }
+
+  int trackConfs() {
+    if (trackState != TRACK_ON || trackHeight <= 0 || blockHeight < trackHeight)
+      return 0;
+    long n = blockHeight - trackHeight + 1;
+    return n > 5 ? 5 : (int)n;                    // 6 ends the tracking
+  }
+
+  // Radio on, inside fetchAll. RESOLVE learns which transaction it was;
+  // ON asks for its status until it is in a block. After that the count is
+  // arithmetic on the tip height, in checkAlarms.
+  void trackStep(WiFiClientSecure &client) {
+    if (trackState == TRACK_NONE) return;
+    if (trackHeight == 0 && wakeMin - trackWake > TRACK_GIVEUP_MIN) {
+      Serial.println("[track] no confirmation in 3 days - letting it go");
+      if (trackTxid[0]) { strncpy(lastDoneTx, trackTxid, 8); lastDoneTx[8] = 0; }
+      trackState = TRACK_NONE;
+      return;
+    }
+    String root = esploraRoot();
+    if (trackState == TRACK_RESOLVE) {
+      // newest first, mempool first: the payment we just watched land.
+      // HTTP/1.0 so the reply is never chunked: it is parsed straight off
+      // the socket, which chunk headers would corrupt.
+      HTTPClient http; http.setConnectTimeout(4000); http.useHTTP10(true);
+      if (http.begin(client, root + "address/" + String(trackAddr) + "/txs") &&
+          http.GET() == 200) {
+        JsonDocument filter;
+        filter[0]["txid"] = true;
+        filter[0]["status"]["confirmed"] = true;
+        filter[0]["status"]["block_height"] = true;
+        filter[0]["vout"][0]["scriptpubkey_address"] = true;
+        filter[0]["vout"][0]["value"] = true;
+        JsonDocument doc;
+        if (!deserializeJson(doc, http.getStream(),
+                             DeserializationOption::Filter(filter))) {
+          for (JsonObject tx : doc.as<JsonArray>()) {
+            long long paid = 0;
+            for (JsonObject o : tx["vout"].as<JsonArray>())
+              if (strcmp(o["scriptpubkey_address"] | "", trackAddr) == 0)
+                paid += o["value"] | 0LL;
+            if (paid <= 0) continue;               // a spend, not a receipt
+            const char *id = tx["txid"] | "";
+            if (strlen(id) != 64) break;
+            if (lastDoneTx[0] && strncmp(id, lastDoneTx, 8) == 0) {
+              trackState = TRACK_NONE;             // already reported
+              Serial.println("[track] already reported - not again");
+              break;
+            }
+            strncpy(trackTxid, id, 64); trackTxid[64] = 0;
+            trackSats = paid;
+            trackHeight = (tx["status"]["confirmed"] | false)
+                            ? (long)(tx["status"]["block_height"] | 0L) : 0;
+            trackShown = 0;
+            trackState = TRACK_ON;
+            Serial.printf("[track] %.8s... %lld sats, %s\n", trackTxid,
+                          trackSats, trackHeight ? "confirmed" : "in mempool");
+            break;
+          }
+        }
+      }
+      http.end();
+      return;
+    }
+    if (trackState == TRACK_ON && trackHeight == 0) {
+      HTTPClient http; http.setConnectTimeout(4000);
+      if (http.begin(client, root + "tx/" + String(trackTxid) + "/status") &&
+          http.GET() == 200) {
+        JsonDocument doc;
+        if (!deserializeJson(doc, http.getString()) &&
+            (doc["confirmed"] | false)) {
+          long bh = doc["block_height"] | 0L;
+          if (bh > 0) {
+            trackHeight = bh;
+            Serial.printf("[track] confirmed in block %ld\n", bh);
+          }
+        }
+      }
+      http.end();
     }
   }
 
@@ -4619,6 +5138,7 @@ public:
       case 5: setupWallet(); break;                     // ends in our menu
       case 6: showTimezone(); break;                    // ends in our menu
       case 7: timeTravel(); break;                      // arithmetic, not data
+      case 8: alarmsScreen(); break;                    // block and fee
     }
   }
 
@@ -4837,6 +5357,7 @@ public:
                 lastTxSats = (long long)delta;
                 walletSats += delta;
                 haveWallet = true;
+                armTracking(a.c_str());   // follow it to 6 confirmations
                 recvIndex++;              // this address is used now
                 walletView = 0;           // flip to the updated balance;
                 redraw = true;            // the periodic sweep reconciles
@@ -4896,6 +5417,23 @@ public:
           Serial.println("[dock] fetch FAIL, backing off");
         }
         redraw = true;
+      }
+
+      if (checkAlarms()) redraw = true;      // the dock polls on its own
+
+      // ANY BUTTON: OK on an alarm screen, here as on the wrist
+      if (evQueue && evShown &&
+          (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
+           digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
+           digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
+           digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE)) {
+        dismissEvent();
+        waitAllRelease();
+        buttonWake = true;
+        drawWatchFace();
+        display.display(true);
+        delay(50);
+        continue;
       }
 
       if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {
@@ -5017,6 +5555,17 @@ public:
     }
     awakeTill = wakeMin + PRESS_GRACE_MIN;   // every press buys a few
     stillRun = 0;                            // minutes of the full face
+    // ANY BUTTON: OK. The press acknowledges the alarm on the glass and does
+    // nothing else; the next one waiting (or the face) takes its place.
+    if (evQueue && guiState == WATCHFACE_STATE) {
+      if (evShown) dismissEvent();     // only what has actually been seen
+      pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+      pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+      waitAllRelease();
+      RTC.read(currentTime);
+      showWatchFace(false);
+      return;
+    }
     if (guiState == WATCHFACE_STATE) {
       if (wake & MENU_BTN_MASK) {
         myShowMenu(menuIndex, false);
