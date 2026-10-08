@@ -43,6 +43,10 @@
 #include "DSEG7_Classic_Bold_25.h"   // small cell, and 7-digit values
 #include "DSEG7_Classic_Bold_18.h"   // 8-digit values (full supply)
 #include "DSEG7_Classic_Bold_14.h"   // DIFF%/24H% cell, last resort
+// The network the watch opens for setup. The library calls it "Watchy AP";
+// a buyer sees this name in their phone's WiFi list, so it should be ours.
+#undef  WIFI_AP_SSID
+#define WIFI_AP_SSID "BWATCH-SETUP"
 #include <Fonts/FreeMonoBold9pt7b.h>
 
 // Watchy library menu internals (globals defined in Watchy.cpp)
@@ -65,6 +69,12 @@ extern bool alreadyInMenu;
 // NVS flash and overrides this. Watch-only: can NEVER spend.
 // Never paste an xprv/zprv. Point ESPLORA_BASE at your own node for privacy.
 #define WALLET_ZPUB  "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs"
+// That default is the BIP84 TEST VECTOR: the account of the published
+// "abandon abandon ... about" seed. Its private keys are on the internet, so
+// anything sent to it can be taken by anyone. It is fine for showing what the
+// wallet face looks like and must never be offered as a place to be paid:
+// while it is the active wallet, the receive QR refuses (see isDemoWallet).
+#define BIP84_TEST_ZPUB "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs"
 #define SCAN_ADDRS   10   // (legacy; the scan is now gap-limit based)
 // MULTISIG (or any wallet): instead of a zpub, paste literal receive
 // addresses, comma-separated, exported from your wallet software (in
@@ -1087,6 +1097,7 @@ public:
         lastFetchMin = wakeMin;
         failCount = 0; nextTryWake = 0;
         captivePortal = false;
+        noteOpened();
       } else {
         // Associated but nothing came back? Probe for a captive portal. The
         // watch cannot tick a terms box, so the honest thing is to say a
@@ -1127,6 +1138,8 @@ public:
     prefsLoaded = true;
     Preferences p;
     p.begin("btcchrono", true);
+    bool zSet = p.isKey("zpub");          // stored, even as "": no default
+    bool lSet = p.isKey("lnaddr");
     String z  = p.getString("zpub", "");
     int    tz = p.getInt("tz", -1);
     int    th = p.getInt("theme", -1);
@@ -1149,9 +1162,11 @@ public:
     String ln = p.getString("lnaddr", "");
     p.end();
     if (z.length() > 20) strncpy(zpubBuf, z.c_str(), sizeof(zpubBuf) - 1);
+    else if (zSet)       zpubBuf[0] = 0;   // cleared on purpose (ship mode)
     else                 strncpy(zpubBuf, WALLET_ZPUB, sizeof(zpubBuf) - 1);
     zpubBuf[sizeof(zpubBuf) - 1] = 0;
     if (ln.indexOf('@') > 0) strncpy(lnAddrBuf, ln.c_str(), 63);
+    else if (lSet) lnAddrBuf[0] = 0;
     else strncpy(lnAddrBuf, LN_ADDRESS, 63);
     lnAddrBuf[63] = 0;
     if (tz >= 0 && tz < 5) tzIndex = tz;
@@ -1218,6 +1233,15 @@ public:
   // and .../1/i change. Spending consumes a whole utxo from the receive
   // branch and returns the remainder to the change branch — so a wallet
   // that scans only chain 0 undercounts by the change the moment you send.
+  bool walletConfigured() {
+    loadPrefs();
+    return zpubBuf[0] != 0 || walletListCount() > 0;
+  }
+  bool isDemoWallet() {
+    loadPrefs();
+    return walletListCount() == 0 && strcmp(zpubBuf, BIP84_TEST_ZPUB) == 0;
+  }
+
   String deriveAddress(int chain, int index) {
     loadPrefs();
     HDPublicKey hd(zpubBuf);
@@ -1371,7 +1395,10 @@ public:
     const bool ln = (walletView == 2);
     if (ln && !lnVerify[0]) return;
     String a;
-    if (!ln) { a = walletAddr(recvIndex); if (!a.length()) return; }
+    if (!ln) {
+      if (!walletConfigured() || isDemoWallet()) return;   // no QR was shown
+      a = walletAddr(recvIndex); if (!a.length()) return;
+    }
     if (!myConnectWiFi()) return;            // no network: sleep as usual
     Serial.printf("[vigil] armed 120s (%s)\n", ln ? "lightning" : "on-chain");
     inVigil = true;
@@ -2450,6 +2477,20 @@ public:
   // ---------------- RECV: QR screen (v1 chrome: status row + strip) ----
   void drawReceive() {
     display.setFont(NULL);
+    // No wallet, or the public demo one: say so instead of a QR. The demo's
+    // keys are published, so a payment to it is a payment to anyone.
+    if (!walletConfigured() || isDemoWallet()) {
+      bool demo = walletConfigured();
+      centerText(demo ? "DEMO WALLET" : "NO WALLET YET", 52, NULL);
+      if (demo) {
+        centerSmall("ITS KEYS ARE PUBLIC:", 76);
+        centerSmall("DO NOT RECEIVE HERE", 90);
+      }
+      centerSmall("ADD YOURS FROM", demo ? 116 : 84);
+      centerSmall("MENU > SETUP WALLET", demo ? 130 : 98);
+      drawModeStrip();
+      return;
+    }
     String addr = walletAddr(recvIndex);   // always the first UNUSED
                                               // address; auto-advances once
                                               // the previous one is paid
@@ -3433,7 +3474,7 @@ public:
   void drawWatchFace() override {
     sanitizeState();
     if (shipMode) {                     // USB in: out of the box. Anything else
-      if (usbPresent()) { leaveShipMode("usb"); bootGenesis(); }
+      if (usbPresent()) { leaveShipMode("usb"); bootGenesis(); firstStartWifi(); }
       else { shipSleep(); return; }     // (a reset) goes back to sleep
     }
 
@@ -3511,6 +3552,7 @@ public:
     if (walletView > 2) walletView = 0;  // never dereference
 
     walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
+      walletConfigured() &&             // nothing to scan: no radio for it
       (forceFetch || !haveWallet ||
        wakeMin - lastWalletMin >= WALLET_EVERY_MIN);
 
@@ -4782,17 +4824,103 @@ public:
   // chip for a moment, sees it was not held, and sleeps again.
   bool usbPresent() { pinMode(USB_DET_PIN, INPUT); return digitalRead(USB_DET_PIN) == 1; }
 
+  // the block the watch was sealed at: its own height and hash tail, from
+  // NVS, so it survives the wipe and a dead battery
+  long sealHeight(char *tail, int n) {
+    Preferences p; p.begin("btcchrono", true);
+    long h = p.getLong("sealH", 0);
+    String x = p.getString("sealX", "");
+    long o = p.getLong("openH", 0);
+    p.end();
+    if (tail) snprintf(tail, n, "%s", x.c_str());
+    openedHeight = o;
+    return h;
+  }
+  long openedHeight = 0;
+
   void drawShipCard() {
     bool t = themeDark; themeDark = true;          // the card is always dark
     bootClear();
-    bootCenter("BWATCH", 46, 3);
-    display.drawFastHLine(40, 78, 120, GxEPD_WHITE);
-    bootCenter("HOLD ANY BUTTON", 96, 1);
-    bootCenter("FOR 3 SECONDS TO START", 110, 1);
-    bootCenter("OR PLUG IN TO CHARGE", 134, 1);
-    drawTinyB(97, 174);
+    bootCenter("BWATCH", 22, 3);
+    display.drawFastHLine(40, 54, 120, GxEPD_WHITE);
+    bootCenter("HOLD ANY BUTTON", 68, 1);
+    bootCenter("FOR 3 SECONDS TO START", 82, 1);
+    bootCenter("OR PLUG IN TO CHARGE", 102, 1);
+    char tail[12];
+    long h = sealHeight(tail, sizeof(tail));
+    display.drawFastHLine(40, 120, 120, GxEPD_WHITE);
+    if (h > 0) {
+      bootCenter("SEALED AT BLOCK", 130, 1);
+      char g[16]; snprintf(g, sizeof(g), "%ld", h);
+      drawGrouped(g, 166, &DSEG7_Classic_Bold_25);
+      display.setFont(NULL);
+      if (tail[0]) {
+        char l[20]; snprintf(l, sizeof(l), "...%s", tail);
+        bootCenter(l, 178, 1);
+      }
+    } else {
+      drawTinyB(97, 150);
+    }
     themeDark = t;
     display.display(false);                        // full: it has to last
+  }
+
+  // The block it is sealed at: asked for now, not remembered, so the card
+  // never shows a stale one. Height first, then that height's own hash, so
+  // the pair is consistent. On no network, the last height if it is fresh.
+  void fetchSealBlock() {
+    long h = 0; char tail[12] = {0};
+    if (myConnectWiFi()) {
+      WiFiClientSecure c; c.setInsecure();
+      { HTTPClient http; http.setConnectTimeout(4000);
+        if (http.begin(c, TIP_URL) && http.GET() == 200) {
+          long v = http.getString().toInt();
+          if (v >= 100000) h = v;
+        }
+        http.end(); }
+      if (h > 0) {
+        HTTPClient http; http.setConnectTimeout(4000);
+        if (http.begin(c, "https://mempool.space/api/block-height/" + String(h)) &&
+            http.GET() == 200) {
+          String x = http.getString(); x.trim();
+          if (x.length() == 64) snprintf(tail, sizeof(tail), "%s", x.c_str() + 56);
+        }
+        http.end();
+      }
+      WiFi.mode(WIFI_OFF); btStop();
+    }
+    if (h <= 0 && blockHeight > 0 && heightStaleMinutes() < STALE_AFTER_MIN)
+      h = blockHeight;                             // fresh enough to stand by
+    Preferences p; p.begin("btcchrono", false);
+    p.putLong("sealH", h);                         // 0: no block to show
+    p.putString("sealX", tail);
+    p.putLong("openH", 0);                         // opened: not yet
+    p.end();
+    Serial.printf("[ship] sealed at %ld ...%s\n", h, tail);
+  }
+
+  // Everything that belongs to whoever set this watch up goes: networks,
+  // wallet, lightning, alarms, the cached balance. What stays is about the
+  // board (battery calibration), the firmware (boot counters), and the
+  // timezone, which is set for the buyer before sealing.
+  void factoryWipe() {
+    Preferences p; p.begin("btcchrono", false);
+    for (int i = 0; i < 3; i++) {
+      p.remove(("ws" + String(i)).c_str());
+      p.remove(("wp" + String(i)).c_str());
+    }
+    p.putString("zpub", "");                       // stored empty: the compiled
+    p.putString("lnaddr", "");                     // defaults do not return
+    p.remove("wsat"); p.remove("ltx"); p.remove("ridx");
+    p.remove("alH"); p.remove("alF");
+    p.end();
+    WiFi.persistent(true);                         // the radio's own stored
+    WiFi.mode(WIFI_STA);                           // credentials too: erasing
+    WiFi.disconnect(true, true);                   // needs the radio started
+    WiFi.mode(WIFI_OFF); btStop();
+    rtcMagic = 0;                                  // and every cached value:
+    sanitizeState();                               // the RTC layout reset
+    Serial.println("[ship] wiped: networks, wallet, alarms, cache");
   }
 
   // Never returns on v3.
@@ -4836,6 +4964,74 @@ public:
     buzz(50, 4);
   }
 
+  // The first block seen after the box, once: sealed at X, opened at Y.
+  void noteOpened() {
+    if (openNoted || blockHeight <= 0) return;
+    openNoted = true;                              // once per boot is enough
+    Preferences p; p.begin("btcchrono", false);
+    if (p.getLong("sealH", 0) > 0 && p.getLong("openH", 0) == 0) {
+      p.putLong("openH", blockHeight);
+      Serial.printf("[ship] opened at %ld\n", blockHeight);
+    }
+    p.end();
+  }
+  bool openNoted = false;
+
+  // Out of the box with no network saved: ask, instead of leaving a DEMO
+  // face for someone to work out. UP sets it up (five minutes, not two: a
+  // first-timer is reading as they go), BACK leaves it for later.
+  void firstStartWifi() {
+    loadPrefs();
+    if (wifiSsid[0][0]) return;                    // already has one
+    themeDark = darkNow();
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);
+    pinMode(DOWN_BTN_PIN, INPUT);
+    display.setFullWindow();
+    display.fillScreen(bg());
+    display.setTextColor(fg());
+    display.setFont(NULL);
+    centerText("LET'S GET ON WIFI", 30, NULL);
+    display.drawFastHLine(14, 44, 172, fg());
+    centerSmall("THE WATCH READS THE CHAIN", 62);
+    centerSmall("OVER YOUR WIFI, A FEW", 76);
+    centerSmall("TIMES AN HOUR.", 90);
+    centerSmall("UP    SET UP NOW", 132);
+    centerSmall("BACK  LATER (MENU > WIFI)", 148);
+    display.display(false);
+    int p = waitForPress(120000);
+    waitAllRelease();
+    if (p != UP_BTN_PIN) return;                   // later, or nobody there
+
+    display.fillScreen(bg());
+    display.setFont(&FreeMonoBold9pt7b);
+    display.setCursor(0, 25);
+    display.println("On your phone,");
+    display.println("join WiFi:");
+    display.println(WIFI_AP_SSID);
+    display.println("");
+    display.println("A page opens:");
+    display.println("pick your network");
+    display.println("and its password.");
+    display.println("");
+    display.println("Waits 5 min.");
+    display.display(true);
+    display.epd2.setBusyCallback(0);
+    WiFiManager wm;
+    bool ok = runPortal(wm, 300);
+    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+    display.setFont(NULL);
+    if (ok && WiFi.status() == WL_CONNECTED) {
+      saveNetwork(WiFi.SSID(), WiFi.psk());
+      forceFetch = true; failCount = 0; nextTryWake = 0;
+      buzz(50, 4);
+      Serial.printf("[first] joined %s\n", WiFi.SSID().c_str());
+    } else {
+      Serial.println("[first] no network - DEMO until MENU > Setup WiFi");
+    }
+    WiFi.mode(WIFI_OFF); btStop();
+  }
+
   // MENU > Ship Mode. Says what will happen, shows the charge, and refuses
   // while USB is in (plugging in is one of the ways out).
   void shipModeScreen() {
@@ -4853,10 +5049,11 @@ public:
       display.setFont(NULL);
       centerText("SHIP MODE", 12, NULL);
       display.drawFastHLine(14, 26, 172, fg());
-      centerSmall("FOR STORAGE AND THE POST:", 38);
-      centerSmall("NO RADIO, NO MINUTE WAKES", 52);
-      centerSmall("WAKES ON A 3 S BUTTON HOLD", 66);
-      centerSmall("OR WHEN PLUGGED IN", 80);
+      centerSmall("ASLEEP UNTIL A 3 S BUTTON", 36);
+      centerSmall("HOLD, OR PLUGGED IN", 48);
+      centerSmall("ERASES WIFI, WALLET", 66);
+      centerSmall("AND ALARMS FIRST", 78);
+      centerSmall("SEALS AT THE CURRENT BLOCK", 90);
       char b[28]; int pct = batteryPctShown();
       if (pct >= 0) snprintf(b, sizeof(b), "BATTERY %d%%", pct);
       else          snprintf(b, sizeof(b), "BATTERY --");
@@ -4879,6 +5076,11 @@ public:
         if (usbPresent()) { buzz(30, 6); waitAllRelease(); continue; }
         buzz(50, 4);
         waitAllRelease();
+        display.fillScreen(bg());
+        centerText("SEALING...", 100, NULL);
+        display.display(true);
+        fetchSealBlock();                          // needs the WiFi: first
+        factoryWipe();                             // then nothing is left
         shipMode = true;
         shipSince = 0;
         guiState = WATCHFACE_STATE;                // what it wakes into
@@ -5562,6 +5764,13 @@ public:
 
     y += 18; display.setCursor(0, y);
     display.printf("Blk  %ld", blockHeight);                        // <=15
+    { long sh = sealHeight(nullptr, 0);         // sealed at, opened at
+      if (sh > 0) {
+        y += 18; display.setCursor(0, y); display.printf("Seal %ld", sh);
+        if (openedHeight > 0) {
+          y += 18; display.setCursor(0, y); display.printf("Open %ld", openedHeight);
+        }
+      } }
 
     // No on-screen prompt: calibration is a once-per-watch action, set during
     // assembly, and does not deserve a permanent line on a screen checked
@@ -6201,6 +6410,7 @@ public:
       leaveShipMode("button");
       waitAllRelease();
       bootGenesis();                               // a first start, properly
+      firstStartWifi();
       guiState = WATCHFACE_STATE;
       RTC.read(currentTime);
       showWatchFace(false);
