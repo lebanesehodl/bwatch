@@ -2492,12 +2492,17 @@ public:
     // No wallet, or the public demo one: say so instead of a QR. The demo's
     // keys are published, so a payment to it is a payment to anyone.
     if (isDemoWallet()) {
-      centerText("SATOSHI'S WALLET", 44, NULL);
-      centerSmall("A DEMO. THIS ADDRESS IS", 68);
-      centerSmall("SATOSHI'S, NOT YOURS:", 82);
-      centerSmall("DON'T RECEIVE HERE", 96);
-      centerSmall("ADD YOURS FROM", 122);
-      centerSmall("MENU > SETUP WALLET", 136);
+      centerText("SATOSHI'S WALLET", 20, NULL);
+      centerSmall("THE GENESIS ADDRESS. ONLY", 40);
+      centerSmall("SATOSHI'S KEY SPENDS FROM IT.", 52);
+      centerSmall("TREAT ANY COINS SENT HERE", 68);
+      centerSmall("AS LOST, OR A DONATION.", 80);
+      // BitcoinTalk, 21 June 2010, quoted as he wrote it
+      centerSmall("\"LOST COINS ONLY MAKE", 98);
+      centerSmall("EVERYONE ELSE'S COINS WORTH", 110);
+      centerSmall("SLIGHTLY MORE.\"", 122);
+      centerSmall("- SATOSHI, 2010", 134);
+      centerSmall("ADD YOURS: MENU > SETUP WALLET", 158);
       drawModeStrip();
       return;
     }
