@@ -68,12 +68,16 @@ extern bool alreadyInMenu;
 // Menu -> Setup Wallet (WiFi portal, paste from phone) — it's stored in
 // NVS flash and overrides this. Watch-only: can NEVER spend.
 // Never paste an xprv/zprv. Point ESPLORA_BASE at your own node for privacy.
-#define WALLET_ZPUB  "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs"
-// That default is the BIP84 TEST VECTOR: the account of the published
-// "abandon abandon ... about" seed. Its private keys are on the internet, so
-// anything sent to it can be taken by anyone. It is fine for showing what the
-// wallet face looks like and must never be offered as a place to be paid:
-// while it is the active wallet, the receive QR refuses (see isDemoWallet).
+#define WALLET_ZPUB  ""   // none: until one is set, the wallet face is the demo
+// THE DEMO: with no wallet set, the wallet face watches the genesis address,
+// the one block 0 paid. It has never spent and still receives tributes, so
+// the demo is a real, moving balance, labelled as Satoshi's. Only Satoshi's
+// key could spend from it, so anything sent there is gone: the demo never shows a
+// receive QR, and it never raises PAY or CONF screens for strangers' coins.
+#define DEMO_ADDR    "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+// The BIP84 TEST VECTOR, the account of the published "abandon ... about"
+// seed, was the default here once. Its keys are public: if a watch still has
+// it stored, it is treated as no wallet at all, and the demo takes over.
 #define BIP84_TEST_ZPUB "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs"
 #define SCAN_ADDRS   10   // (legacy; the scan is now gap-limit based)
 // MULTISIG (or any wallet): instead of a zpub, paste literal receive
@@ -1233,14 +1237,13 @@ public:
   // and .../1/i change. Spending consumes a whole utxo from the receive
   // branch and returns the remainder to the change branch — so a wallet
   // that scans only chain 0 undercounts by the change the moment you send.
+  // the wearer's own wallet, as opposed to the demo
   bool walletConfigured() {
+    if (WALLET_ADDR_LIST[0]) return true;
     loadPrefs();
-    return zpubBuf[0] != 0 || walletListCount() > 0;
+    return zpubBuf[0] != 0 && strcmp(zpubBuf, BIP84_TEST_ZPUB) != 0;
   }
-  bool isDemoWallet() {
-    loadPrefs();
-    return walletListCount() == 0 && strcmp(zpubBuf, BIP84_TEST_ZPUB) == 0;
-  }
+  bool isDemoWallet() { return !walletConfigured(); }
 
   String deriveAddress(int chain, int index) {
     loadPrefs();
@@ -1396,7 +1399,7 @@ public:
     if (ln && !lnVerify[0]) return;
     String a;
     if (!ln) {
-      if (!walletConfigured() || isDemoWallet()) return;   // no QR was shown
+      if (isDemoWallet()) return;                    // no QR was shown
       a = walletAddr(recvIndex); if (!a.length()) return;
     }
     if (!myConnectWiFi()) return;            // no network: sleep as usual
@@ -1508,8 +1511,17 @@ public:
     }
   }
 
+  // the addresses actually watched: the compiled list, else the demo when no
+  // zpub is set, else none (the zpub derives them)
+  const char *walletList() {
+    if (WALLET_ADDR_LIST[0]) return WALLET_ADDR_LIST;
+    loadPrefs();
+    if (!zpubBuf[0] || strcmp(zpubBuf, BIP84_TEST_ZPUB) == 0) return DEMO_ADDR;
+    return "";
+  }
+
   int walletListCount() {
-    const char *s = WALLET_ADDR_LIST;
+    const char *s = walletList();
     if (!*s) return 0;
     int n = 1;
     for (const char *p = s; *p; p++) if (*p == ',') n++;
@@ -1528,7 +1540,7 @@ public:
 
   String walletAddr(int index) {
     if (walletListCount() > 0) {
-      String all(WALLET_ADDR_LIST);
+      String all(walletList());
       int start = 0, idx = 0;
       for (int i = 0; i <= (int)all.length(); i++) {
         if (i == (int)all.length() || all[i] == ',') {
@@ -2479,15 +2491,13 @@ public:
     display.setFont(NULL);
     // No wallet, or the public demo one: say so instead of a QR. The demo's
     // keys are published, so a payment to it is a payment to anyone.
-    if (!walletConfigured() || isDemoWallet()) {
-      bool demo = walletConfigured();
-      centerText(demo ? "DEMO WALLET" : "NO WALLET YET", 52, NULL);
-      if (demo) {
-        centerSmall("ITS KEYS ARE PUBLIC:", 76);
-        centerSmall("DO NOT RECEIVE HERE", 90);
-      }
-      centerSmall("ADD YOURS FROM", demo ? 116 : 84);
-      centerSmall("MENU > SETUP WALLET", demo ? 130 : 98);
+    if (isDemoWallet()) {
+      centerText("SATOSHI'S WALLET", 44, NULL);
+      centerSmall("THE GENESIS ADDRESS. ONLY", 68);
+      centerSmall("SATOSHI'S KEY SPENDS FROM", 82);
+      centerSmall("IT: COINS SENT ARE GONE", 96);
+      centerSmall("ADD YOURS FROM", 122);
+      centerSmall("MENU > SETUP WALLET", 136);
       drawModeStrip();
       return;
     }
@@ -3552,7 +3562,6 @@ public:
     if (walletView > 2) walletView = 0;  // never dereference
 
     walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
-      walletConfigured() &&             // nothing to scan: no radio for it
       (forceFetch || !haveWallet ||
        wakeMin - lastWalletMin >= WALLET_EVERY_MIN);
 
@@ -3709,6 +3718,8 @@ public:
       }
       if (dispMode == M_WALT && haveWallet && walletSats < 1000000ULL)
         unit = "SATS BALANCE";
+      if (dispMode == M_WALT && isDemoWallet())
+        unit = "SATOSHI - GENESIS";     // never mistaken for the wearer's
 
       int16_t x1,y1; uint16_t w,h;
       display.getTextBounds(unit,0,0,&x1,&y1,&w,&h);
@@ -5054,6 +5065,8 @@ public:
       centerSmall("ERASES WIFI, WALLET", 66);
       centerSmall("AND ALARMS FIRST", 78);
       centerSmall("SEALS AT THE CURRENT BLOCK", 90);
+      if (WALLET_ZPUB[0] || WALLET_ADDR_LIST[0] || LN_ADDRESS[0])
+        centerSmall("! WALLET IS IN THE FIRMWARE", 150);
       char b[28]; int pct = batteryPctShown();
       if (pct >= 0) snprintf(b, sizeof(b), "BATTERY %d%%", pct);
       else          snprintf(b, sizeof(b), "BATTERY --");
@@ -5617,6 +5630,7 @@ public:
   // a payment was seen arriving at addr: follow it (one at a time)
   void armTracking(const char *addr) {
     if (trackState != TRACK_NONE || !addr || !addr[0]) return;
+    if (isDemoWallet()) return;          // tributes to Satoshi are not yours
     strncpy(trackAddr, addr, 63); trackAddr[63] = 0;
     trackTxid[0] = 0; trackSats = 0; trackHeight = 0; trackShown = 0;
     trackWake = wakeMin;
@@ -6163,8 +6177,9 @@ public:
         lastQr = qrNow; }
       const bool watchLn    = (qrOnGlass() && walletView == 2) ||
                               (long)(lnWatchUntil - millis()) > 0;
-      const bool watchChain = (qrOnGlass() && walletView == 1) ||
-                              (long)(chainWatchUntil - millis()) > 0;
+      const bool watchChain = !isDemoWallet() &&
+                              ((qrOnGlass() && walletView == 1) ||
+                               (long)(chainWatchUntil - millis()) > 0);
       if (!dockNetDown && watchLn &&
           lnVerify[0] && millis() - lastAddrPoll > 5000) {
         lastAddrPoll = millis();
