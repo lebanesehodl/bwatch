@@ -2493,9 +2493,9 @@ public:
     // keys are published, so a payment to it is a payment to anyone.
     if (isDemoWallet()) {
       centerText("SATOSHI'S WALLET", 44, NULL);
-      centerSmall("THE GENESIS ADDRESS. ONLY", 68);
-      centerSmall("SATOSHI'S KEY SPENDS FROM", 82);
-      centerSmall("IT: COINS SENT ARE GONE", 96);
+      centerSmall("A DEMO. THIS ADDRESS IS", 68);
+      centerSmall("SATOSHI'S, NOT YOURS:", 82);
+      centerSmall("DON'T RECEIVE HERE", 96);
       centerSmall("ADD YOURS FROM", 122);
       centerSmall("MENU > SETUP WALLET", 136);
       drawModeStrip();
