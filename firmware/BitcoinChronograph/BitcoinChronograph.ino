@@ -2870,6 +2870,9 @@ public:
       // Charging. The ADC is on the charger rail, so anything derived from it
       // describes the cable. Estimate instead, and say so (About shows ~).
       // Unknown start (a new watch, a wiped log): say so rather than guess.
+      // Already finished once on this plug-in: this is the IC topping the
+      // cell back up after it sagged, not a charge. Still full.
+      if (chgLearned) { shownBattPct = 100; return 100; }
       if (chgFromPct < 0) return -1;
       float mins = (rtcNow() - chgFromT) / 60.0f;
       if (mins < 0) mins = 0;
