@@ -185,7 +185,8 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Resting by day, the watch only looks for a pickup every REST_WAKE_MIN. With
 // this on, the accelerometer watches instead: a shake or a pickup wakes it at
 // once, like a button. Off by night, where a wrist in bed moves on its own.
-#define SHAKE_WAKE       1
+#define SHAKE_WAKE       0   // off: untested on hardware, and a press
+                             // now wakes fast anyway. 1 to try it
 #define SHAKE_AT_NIGHT   0
 // Starting guesses, to tune from the [shake] serial lines. The BMA423 compares
 // successive samples at 50 Hz: wake when the change exceeds SHAKE_THRESH
