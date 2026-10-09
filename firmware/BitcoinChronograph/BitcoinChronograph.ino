@@ -392,6 +392,8 @@ RTC_DATA_ATTR float    battFullV    = 4.20f;  // what this board reads at a
 // minutes on the charger times a rate learned from real charges.
 #define CHG_RATE_DEFAULT 0.70f  // %/min before any charge has been measured
                                 // (~2.4 h from empty); replaced by learning
+#define USB_SETTLE_MIN   3      // cable in this long before 'not charging'
+                                // is believed to mean finished
 #define CHG_EST_CAP      95     // an estimate never claims full: only the
                                 // charge IC's "done" shows 100
 RTC_DATA_ATTR int8_t   chgFromPct   = -1;   // level when the cable went in
@@ -2724,10 +2726,15 @@ public:
     // Two clocks, because neither runs in every case. wakeMin advances only
     // on minute wakes, which stop while the watch is docked; millis() runs
     // while awake but resets on every boot, and a flat cell means a boot.
-    // Either reaching twenty-five minutes is enough.
+    // Either reaching USB_SETTLE_MIN is enough. It was 25, which covered the
+    // IC's start-up many times over and cost a reflash on a full, plugged-in
+    // watch 25 minutes of a low figure: a charge IC starts within seconds of
+    // power, so a status still high minutes later means it has finished (or
+    // the cell is above its recharge threshold, which is full for us).
     uint32_t onWakes = (wakeMin >= usbSeenWake) ? wakeMin - usbSeenWake : 0;
     uint32_t onMs    = millis() - usbSeenMs;
-    if (onWakes < 25 && onMs < 25UL * 60UL * 1000UL) return 1;   // too soon
+    if (onWakes < USB_SETTLE_MIN &&
+        onMs < USB_SETTLE_MIN * 60UL * 1000UL) return 1;           // too soon
     return (battVoltsTrue() >= 4.05f) ? 2 : 1;
   }
 
