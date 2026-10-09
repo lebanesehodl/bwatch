@@ -219,7 +219,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0136
+#define RTC_LAYOUT_MAGIC 0xB17C0137
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -387,6 +387,16 @@ RTC_DATA_ATTR float    battFullV    = 4.20f;  // what this board reads at a
                                              // the watch is told once what
                                              // full looks like and works from
                                              // that. Set in About: hold UP.
+// Charging. The ADC sees the charger, never the cell, so the level while
+// plugged in is estimated: where the cell was when the cable went in, plus
+// minutes on the charger times a rate learned from real charges.
+#define CHG_RATE_DEFAULT 0.70f  // %/min before any charge has been measured
+                                // (~2.4 h from empty); replaced by learning
+#define CHG_EST_CAP      95     // an estimate never claims full: only the
+                                // charge IC's "done" shows 100
+RTC_DATA_ATTR int8_t   chgFromPct   = -1;   // level when the cable went in
+RTC_DATA_ATTR uint32_t chgFromT     = 0;    // RTC time then (0: not charging)
+RTC_DATA_ATTR bool     chgLearned   = false;// this charge already measured
 RTC_DATA_ATTR int8_t   shownBattPct = -1;   // last percentage About printed.
                                            // held monotonic while discharging:
                                            // a voltage-derived figure jitters,
@@ -2755,10 +2765,8 @@ public:
     return batteryVolts() * (4.20f / f);
   }
 
-  float batteryPct() {
-    if (chargeState() == 2) return 1.0f;   // terminated: the guard now lives
-                                           // inside chargeState itself                         // terminated AND the cell agrees
-    float v = battVoltsTrue();
+  // the discharge curve, from a calibrated (true) cell voltage to 0..1
+  float curvePct(float v) {
     float p;
     if      (v >= 4.15f) p = 1.00f;
     else if (v >= 4.00f) p = 0.85f + (v - 4.00f) * (0.15f / 0.15f);
@@ -2768,6 +2776,42 @@ public:
     else if (v >= 3.30f) p = (v - 3.30f) * (0.15f / 0.25f);
     else                 p = 0.0f;
     return p < 0 ? 0 : (p > 1 ? 1 : p);
+  }
+
+  // The newest on-cell sample in the hourly log, as a percentage, or -1. The
+  // log lives in flash, so this survives the flat cell that wiped RTC memory:
+  // a watch that ran dead and was plugged in still knows roughly where it was.
+  int lastLoggedPct() {
+    for (int i = 1; i <= VLOG_N; i++) {
+      uint8_t x = vlog[(vlogIdx + VLOG_N - i) % VLOG_N];
+      if (x == 0) return -1;
+      if (x == VLOG_CHG) continue;      // this charge's own mark: the sample
+                                        // before it is the cell, last seen
+      float f = (battFullV > 3.0f) ? battFullV : 4.20f;
+      return (int)(curvePct((x / 50.0f) * (4.20f / f)) * 100.0f + 0.5f);
+    }
+    return -1;
+  }
+
+  float chgRateCache = -1.0f;           // %/min, from flash, once per boot
+  float chgRate() {
+    if (chgRateCache < 0) {
+      Preferences p; p.begin("btcchrono", true);
+      chgRateCache = p.getFloat("chgRate", CHG_RATE_DEFAULT);
+      p.end();
+      if (chgRateCache < 0.2f || chgRateCache > 3.0f) chgRateCache = CHG_RATE_DEFAULT;
+    }
+    return chgRateCache;
+  }
+
+  uint32_t rtcNow() { tmElements_t t; RTC.read(t); return (uint32_t)makeTime(t); }
+
+  bool battEstimated = false;           // the last figure was an estimate
+
+  float batteryPct() {
+    if (chargeState() == 2) return 1.0f;   // terminated: the guard now lives
+                                           // inside chargeState itself                         // terminated AND the cell agrees
+    return curvePct(battVoltsTrue());
   }
 
   // What About prints: rounded to 5%, because a voltage-derived reading is
@@ -2786,15 +2830,56 @@ public:
     if (rounded > 100) rounded = 100;
     if (rounded < 0)   rounded = 0;
     int cs = chargeState();
-    if (cs == 2) { shownBattPct = 100; return 100; }   // the IC says finished
+    battEstimated = false;
+    if (cs != 0 && chgFromT == 0) {
+      // the cable just went in: note where the cell was, from the latch, else
+      // from the hourly log in flash (a flat cell wipes the latch, not that)
+      chgFromT = rtcNow();
+      chgFromPct = (shownBattPct >= 0) ? shownBattPct : (int8_t)lastLoggedPct();
+      chgLearned = false;
+      Serial.printf("[chg] start at %d%%\n", chgFromPct);
+    }
+    if (cs == 2) {                                     // the IC says finished
+      // Learn the rate from a real charge: only one with a decent span, so
+      // the taper at the end does not dominate, and blended, so one odd
+      // charge moves it half way and no further.
+      if (!chgLearned && chgFromPct >= 0 && chgFromPct <= 60 && chgFromT) {
+        float mins = (rtcNow() - chgFromT) / 60.0f;
+        if (mins >= 20.0f && mins <= 600.0f) {
+          float r = (100 - chgFromPct) / mins;
+          if (r >= 0.2f && r <= 3.0f) {
+            chgRateCache = 0.5f * chgRate() + 0.5f * r;
+            Preferences p; p.begin("btcchrono", false);
+            p.putFloat("chgRate", chgRateCache); p.end();
+            Serial.printf("[chg] full: %d%% -> 100%% in %.0f min, rate %.2f -> %.2f %%/min\n",
+                          chgFromPct, mins, r, chgRateCache);
+          }
+        }
+        chgLearned = true;
+      }
+      shownBattPct = 100; return 100;
+    }
     if (cs == 1) {
-      // Charging. There is no honest number here: the ADC is on the charger
-      // rail, so anything derived from it describes the cable. Hold the last
-      // reading taken on the cell — and if there is not one, say so rather
-      // than borrow the rail's. That case is a watch that ran flat and was
-      // plugged in: RTC memory went with the cell, so the last thing it knew
-      // about itself is gone, and 100% would be the worst possible guess.
-      return (shownBattPct >= 0) ? shownBattPct : -1;   // -1: not known
+      // Charging. The ADC is on the charger rail, so anything derived from it
+      // describes the cable. Estimate instead, and say so (About shows ~).
+      // Unknown start (a new watch, a wiped log): say so rather than guess.
+      if (chgFromPct < 0) return -1;
+      float mins = (rtcNow() - chgFromT) / 60.0f;
+      if (mins < 0) mins = 0;
+      int est = chgFromPct + (int)(chgRate() * mins);
+      est = ((est + 2) / 5) * 5;
+      if (est > CHG_EST_CAP) est = CHG_EST_CAP;
+      if (est < chgFromPct) est = chgFromPct;
+      battEstimated = true;
+      return est;
+    }
+    if (chgFromT != 0) {
+      // Off the charger: measure the cell afresh. The latch only ever steps
+      // down on the cell, so without this a charge cut short left it stuck at
+      // the level from before the cable went in.
+      chgFromT = 0; chgFromPct = -1;
+      shownBattPct = rounded;
+      return rounded;
     }
     if (shownBattPct < 0) { shownBattPct = rounded; return rounded; }
     // A real cell does not fall twenty points between two wakes. If it seems
@@ -5886,7 +5971,7 @@ public:
     int cs = chargeState();
     int p  = batteryPctShown();
     y += 20; display.setCursor(0, y);
-    if (p >= 0) display.printf("Batt %3d%%", p);                    // 9
+    if (p >= 0) display.printf(battEstimated ? "Batt ~%2d%%" : "Batt %3d%%", p);
     else        display.print("Batt  --%");   // charging, and the last
                                               // on-cell reading died with
                                               // the cell
@@ -5895,8 +5980,10 @@ public:
     // the voltage is diagnostic, not decoration: a stuck percentage means
     // either the cell is not charging or the ADC is misreading it, and only
     // the raw figure separates those two
-    display.printf("Pwr  %s %.2fV", cs == 0 ? "bat" : (cs == 1 ? "chg" : "ful"),
-                   batteryVolts());                                 // <=17
+    // On the cable the figure is the charger's, not the cell's: say so.
+    if (cs == 0) display.printf("Pwr  bat %.2fV", batteryVolts());   // <=17
+    else         display.printf("Pwr %s %.2fV USB",
+                                cs == 1 ? "chg" : "ful", batteryVolts());
 
     y += 18; display.setCursor(0, y);
     if (wifiSsid[0][0]) {
