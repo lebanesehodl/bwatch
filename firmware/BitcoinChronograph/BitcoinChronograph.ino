@@ -219,7 +219,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0135
+#define RTC_LAYOUT_MAGIC 0xB17C0136
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -282,8 +282,13 @@ RTC_DATA_ATTR bool     accelSeeded   = false;
 // survives sleep. Stored as (volts * 50) in a byte — 0.02 V resolution, which
 // is finer than the ADC deserves. The point is the SHAPE: if the trace sits
 // flat and then falls off a cliff, the curve is wrong, not the cell.
-RTC_DATA_ATTR uint8_t  vlog[24] = {0};
-RTC_DATA_ATTR uint8_t  vlogIdx  = 0;
+// Three days, one sample an hour: a full run from the charger to flat is
+// longer than a day now, and a log that only holds the last 24 hours never
+// shows one end to end. VLOG_CHG marks where a charge interrupted the run.
+#define VLOG_N   72
+#define VLOG_CHG 0xFF       // never a reading: 4.2 V stores as 210
+RTC_DATA_ATTR uint8_t  vlog[VLOG_N] = {0};
+RTC_DATA_ATTR uint8_t  vlogIdx  = 0;   // next slot, always < VLOG_N
 RTC_DATA_ATTR uint32_t vlogWake = 0;
 
 RTC_DATA_ATTR double   travelPastPrice = 0;   // real price at the travelled
@@ -1332,9 +1337,23 @@ public:
   void loadVlog() {
     Preferences p;
     p.begin("btcchrono", true);
-    if (p.getBytesLength("vlog") == sizeof(vlog))
+    size_t len = p.getBytesLength("vlog");
+    if (len == sizeof(vlog)) {
       p.getBytes("vlog", (void *)vlog, sizeof(vlog));
-    vlogIdx = p.getUChar("vidx", 0);
+      vlogIdx = p.getUChar("vidx", 0) % VLOG_N;
+    } else if (len == 24) {
+      // the old 24-hour ring: unroll it oldest first into the new one, so
+      // the run in progress survives the upgrade
+      uint8_t old[24];
+      p.getBytes("vlog", (void *)old, 24);
+      uint8_t oi = p.getUChar("vidx", 0);
+      memset(vlog, 0, sizeof(vlog));
+      vlogIdx = 0;
+      for (int i = 0; i < 24; i++) {
+        uint8_t v = old[(oi + i) % 24];
+        if (v) vlog[vlogIdx++] = v;
+      }
+    }
     p.end();
   }
 
@@ -3633,11 +3652,22 @@ public:
     if ((wakeMin - vlogWake >= 60 || vlogWake == 0) && chargeState() == 0) {
       vlogWake = wakeMin;
       float v = batteryVolts();     // already the median of five
-      vlog[vlogIdx % 24] = (uint8_t)(v * 50.0f);
-      vlogIdx++;
+      vlog[vlogIdx] = (uint8_t)(v * 50.0f);
+      // wrap explicitly: the index is a byte, and 256 is not a multiple of
+      // the ring, so letting it overflow scrambled the order once in a while
+      vlogIdx = (vlogIdx + 1) % VLOG_N;
       saveVlog();                   // so a flat cell cannot erase the evidence
       Serial.printf("[vlog] %02d  %.3fV raw  %.3fV true  %d%%\n",
-                    vlogIdx % 24, v, battVoltsTrue(), batteryPctShown());
+                    vlogIdx, v, battVoltsTrue(), batteryPctShown());
+    } else if (chargeState() != 0 &&
+               vlog[(vlogIdx + VLOG_N - 1) % VLOG_N] != VLOG_CHG &&
+               vlog[(vlogIdx + VLOG_N - 1) % VLOG_N] != 0) {
+      // on the charger after a run: mark the break once, so three days of
+      // log never read as one impossibly slow discharge
+      vlog[vlogIdx] = VLOG_CHG;
+      vlogIdx = (vlogIdx + 1) % VLOG_N;
+      saveVlog();
+      Serial.println("[vlog] charge mark");
     }
     if (!accelSeeded) scanAdcPins();   // once per cold boot
     chargeDiag();                      // silent unless a charger is present
@@ -4640,22 +4670,28 @@ public:
     // position as if it were an hour, so four samples in a fresh log came
     // out labelled 20, 21, 22, 23 — which reads as twenty hours of history
     // that does not exist. Label them by age instead, and say how many.
+    // Ages count samples only (an hour each on the cell); a charge mark
+    // takes no time, and the hours spent charging are not in the log at all.
     int have = 0;
-    for (int i = 0; i < 24; i++) if (vlog[i] != 0) have++;
-    Serial.printf("[vlog] %d sample%s, one an hour, newest last\n",
+    for (int i = 0; i < VLOG_N; i++)
+      if (vlog[i] != 0 && vlog[i] != VLOG_CHG) have++;
+    Serial.printf("[vlog] %d sample%s, one an hour on the cell, newest last\n",
                   have, have == 1 ? "" : "s");
     Serial.println("[vlog]  age   raw    true");
     int n = 0;
-    for (int i = 0; i < 24; i++) {
-      int k = (vlogIdx + i) % 24;
+    float k4 = 4.20f / (battFullV > 3.0f ? battFullV : 4.20f);
+    for (int i = 0; i < VLOG_N; i++) {
+      int k = (vlogIdx + i) % VLOG_N;
       if (vlog[k] == 0) continue;
+      if (vlog[k] == VLOG_CHG) {
+        if (n > 0) Serial.println("[vlog]  ---- charged ----");
+        continue;
+      }
       float v = vlog[k] / 50.0f;
-      int ago = have - 1 - n;                 // hours before the newest
+      int ago = have - 1 - n;                 // samples before the newest
       n++;
-      if (ago == 0) Serial.printf("[vlog]  now   %.2f   %.2f\n", v,
-                    v * (4.20f / (battFullV > 3.0f ? battFullV : 4.20f)));
-      else Serial.printf("[vlog] -%2dh   %.2f   %.2f\n", ago, v,
-                    v * (4.20f / (battFullV > 3.0f ? battFullV : 4.20f)));
+      if (ago == 0) Serial.printf("[vlog]  now   %.2f   %.2f\n", v, v * k4);
+      else Serial.printf("[vlog] -%2dh   %.2f   %.2f\n", ago, v, v * k4);
     }
   }
 
