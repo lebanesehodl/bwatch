@@ -181,6 +181,19 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 #define FLAT_Z         900   // and nearly all of 1 g (~1024) on z
 #define FACE_UP_Z_SIGN   1   // sign of z lying face-up. If the log shows a
                              // face-up watch reading DOWN, flip this to -1
+// ---- shake to wake ----
+// Resting by day, the watch only looks for a pickup every REST_WAKE_MIN. With
+// this on, the accelerometer watches instead: a shake or a pickup wakes it at
+// once, like a button. Off by night, where a wrist in bed moves on its own.
+#define SHAKE_WAKE       1
+#define SHAKE_AT_NIGHT   0
+// Starting guesses, to tune from the [shake] serial lines. The BMA423 compares
+// successive samples at 50 Hz: wake when the change exceeds SHAKE_THRESH
+// (1/2048 g per count, so 0x200 = 0.25 g) for SHAKE_DUR samples (20 ms each).
+// Too many false wakes from bumps on a table: raise either. Shakes missed:
+// lower them.
+#define SHAKE_THRESH 0x200
+#define SHAKE_DUR        3
 // ---- haptics ----
 // BUZZ_ON_BLOCK: one short tick when new block(s) are discovered at a
 //   fetch. NOTE: the watch deep-sleeps, so this fires at fetch cadence
@@ -205,7 +218,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0134
+#define RTC_LAYOUT_MAGIC 0xB17C0135
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -345,6 +358,8 @@ RTC_DATA_ATTR bool     sawMillion    = false;  // block 1,000,000 has been
                                                // met and marked. Stored in
                                                // NVS: it happens once and the
                                                // watch should not forget
+RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
+                                               // ghost: next minute, full
 RTC_DATA_ATTR bool     fetchPending  = false;  // a long-press asked for data
                                                // and the radio has not gone
                                                // out yet. The corner says so,
@@ -965,6 +980,7 @@ public:
     uint64_t sec = (uint64_t)(60 - t.Second) + (uint64_t)(minutes - 1) * 60;
     Serial.printf("[rest] sleeping %lu min (state %d)\n",
                   (unsigned long)minutes, restState);
+    bool shake = shakeArm();
     Serial.flush();
     display.hibernate();
     RTC.clearAlarm();
@@ -973,7 +989,14 @@ public:
                                  digitalRead(USB_DET_PIN) == 1 ? LOW : HIGH);
     rtc_gpio_set_direction((gpio_num_t)USB_DET_PIN, RTC_GPIO_MODE_INPUT_ONLY);
     rtc_gpio_pullup_en((gpio_num_t)USB_DET_PIN);
-    esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_LOW);
+    uint64_t mask = (BTN_PIN_MASK);
+    if (shake) {                       // push-pull from the BMA: no pulls
+      mask |= ACC_INT_MASK;
+      rtc_gpio_set_direction((gpio_num_t)ACC_INT_1_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+      rtc_gpio_pullup_dis((gpio_num_t)ACC_INT_1_PIN);
+      rtc_gpio_pulldown_dis((gpio_num_t)ACC_INT_1_PIN);
+    }
+    esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
     rtc_gpio_set_direction((gpio_num_t)UP_BTN_PIN, RTC_GPIO_MODE_INPUT_ONLY);
     rtc_gpio_pullup_en((gpio_num_t)UP_BTN_PIN);
     rtc_clk_32k_enable(true);
@@ -1003,8 +1026,89 @@ public:
     restState = REST_NONE;
     stillRun = 0;
     restExitFull = true;
+    // Stale: fetch, but paint FIRST. forceFetch alone fetched before a single
+    // pixel moved, so a press on a resting watch sat on the old rest face for
+    // the whole WiFi join and TLS round (seconds) before anything answered.
+    // fetchPending takes the prePaint path: the face goes up at once with
+    // FTCH in the corner, then the radio, then the fresh face.
     if (staleMinutes() >= STALE_AFTER_MIN ||
-        heightStaleMinutes() >= STALE_AFTER_MIN) forceFetch = true;
+        heightStaleMinutes() >= STALE_AFTER_MIN) {
+      forceFetch = true;
+      fetchPending = true;
+    }
+  }
+
+  // ---------------- shake to wake ----------------
+  // The library routes step, tilt and double-tap to the accelerometer's INT1
+  // (GPIO14 on v3), active-high, and never wakes on it. A rest takes the line
+  // over: only any-motion, active-LOW and latched until read, so it can sit
+  // in the same ANY_LOW wake mask as the buttons. Its own small driver handle
+  // (the library keeps its one private); same chip, same I2C bus.
+  static uint16_t accRd(uint8_t a, uint8_t r, uint8_t *d, uint16_t n) {
+    Wire.beginTransmission(a); Wire.write(r); Wire.endTransmission();
+    Wire.requestFrom((uint8_t)a, (uint8_t)n);
+    uint16_t i = 0;
+    while (Wire.available() && i < n) d[i++] = Wire.read();
+    return i == n ? 0 : 1;
+  }
+  static uint16_t accWr(uint8_t a, uint8_t r, uint8_t *d, uint16_t n) {
+    Wire.beginTransmission(a); Wire.write(r); Wire.write(d, n);
+    return Wire.endTransmission() != 0;
+  }
+  static void accDelay(uint32_t ms) { delay(ms); }
+  struct bma4_dev accDev;
+  bool accDevOk = false;
+  bool accOpen() {
+    if (accDevOk) return true;
+    memset(&accDev, 0, sizeof accDev);
+    accDev.dev_addr = BMA4_I2C_ADDR_PRIMARY;
+    accDev.interface = BMA4_I2C_INTERFACE;
+    accDev.bus_read = accRd; accDev.bus_write = accWr; accDev.delay = accDelay;
+    accDev.read_write_len = 8;
+    accDevOk = bma423_init(&accDev) == BMA4_OK;
+    return accDevOk;
+  }
+  // read the interrupt status: releases a latched line
+  void shakeClear() {
+  #ifdef ARDUINO_ESP32S3_DEV
+    if (!accOpen()) return;
+    uint16_t st = 0;
+    bma423_read_int_status(&st, &accDev);
+  #endif
+  }
+  // Ready the detector for a rest sleep. True only when the line is configured
+  // AND idle (high): a line already low would wake the chip the instant it
+  // slept, and again, and again. Then the rest simply goes without it.
+  bool shakeArm() {
+  #if SHAKE_WAKE && defined(ARDUINO_ESP32S3_DEV)
+    if (restState == REST_NIGHT && !SHAKE_AT_NIGHT) return false;
+    if (!accOpen()) { Serial.println("[shake] no accelerometer"); return false; }
+    uint16_t r = 0;
+    r |= bma423_map_interrupt(BMA4_INTR1_MAP,
+           BMA423_STEP_CNTR_INT | BMA423_ACTIVITY_INT | BMA423_TILT_INT |
+           BMA423_WAKEUP_INT | BMA423_ERROR_INT, BMA4_DISABLE, &accDev);
+    struct bma423_anymotion_config m;
+    m.threshold = SHAKE_THRESH; m.duration = SHAKE_DUR; m.nomotion_sel = 0;
+    r |= bma423_set_any_motion_config(&m, &accDev);
+    r |= bma423_anymotion_enable_axis(BMA423_ALL_AXIS_EN, &accDev);
+    r |= bma423_map_interrupt(BMA4_INTR1_MAP, BMA423_ANY_NO_MOTION_INT,
+                              BMA4_ENABLE, &accDev);
+    struct bma4_int_pin_config pc;
+    pc.edge_ctrl = BMA4_LEVEL_TRIGGER; pc.lvl = BMA4_ACTIVE_LOW;
+    pc.od = BMA4_PUSH_PULL; pc.output_en = BMA4_OUTPUT_ENABLE;
+    pc.input_en = BMA4_INPUT_DISABLE;
+    r |= bma4_set_int_pin_config(&pc, BMA4_INTR1_MAP, &accDev);
+    r |= bma4_set_interrupt_mode(BMA4_LATCH_MODE, &accDev);
+    shakeClear();                              // nothing old left latched
+    pinMode(ACC_INT_1_PIN, INPUT);
+    bool idle = digitalRead(ACC_INT_1_PIN) == HIGH;
+    Serial.printf("[shake] %s (r=%u line=%s)\n",
+                  (r == BMA4_OK && idle) ? "armed" : "NOT armed", r,
+                  idle ? "idle" : "LOW");
+    return r == BMA4_OK && idle;
+  #else
+    return false;
+  #endif
   }
 
   // Called on every timer wake once the accelerometer has been read. Returns
@@ -3576,10 +3680,13 @@ public:
     // only ever showed on the dock, where the loop redraws, and never on the
     // wrist, where there is one draw per wake. Re-enter once to paint the
     // pending state, then fetch, then fall through and paint the result.
+    // a fast partial wake from rest left a faint ghost: clean it now, on a
+    // minute wake nobody is waiting on
+    if (timerWake && cleanNext) { cleanNext = false; restExitFull = true; }
     if (fetchPending && !prePaint) {
       prePaint = true;
       drawWatchFace();                // corner reads FTCH; no fetch inside
-      display.display(true);
+      display.display(true);          // partial: fast, the full comes after
       prePaint = false;
     }
     if (!prePaint) maybeFetch();
@@ -4112,8 +4219,10 @@ public:
       display.drawFastHLine(6, 179, tx - 10, fg());
       display.drawFastHLine(tx + w + 4, 179, 194 - (tx + w + 4), fg()); }
     drawModeStrip();
-    if (restExitFull) {           // first face after a rest: full refresh, so
-      restExitFull = false;       // the hours-old image leaves no ghost
+    if (restExitFull && !prePaint) { // first face after a rest: full refresh,
+      restExitFull = false;          // so the old image leaves no ghost (not
+                                     // the FTCH frame: that one is the fast
+                                     // answer, the full comes with the data)
       display.display(false);
     }
 
@@ -6439,17 +6548,32 @@ public:
     wakeMin += catchUpWakeClock();     // a press can cut a long sleep short
     uint64_t wake = esp_sleep_get_ext1_wakeup_status();
     buttonWake = true;                 // don't tick the wake clock
+    // the accelerometer, not a button: only ever armed for a rest sleep
+    bool shook = (wake & ACC_INT_MASK) && !(wake & (BTN_PIN_MASK));
+    if (shook) shakeClear();           // release the latched line
     // ANY BUTTON WAKES, and that is all the first press does: it would be
     // rude for the press that woke the watch to also change its mode.
+    // A shake wakes the same way.
     if (restState != REST_NONE && guiState == WATCHFACE_STATE) {
       awakeTill = wakeMin + PRESS_GRACE_MIN;
-      endRest("button");
-      restExitFull = false;            // showWatchFace(false) is already full
+      endRest(shook ? "shake" : "button");
+      // Answer at once. A full refresh is ~2 s of flashing and a fetch is
+      // seconds more; neither should stand between the press and the glass.
+      // So the face goes up as a PARTIAL refresh now. If the data is stale
+      // (endRest set fetchPending), that first frame says FTCH, the fetch
+      // runs, and the fresh face is the full refresh that clears the ghost
+      // of the rest face. If it isn't, the next minute's wake does the full.
+      if (!fetchPending) { restExitFull = false; cleanNext = true; }
       pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
       pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
-      waitAllRelease();
+      if (!shook) waitAllRelease();
       RTC.read(currentTime);
-      showWatchFace(false);
+      showWatchFace(true);
+      return;
+    }
+    if (shook) {                       // stray: woke but no longer resting
+      RTC.read(currentTime);
+      showWatchFace(true);
       return;
     }
     awakeTill = wakeMin + PRESS_GRACE_MIN;   // every press buys a few
