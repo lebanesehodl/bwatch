@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0138
+#define RTC_LAYOUT_MAGIC 0xB17C0139
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -368,6 +368,7 @@ RTC_DATA_ATTR bool     sawMillion    = false;  // block 1,000,000 has been
                                                // watch should not forget
 RTC_DATA_ATTR int8_t   nightFrom     = NIGHT_FROM_H;  // the wearer's night,
 RTC_DATA_ATTR int8_t   nightTo       = NIGHT_TO_H;    // whole local hours
+RTC_DATA_ATTR int8_t   menuLevel     = 0;      // 0 main menu, 1 Settings
 RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
                                                // ghost: next minute, full
 RTC_DATA_ATTR bool     fetchPending  = false;  // a long-press asked for data
@@ -1655,7 +1656,7 @@ public:
       // The vigil runs inside showWatchFace(), which marks the watch as on
       // its face when it returns. So show the menu and sleep from here, in
       // menu state, the way every menu wake ends.
-      myShowMenu(menuIndex, false);
+      openMenu();
       longSleep(1);                  // v3: does not return
     }
   }
@@ -3556,6 +3557,7 @@ public:
     avgBlockSec = 600;
     guiState = 0;                          // library state too:
     menuIndex = 0;                         // WATCHFACE_STATE, top item
+    menuLevel = 0;
     alreadyInMenu = true;
   }
 
@@ -4395,7 +4397,7 @@ public:
           downPressed();
         } else if (btn == MENU_BTN_PIN) {
           inWalletScan = false;
-          myShowMenu(menuIndex, false);
+          openMenu();
           return;
         }
       }
@@ -4417,15 +4419,42 @@ public:
   }
 
   // ---------------- menu: stock items + Timezone ----------------
-  static const int MY_MENU_LEN = 11;
+  // Two levels. The main menu holds what gets used; Settings holds what gets
+  // set once and left (eleven items in one list had become a scroll).
   static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
                                            // row's descenders run off the panel
+  static const int MAIN_LEN = 5, SET_LEN = 7, SETTINGS_POS = 4;
+  const char *const MAIN_ITEMS[MAIN_LEN] = {
+    "About BWATCH", "Setup Wallet", "Alarms", "Time Travel", "Settings  >"};
+  const char *const SET_ITEMS[SET_LEN] = {
+    "Set Time", "Set Timezone", "Sync NTP", "Setup WiFi", "Networks",
+    "Night Hours", "Ship Mode"};
+  int menuLen() { return menuLevel ? SET_LEN : MAIN_LEN; }
+  void menuStep(int d) {
+    int n = menuLen();
+    menuIndex = ((menuIndex + d) % n + n) % n;
+    myShowMenu(menuIndex, true);
+  }
+  // From the face: always the main menu. A wake that timed out inside
+  // Settings would otherwise reopen the submenu with no way to tell.
+  void openMenu() {
+    if (menuLevel) { menuLevel = 0; menuIndex = SETTINGS_POS; }
+    if (menuIndex >= MAIN_LEN) menuIndex = 0;
+    myShowMenu(menuIndex, false);
+  }
+  // BACK in a menu: Settings goes up to the main menu (true); the main menu
+  // leaves to the face (false: the caller does that, as it always has).
+  bool menuBack() {
+    if (!menuLevel) return false;
+    menuLevel = 0; menuIndex = SETTINGS_POS;
+    myShowMenu(menuIndex, false);
+    return true;
+  }
 
   void myShowMenu(byte idx, bool partial) {
-    const char *items[MY_MENU_LEN] = {
-      "About BWATCH", "Set Time", "Setup WiFi", "Networks", "Sync NTP",
-      "Setup Wallet", "Set Timezone", "Time Travel", "Alarms", "Night Hours",
-      "Ship Mode"};
+    const int len = menuLen();
+    const char *const *items = menuLevel ? SET_ITEMS : MAIN_ITEMS;
+    if (idx >= len) idx = menuIndex = 0;
     // The menu follows the theme, like everything else. It used to be black
     // whatever the face was doing, which meant a light-mode wearer went from
     // a white face to a black menu and back — a full-panel inversion twice,
@@ -4436,7 +4465,7 @@ public:
     int16_t x1, y1; uint16_t w, h;
     // more items than rows: the list scrolls so the selection stays on screen
     int first = (idx >= MENU_ROWS) ? idx - (MENU_ROWS - 1) : 0;
-    for (int i = first; i < MY_MENU_LEN && i < first + MENU_ROWS; i++) {
+    for (int i = first; i < len && i < first + MENU_ROWS; i++) {
       int16_t yPos = 22 + 22 * (i - first);
       display.setCursor(0, yPos);
       if (i == idx) {
@@ -4448,6 +4477,12 @@ public:
         display.setTextColor(fg());
         display.println(items[i]);
       }
+    }
+    if (menuLevel) {                       // where you are, and the way out
+      display.setFont(NULL);
+      display.setTextColor(fg());
+      display.drawFastHLine(6, 180, 188, fg());
+      centerSmall("SETTINGS  -  BACK: MAIN MENU", 186);
     }
     // always partial: the entry flash annoyed the owner, and the menu now
     // shares the face's palette, so there is no inversion to clean up on exit.
@@ -4772,19 +4807,17 @@ public:
   // (where DOWN correctly means theme — the source of the "DOWN stopped
   // working in the menu" mystery).
   void dockMenuSession() {
-    myShowMenu(menuIndex, false);
+    openMenu();
     unsigned long idle = millis();
     while (digitalRead(USB_DET_PIN) == 1) {
       if (millis() - idle > 120000) break;            // 2 min true idle
       if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
         idle = millis();
-        menuIndex++; if (menuIndex > MY_MENU_LEN - 1) menuIndex = 0;
-        myShowMenu(menuIndex, true);
+        menuStep(1);
         waitRelease(DOWN_BTN_PIN);
       } else if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
         idle = millis();
-        menuIndex--; if (menuIndex < 0) menuIndex = MY_MENU_LEN - 1;
-        myShowMenu(menuIndex, true);
+        menuStep(-1);
         waitRelease(UP_BTN_PIN);
       } else if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
         idle = millis();
@@ -4803,8 +4836,9 @@ public:
         idle = millis();
       } else if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {
         waitRelease(BACK_BTN_PIN);
-        break;                                        // back to dock face
-      }
+        idle = millis();
+        if (!menuBack()) break;                       // Settings -> main,
+      }                                               // main -> dock face
       delay(30);
     }
     guiState = WATCHFACE_STATE;
@@ -6318,18 +6352,21 @@ public:
   }
 
   void dispatchMenu() {
-    switch (menuIndex) {
+    if (!menuLevel) switch (menuIndex) {
       case 0: myShowAbout(); break;                     // state, not the radio
-      case 1: setTime();   myShowMenu(menuIndex, false); break;
-      case 2: mySetupWifi(); break;                     // BACK returns to menu
-      case 3: showNetworks(); break;                    // list and forget
-      case 4: mySyncNTP(); break;                       // keychain-aware
-      case 5: setupWallet(); break;                     // ends in our menu
-      case 6: showTimezone(); break;                    // ends in our menu
-      case 7: timeTravel(); break;                      // arithmetic, not data
-      case 8: alarmsScreen(); break;                    // block and fee
-      case 9: nightHoursScreen(); break;                // the wearer's night
-      case 10: shipModeScreen(); break;                 // asleep for the box
+      case 1: setupWallet(); break;                     // ends in our menu
+      case 2: alarmsScreen(); break;                    // block and fee
+      case 3: timeTravel(); break;                      // arithmetic, not data
+      case 4: menuLevel = 1; menuIndex = 0;             // into Settings
+              myShowMenu(menuIndex, false); break;
+    } else switch (menuIndex) {
+      case 0: setTime();   myShowMenu(menuIndex, false); break;
+      case 1: showTimezone(); break;                    // ends in our menu
+      case 2: mySyncNTP(); break;                       // keychain-aware
+      case 3: mySetupWifi(); break;                     // BACK returns to menu
+      case 4: showNetworks(); break;                    // list and forget
+      case 5: nightHoursScreen(); break;                // the wearer's night
+      case 6: shipModeScreen(); break;                  // asleep for the box
     }
   }
 
@@ -6816,7 +6853,7 @@ public:
     }
     if (guiState == WATCHFACE_STATE) {
       if (wake & MENU_BTN_MASK) {
-        myShowMenu(menuIndex, false);
+        openMenu();
       } else if (wake & BACK_BTN_MASK) {
         backPressed();
         RTC.read(currentTime); showWatchFace(true);
@@ -6855,14 +6892,14 @@ public:
       if (wake & MENU_BTN_MASK) {
         dispatchMenu();
       } else if (wake & BACK_BTN_MASK) {
-        RTC.read(currentTime); showWatchFace(false);
-        return;
+        if (!menuBack()) {               // Settings -> main; main -> face
+          RTC.read(currentTime); showWatchFace(false);
+          return;
+        }
       } else if (wake & UP_BTN_MASK) {
-        menuIndex--; if (menuIndex < 0) menuIndex = MY_MENU_LEN - 1;
-        myShowMenu(menuIndex, true);
+        menuStep(-1);
       } else if (wake & DOWN_BTN_MASK) {
-        menuIndex++; if (menuIndex > MY_MENU_LEN - 1) menuIndex = 0;
-        myShowMenu(menuIndex, true);
+        menuStep(1);
       }
     } else if (guiState == APP_STATE) {
       if (wake & BACK_BTN_MASK) myShowMenu(menuIndex, false);
@@ -6885,13 +6922,13 @@ public:
           if (guiState == MAIN_MENU_STATE) dispatchMenu();
           else if (guiState == WATCHFACE_STATE) {
             buttonWake = true;
-            myShowMenu(menuIndex, false);
+            openMenu();
           }
           waitRelease(MENU_BTN_PIN);
         } else if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {
           lastTimeout = millis();
           if (guiState == MAIN_MENU_STATE) {
-            RTC.read(currentTime); showWatchFace(false);
+            if (!menuBack()) { RTC.read(currentTime); showWatchFace(false); }
             waitRelease(BACK_BTN_PIN);
           } else if (guiState == APP_STATE) {
             myShowMenu(menuIndex, false);
@@ -6905,8 +6942,7 @@ public:
         } else if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
           lastTimeout = millis();
           if (guiState == MAIN_MENU_STATE) {
-            menuIndex--; if (menuIndex < 0) menuIndex = MY_MENU_LEN - 1;
-            myShowMenu(menuIndex, true);
+            menuStep(-1);
           } else if (guiState == WATCHFACE_STATE) {
             buttonWake = true;
             pinMode(UP_BTN_PIN, INPUT);
@@ -6940,8 +6976,7 @@ public:
         } else if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
           lastTimeout = millis();
           if (guiState == MAIN_MENU_STATE) {
-            menuIndex++; if (menuIndex > MY_MENU_LEN - 1) menuIndex = 0;
-            myShowMenu(menuIndex, true);
+            menuStep(1);
           } else if (guiState == WATCHFACE_STATE) {
             buttonWake = true;
             downPressed();
