@@ -646,6 +646,13 @@ public:
 
   // switching currency is pure arithmetic on cached rates: no radio,
   // no wait — the same ~0.4s as every other dial on the watch
+  // the face's currency, kept in flash: it used to live only in RTC memory,
+  // so a reflash or a flat cell quietly put a EUR wearer back on USD
+  void saveCurrency() {
+    Preferences p; p.begin("btcchrono", false);
+    p.putUChar("cur", curIdx);
+    p.end();
+  }
   void applyCurrency() {
     if (fxRate[curIdx] > 0) btcPrice = fxRate[curIdx];
     if (blockHeight > 0)
@@ -1313,6 +1320,7 @@ public:
     battProfile = p.getUChar("batt", 0);
     if (battProfile > 2) battProfile = 0;
     walletPrivate = p.getBool("wpriv", false);
+    { uint8_t c = p.getUChar("cur", 0); curIdx = c < 6 ? c : 0; }
     // read BEFORE end(): it used to be read after, which always returned the
     // empty default, so a lightning address set on the watch was replaced by
     // the compiled-in one after every power loss or reflash
@@ -1365,6 +1373,7 @@ public:
     p.putUShort("face", faceHide);
     p.putUChar("batt", battProfile);
     p.putBool("wpriv", walletPrivate);
+    p.putUChar("cur", curIdx);
     p.end();
   }
 
@@ -1534,6 +1543,7 @@ public:
     else if (dispMode == M_PRICE || dispMode == M_SATS || dispMode == M_MCAP) {
       curIdx = (curIdx + 1) % 6;
       applyCurrency();
+      saveCurrency();
     } else {
       cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
     }
@@ -4491,13 +4501,14 @@ public:
   // set once and left (eleven items in one list had become a scroll).
   static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
                                            // row's descenders run off the panel
-  static const int MAIN_LEN = 6, MY_LEN = 6, SET_LEN = 6;
+  static const int MAIN_LEN = 6, MY_LEN = 7, SET_LEN = 6;
   static const int MYWATCH_POS = 4, SETTINGS_POS = 5;
   const char *const MAIN_ITEMS[MAIN_LEN] = {
     "About BWATCH", "Setup Wallet", "Alarms", "Time Travel", "My Watch  >",
     "Settings  >"};
   const char *const MY_ITEMS[MY_LEN] = {
-    "Faces", "Dark Hours", "Night Hours", "Haptics", "Battery", "Privacy"};
+    "Faces", "Currency", "Dark Hours", "Night Hours", "Haptics", "Battery",
+    "Privacy"};
   const char *const SET_ITEMS[SET_LEN] = {
     "Set Time", "Set Timezone", "Sync NTP", "Setup WiFi", "Networks",
     "Ship Mode"};
@@ -4727,7 +4738,7 @@ public:
   // highlighted row's value, MENU moves to the next row and saves on the
   // last, BACK leaves without changing anything (so does 30 s of nothing).
   // Two lines under the rows say what the current choice does.
-  enum { OPT_HAPTICS = 0, OPT_BATTERY = 1, OPT_PRIVACY = 2 };
+  enum { OPT_HAPTICS = 0, OPT_BATTERY = 1, OPT_PRIVACY = 2, OPT_CURRENCY = 3 };
   void optionsScreen(int which) {
     static const char *const ONOFF[2] = { "ON", "OFF" };
     static const char *const STEPS[4] = { "OFF", "$500", "$1000", "$5000" };
@@ -4747,6 +4758,9 @@ public:
       lab[0] = "Block"; opt[0] = ONOFF; n[0] = 2; val[0] = buzzBlock ? 0 : 1;
       lab[1] = "Price"; opt[1] = STEPS; n[1] = 4; val[1] = 2;
       for (int k = 0; k < 4; k++) if (STEPV[k] == priceStep) val[1] = k;
+    } else if (which == OPT_CURRENCY) {
+      title = "Currency";
+      lab[0] = "Show"; opt[0] = CUR_CODES; n[0] = 6; val[0] = curIdx < 6 ? curIdx : 0;
     } else if (which == OPT_BATTERY) {
       title = "Battery";
       lab[0] = "Mode"; opt[0] = PROF; n[0] = 3; val[0] = battProfile;
@@ -4796,6 +4810,9 @@ public:
           snprintf(a, 34, val[0] == 0 ? "A TICK ON EVERY NEW BLOCK" : "NO BLOCK TICK");
           if (val[1] == 0) snprintf(b, 34, "NO PRICE BUZZ");
           else             snprintf(b, 34, "A BUZZ EACH %s MOVE", STEPS[val[1]]);
+        } else if (which == OPT_CURRENCY) {
+          snprintf(a, 34, "PRICE, SATS AND MCAP FACES");
+          snprintf(b, 34, "UP ON THOSE FACES CYCLES IT");
         } else if (which == OPT_BATTERY) {
           if (val[0] == BATT_LIVE) {
             // Live follows the chain: 1.5 blocks' worth of time, 10-18 min,
@@ -4834,6 +4851,9 @@ public:
         buzzBlock = (val[0] == 0);
         priceStep = STEPV[val[1]];
         priceAnchor = 0;               // re-arm from the next price heard
+      } else if (which == OPT_CURRENCY) {
+        curIdx = (uint8_t)val[0];
+        applyCurrency();
       } else if (which == OPT_BATTERY) {
         battProfile = (uint8_t)val[0];
       } else {
@@ -5567,6 +5587,7 @@ public:
     p.remove("nFrom"); p.remove("nTo");            // back to the default night
     p.remove("dFrom"); p.remove("dTo"); p.remove("hBlk"); p.remove("hPrc");
     p.remove("face"); p.remove("batt"); p.remove("wpriv");   // My Watch
+    p.remove("cur");
     p.end();
     WiFi.persistent(true);                         // the radio's own stored
     WiFi.mode(WIFI_STA);                           // credentials too: erasing
@@ -6636,11 +6657,12 @@ public:
               myShowMenu(menuIndex, false); break;
     } else if (menuLevel == 1) switch (menuIndex) {
       case 0: facesScreen(); break;                     // which faces cycle
-      case 1: hourWindowScreen(1); break;               // AUTO theme hours
-      case 2: hourWindowScreen(0); break;               // the wearer's night
-      case 3: optionsScreen(OPT_HAPTICS); break;        // block, price buzz
-      case 4: optionsScreen(OPT_BATTERY); break;        // fetch cadence
-      case 5: optionsScreen(OPT_PRIVACY); break;        // wallet balance
+      case 1: optionsScreen(OPT_CURRENCY); break;       // the fiat it speaks
+      case 2: hourWindowScreen(1); break;               // AUTO theme hours
+      case 3: hourWindowScreen(0); break;               // the wearer's night
+      case 4: optionsScreen(OPT_HAPTICS); break;        // block, price buzz
+      case 5: optionsScreen(OPT_BATTERY); break;        // fetch cadence
+      case 6: optionsScreen(OPT_PRIVACY); break;        // wallet balance
     } else switch (menuIndex) {
       case 0: setTime();   myShowMenu(menuIndex, false); break;
       case 1: showTimezone(); break;                    // ends in our menu
@@ -6994,7 +7016,7 @@ public:
           if (dispMode == M_PRICE || dispMode == M_SATS ||
               dispMode == M_MCAP) {        // the CURRENCY dial: SATS
             curIdx = (curIdx + 1) % 6;     // and MCAP inherit whatever
-            applyCurrency();               // PRICE speaks. Instant: the
+            applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
                                            // rates are already cached
           } else if (dispMode == M_HALV) { // HLV: six epochs of emission
             cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
@@ -7166,7 +7188,7 @@ public:
           if (dispMode == M_PRICE || dispMode == M_SATS ||
               dispMode == M_MCAP) {        // the CURRENCY dial: SATS
             curIdx = (curIdx + 1) % 6;     // and MCAP inherit whatever
-            applyCurrency();               // PRICE speaks. Instant: the
+            applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
                                            // rates are already cached
           } else if (dispMode == M_HALV) { // HLV: six epochs of emission
             cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
@@ -7253,7 +7275,7 @@ public:
           if (dispMode == M_PRICE || dispMode == M_SATS ||
               dispMode == M_MCAP) {        // the CURRENCY dial: SATS
             curIdx = (curIdx + 1) % 6;     // and MCAP inherit whatever
-            applyCurrency();               // PRICE speaks. Instant: the
+            applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
                                            // rates are already cached
           } else if (dispMode == M_HALV) { // HLV: six epochs of emission
             cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
