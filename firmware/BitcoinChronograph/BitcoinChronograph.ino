@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0139
+#define RTC_LAYOUT_MAGIC 0xB17C013A
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -368,7 +368,15 @@ RTC_DATA_ATTR bool     sawMillion    = false;  // block 1,000,000 has been
                                                // watch should not forget
 RTC_DATA_ATTR int8_t   nightFrom     = NIGHT_FROM_H;  // the wearer's night,
 RTC_DATA_ATTR int8_t   nightTo       = NIGHT_TO_H;    // whole local hours
-RTC_DATA_ATTR int8_t   menuLevel     = 0;      // 0 main menu, 1 Settings
+RTC_DATA_ATTR int8_t   menuLevel     = 0;      // 0 main, 1 My Watch, 2 Settings
+// My Watch: the wearer's choices, all kept in flash (loadPrefs/savePrefs)
+RTC_DATA_ATTR int8_t   darkFrom      = 20;     // AUTO theme is dark from ...
+RTC_DATA_ATTR int8_t   darkTo        = 7;      // ... to, local hours
+RTC_DATA_ATTR bool     buzzBlock     = BUZZ_ON_BLOCK;   // tick on a new block
+RTC_DATA_ATTR uint16_t priceStep     = BUZZ_PRICE_STEP; // USD per price buzz, 0 off
+RTC_DATA_ATTR uint16_t faceHide      = 0;      // bit per face: 1 = left out
+RTC_DATA_ATTR uint8_t  battProfile   = 0;      // 0 Live, 1 Balanced, 2 Saver
+RTC_DATA_ATTR bool     walletPeek    = false;  // privacy: shown for one glance
 RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
                                                // ghost: next minute, full
 RTC_DATA_ATTR bool     fetchPending  = false;  // a long-press asked for data
@@ -585,12 +593,12 @@ public:
     // displaying — so switching to yen doesn't mute the wrist, and a
     // currency jump can never masquerade as a price move
     float p = fxRate[0] > 0 ? fxRate[0] : btcPrice;
-    if (BUZZ_PRICE_STEP <= 0 || p <= 0) return;
+    if (priceStep == 0 || p <= 0) return;
     if (priceAnchor <= 0) { priceAnchor = p; return; }  // arm only
-    if (p - priceAnchor >= BUZZ_PRICE_STEP) {
+    if (p - priceAnchor >= priceStep) {
       priceAnchor = p;
       vibMotor(75, 4); delay(160); vibMotor(75, 4);   // two quick: up
-    } else if (priceAnchor - p >= BUZZ_PRICE_STEP) {
+    } else if (priceAnchor - p >= priceStep) {
       priceAnchor = p;
       vibMotor(75, 14);                               // one long: down
     }
@@ -899,7 +907,7 @@ public:
     if (!inDocked) { WiFi.mode(WIFI_OFF); btStop(); }  // docked: stay on
 
     // ---- haptics (after radio off; buzzing draws its own current) ----
-    if (BUZZ_ON_BLOCK && heightBefore > 0 && blockHeight > heightBefore) {
+    if (buzzBlock && heightBefore > 0 && blockHeight > heightBefore) {
       lastBuzzHeight = blockHeight;
       vibMotor(75, 4);                       // one short tick: new block(s)
     }
@@ -1058,8 +1066,8 @@ public:
     // the whole WiFi join and TLS round (seconds) before anything answered.
     // fetchPending takes the prePaint path: the face goes up at once with
     // FTCH in the corner, then the radio, then the fresh face.
-    if (staleMinutes() >= STALE_AFTER_MIN ||
-        heightStaleMinutes() >= STALE_AFTER_MIN) {
+    if (staleMinutes() >= staleAfter() ||
+        heightStaleMinutes() >= staleAfter()) {
       forceFetch = true;
       fetchPending = true;
     }
@@ -1220,6 +1228,7 @@ public:
       Serial.println("[travel] expired");    // look at the future
     }
     uint32_t every = watchIsIdle() ? FETCH_IDLE_MIN : fetchEveryMin();
+    if (every < fetchFloorMin()) every = fetchFloorMin();   // battery profile
     // a block alarm about to ring: look more often, so it lands within a few
     // minutes of the block instead of up to a whole cycle late
     if (!watchIsIdle() && alarmHeight > 0 && blockHeight > 0 &&
@@ -1294,6 +1303,16 @@ public:
     { int nf = p.getChar("nFrom", NIGHT_FROM_H), nt = p.getChar("nTo", NIGHT_TO_H);
       nightFrom = (nf >= 0 && nf < 24) ? nf : NIGHT_FROM_H;
       nightTo   = (nt >= 0 && nt < 24) ? nt : NIGHT_TO_H; }
+    { int df = p.getChar("dFrom", 20), dt = p.getChar("dTo", 7);
+      darkFrom = (df >= 0 && df < 24) ? df : 20;
+      darkTo   = (dt >= 0 && dt < 24) ? dt : 7; }
+    buzzBlock = p.getBool("hBlk", BUZZ_ON_BLOCK);
+    priceStep = p.getUShort("hPrc", BUZZ_PRICE_STEP);
+    faceHide  = p.getUShort("face", 0) & ((1 << NUM_MODES) - 1);
+    if (faceHide == (1 << NUM_MODES) - 1) faceHide = 0;  // never all hidden
+    battProfile = p.getUChar("batt", 0);
+    if (battProfile > 2) battProfile = 0;
+    walletPrivate = p.getBool("wpriv", false);
     // read BEFORE end(): it used to be read after, which always returned the
     // empty default, so a lightning address set on the watch was replaced by
     // the compiled-in one after every power loss or reflash
@@ -1339,6 +1358,13 @@ public:
     p.putUShort("alF", feeAlarm);
     p.putChar("nFrom", nightFrom);
     p.putChar("nTo", nightTo);
+    p.putChar("dFrom", darkFrom);
+    p.putChar("dTo", darkTo);
+    p.putBool("hBlk", buzzBlock);
+    p.putUShort("hPrc", priceStep);
+    p.putUShort("face", faceHide);
+    p.putUChar("batt", battProfile);
+    p.putBool("wpriv", walletPrivate);
     p.end();
   }
 
@@ -1410,11 +1436,15 @@ public:
   // UP cycles: balance -> chain QR -> lightning QR (if configured) ->
   // balance. Landing back on balance re-arms a scan.
   void walletToggleView() {
+    // Private: the first UP shows the balance for this glance; the next
+    // moves on to the QR as usual. Back on the balance view, hidden again.
+    if (walletPrivate && !walletPeek && walletView == 0) { walletPeek = true; return; }
     walletView = (walletView + 1) % (lnConfigured() ? 3 : 2);
+    if (walletView == 0) walletPeek = false;
     if (walletView == 0) {
       if (!inVigil)            // during a vigil the rescan waits for its end
-        lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
-                          ? wakeMin - WALLET_EVERY_MIN : 0;
+        lastWalletMin = (wakeMin > walletEveryMin())
+                          ? wakeMin - walletEveryMin() : 0;
     } else {
       vigilPending = true;    // wrist: stand watch when a QR shows
     }
@@ -1650,7 +1680,7 @@ public:
     // waited, because a rescan during the vigil could count a payment twice
     // (once in the sum, once as the vigil's delta). Do it now.
     if (!paid && dispMode == M_WALT && walletView == 0)
-      lastWalletMin = (wakeMin > WALLET_EVERY_MIN) ? wakeMin - WALLET_EVERY_MIN : 0;
+      lastWalletMin = (wakeMin > walletEveryMin()) ? wakeMin - walletEveryMin() : 0;
     Serial.printf("[vigil] done%s\n", paid ? " (paid)" : menu ? " (menu)" : "");
     if (menu) {
       // The vigil runs inside showWatchFace(), which marks the watch as on
@@ -1837,7 +1867,10 @@ public:
       time_t utc = lt - settings.gmtOffset;
       lt = utc + tzOffsetSec(tzIndex, utc);
       tmElements_t dt; breakTime(lt, dt);
-      return (dt.Hour >= 20 || dt.Hour < 7);
+      int h = dt.Hour;                     // the wearer's dark hours
+      if (darkFrom == darkTo) return false;
+      return (darkFrom < darkTo) ? (h >= darkFrom && h < darkTo)
+                                 : (h >= darkFrom || h < darkTo);
     }
     return false;
   }
@@ -2074,7 +2107,7 @@ public:
     // at ~10 min, then fall back when the next fetch disagrees — a block
     // counter that runs backwards, and briefly reports a block nobody mined.
     // Lagging the chain is honest; overshooting it is not.
-    if (e < STALE_AFTER_MIN) return blockHeight;
+    if (e < staleAfter()) return blockHeight;
 
     return blockHeight + (long)blocksForward(e);
   }
@@ -2100,6 +2133,27 @@ public:
   //
   // The ceiling is 18, not 20: STALE_AFTER_MIN is 20, and a normal cycle
   // must never trip the LIVE -> OLD flip on its own.
+  // Battery profile. Live is the watch as it always was; Balanced and Saver
+  // stretch the gaps between fetches and wallet sweeps, which are what the
+  // battery pays for. Block alarms keep their own short cadence near the
+  // block, and the dock (on USB) is untouched.
+  enum { BATT_LIVE = 0, BATT_BALANCED = 1, BATT_SAVER = 2 };
+  uint32_t fetchFloorMin() {
+    if (inDocked) return 0;           // on USB: the dock keeps its own pace
+    return battProfile == BATT_SAVER ? 60 : battProfile == BATT_BALANCED ? 30 : 0;
+  }
+  uint32_t walletEveryMin() {
+    if (inDocked) return WALLET_EVERY_MIN;
+    return battProfile == BATT_SAVER ? 120 : battProfile == BATT_BALANCED ? 60
+                                                                         : WALLET_EVERY_MIN;
+  }
+  // When the face stops saying LIVE: a cycle actually missed, so it follows
+  // the profile's interval (a Saver watch is not stale at 25 minutes).
+  long staleAfter() {
+    uint32_t f = fetchFloorMin();
+    return f ? (long)f + 5 : STALE_AFTER_MIN;
+  }
+
   uint32_t fetchEveryMin() {
     float mins = (avgBlockSec / 60.0f) * 1.5f;
     if (!(mins > 0)) return FETCH_EVERY_MIN;      // NaN guard
@@ -2129,7 +2183,7 @@ public:
     if (blockHeight <= 0 || inDocked) return 0;
     long e = heightStaleMinutes();
     if (e > 1440) e = 1440;
-    if (e < STALE_AFTER_MIN) return 0;    // same gate as estHeight: no
+    if (e < staleAfter()) return 0;    // same gate as estHeight: no
     return (int)blocksForward(e);         // estimate while the cycle is healthy
   }
   int estUncertainty() {
@@ -2485,7 +2539,7 @@ public:
         } else snprintf(big, 12, "----");
         break; }
       case M_WALT: {
-        if (walletPrivate) { snprintf(big, 12, "------"); break; }
+        if (walletPrivate && !walletPeek) { snprintf(big, 12, "------"); break; }
         if (!haveWallet) { snprintf(big, 12, "-----"); break; }
         if (walletSats < 1000000ULL) {
           // under 0.01 BTC, four decimals renders real sats as 0.0000
@@ -2968,9 +3022,15 @@ public:
     // centre the label in whatever width that cell actually got.
     const int sy = 186, x0 = 5, span = 190;
     display.setFont(NULL);
+    int shown = 0;                             // only the faces in the cycle
+    for (int i = 0; i < NUM_MODES; i++) if (faceShown(i)) shown++;
+    if (shown == 0) shown = 1;
+    int c = 0;
     for (int i = 0; i < NUM_MODES; i++) {
-      int a = x0 + (i * span) / NUM_MODES;
-      int b = x0 + ((i + 1) * span) / NUM_MODES;
+      if (!faceShown(i)) continue;
+      int a = x0 + (c * span) / shown;
+      int b = x0 + ((c + 1) * span) / shown;
+      c++;
       int w = b - a - 1;                       // 1 px gap between cells
       if (i == dispMode) {
         display.fillRect(a, sy, w, 13, fg());
@@ -3518,7 +3578,8 @@ public:
     goldMcapB = 0; lastNtpWake = 0; tipBlockTime = 0; fetchPending = false;
     travelActive = false; travelHeight = 0; travelWake = 0;
     travelPastPrice = 0; travelPastFor = -1;
-    walletPrivate = false;
+    walletPrivate = false;          // loadPrefs restores the saved choice
+    walletPeek = false;
     lastAx = lastAy = lastAz = 0; lastMoveWake = 0; accelSeeded = false;
     shownBattPct = -1;      // let the latch re-learn from the next reading
     medFee = 0; lowFee = 0;
@@ -3749,6 +3810,10 @@ public:
       wakeMin += carried > 1 ? carried : 1;   // one tick per minute-wake,
                                               // or as many as were slept
       joeReveal = false;               // the reveal lasts one glance only
+      // and so does a peek at the balance (not on the re-render after a wallet
+      // sweep, which also arrives here without a button: that would undo
+      // the peek the wearer just asked for)
+      if (!inWalletScan) walletPeek = false;
     } else {
       wakeMin += carried;
     }
@@ -3804,6 +3869,7 @@ public:
     // before the face is on screen. Render first, scan after (see the
     // hook at the end of this function). SCAN in the tag meanwhile.
     if (dispMode < 0 || dispMode >= NUM_MODES) dispMode = 0;
+    if (!faceShown(dispMode)) dispMode = nextFace(dispMode);
     if (tzIndex < 0 || tzIndex > 4) tzIndex = 0;
     if (themeMode < 0 || themeMode > 2) themeMode = 0;
     for (int i = 0; i < NUM_MODES; i++)  // index-ish RTC values must clamp,
@@ -3813,7 +3879,7 @@ public:
 
     walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
       (forceFetch || !haveWallet ||
-       wakeMin - lastWalletMin >= WALLET_EVERY_MIN);
+       wakeMin - lastWalletMin >= walletEveryMin());
 
     // A requested fetch paints FIRST, then goes to the radio. maybeFetch()
     // lives inside this function, so fetching here meant the request was
@@ -3869,7 +3935,7 @@ public:
       // the fetch cadence is 15 min, so 20 means a cycle was actually
       // missed. an hour of "LIVE" would cover three failures in a row.
       long e = (dispMode == M_HGHT) ? heightStaleMinutes() : staleMinutes();
-      if (e < STALE_AFTER_MIN) strcpy(tag, "LIVE");
+      if (e < staleAfter()) strcpy(tag, "LIVE");
       else if (e < 60) snprintf(tag, 8, "OLD %ldM", e);
       else             snprintf(tag, 8, "OLD %ldH", e / 60 > 48 ? 48 : e / 60);
     }
@@ -3909,7 +3975,7 @@ public:
         unit = (cellSel[M_SUPL] % 2) ? "BTC REMAINING" : "BTC ISSUED";
       }
       if (!travelActive && dispMode == M_HGHT && !inDocked &&
-          heightStaleMinutes() >= STALE_AFTER_MIN && estBlocksAhead() > 0) {
+          heightStaleMinutes() >= staleAfter() && estBlocksAhead() > 0) {
         // dead-reckoning: name the estimate and its error bar
         // ASCII only: the built-in GFX font maps high bytes via CP437 and
         // would draw a shaded block instead of a proper plus-minus
@@ -4115,7 +4181,7 @@ public:
         cellLabel = "UNCONF";          // blocks-worth, abbreviated:
         snprintf(cell, 18, "%.1f", mempoolBlocks); // UNCONFIRMED
       }                                            // overflows the box
-    } else if (dispMode == M_WALT && walletPrivate) {
+    } else if (dispMode == M_WALT && walletPrivate && !walletPeek) {
       cellLabel = "PRIVATE";    // the last movement is as telling as the
       strcpy(cell, "----");     // balance, so it hides behind the same switch
     } else if (dispMode == M_WALT) {
@@ -4347,6 +4413,8 @@ public:
     }
     const char *title = travelActive     ? destLine
                       : showThemeName    ? THEME_NAMES[themeMode]
+                      : (dispMode == M_WALT && walletPrivate && !walletPeek &&
+                         walletView == 0) ? "UP = PEEK"
                       : (dispMode == M_WALT) ? "UP = RECEIVE QR"
                                              : "TICK TOCK NEXT BLOCK";
     showThemeName = false;
@@ -4423,13 +4491,18 @@ public:
   // set once and left (eleven items in one list had become a scroll).
   static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
                                            // row's descenders run off the panel
-  static const int MAIN_LEN = 5, SET_LEN = 7, SETTINGS_POS = 4;
+  static const int MAIN_LEN = 6, MY_LEN = 6, SET_LEN = 6;
+  static const int MYWATCH_POS = 4, SETTINGS_POS = 5;
   const char *const MAIN_ITEMS[MAIN_LEN] = {
-    "About BWATCH", "Setup Wallet", "Alarms", "Time Travel", "Settings  >"};
+    "About BWATCH", "Setup Wallet", "Alarms", "Time Travel", "My Watch  >",
+    "Settings  >"};
+  const char *const MY_ITEMS[MY_LEN] = {
+    "Faces", "Dark Hours", "Night Hours", "Haptics", "Battery", "Privacy"};
   const char *const SET_ITEMS[SET_LEN] = {
     "Set Time", "Set Timezone", "Sync NTP", "Setup WiFi", "Networks",
-    "Night Hours", "Ship Mode"};
-  int menuLen() { return menuLevel ? SET_LEN : MAIN_LEN; }
+    "Ship Mode"};
+  int menuLen() { return menuLevel == 1 ? MY_LEN : menuLevel == 2 ? SET_LEN : MAIN_LEN; }
+  int levelPos() { return menuLevel == 1 ? MYWATCH_POS : SETTINGS_POS; }
   void menuStep(int d) {
     int n = menuLen();
     menuIndex = ((menuIndex + d) % n + n) % n;
@@ -4438,7 +4511,7 @@ public:
   // From the face: always the main menu. A wake that timed out inside
   // Settings would otherwise reopen the submenu with no way to tell.
   void openMenu() {
-    if (menuLevel) { menuLevel = 0; menuIndex = SETTINGS_POS; }
+    if (menuLevel) { menuIndex = levelPos(); menuLevel = 0; }
     if (menuIndex >= MAIN_LEN) menuIndex = 0;
     myShowMenu(menuIndex, false);
   }
@@ -4446,14 +4519,15 @@ public:
   // leaves to the face (false: the caller does that, as it always has).
   bool menuBack() {
     if (!menuLevel) return false;
-    menuLevel = 0; menuIndex = SETTINGS_POS;
+    menuIndex = levelPos(); menuLevel = 0;
     myShowMenu(menuIndex, false);
     return true;
   }
 
   void myShowMenu(byte idx, bool partial) {
     const int len = menuLen();
-    const char *const *items = menuLevel ? SET_ITEMS : MAIN_ITEMS;
+    const char *const *items = menuLevel == 1 ? MY_ITEMS
+                             : menuLevel == 2 ? SET_ITEMS : MAIN_ITEMS;
     if (idx >= len) idx = menuIndex = 0;
     // The menu follows the theme, like everything else. It used to be black
     // whatever the face was doing, which meant a light-mode wearer went from
@@ -4482,7 +4556,8 @@ public:
       display.setFont(NULL);
       display.setTextColor(fg());
       display.drawFastHLine(6, 180, 188, fg());
-      centerSmall("SETTINGS  -  BACK: MAIN MENU", 186);
+      centerSmall(menuLevel == 1 ? "MY WATCH  -  BACK: MAIN MENU"
+                                 : "SETTINGS  -  BACK: MAIN MENU", 186);
     }
     // always partial: the entry flash annoyed the owner, and the menu now
     // shares the face's palette, so there is no inversion to clean up on exit.
@@ -4567,16 +4642,18 @@ public:
     myShowMenu(menuIndex, false);
   }
 
-  // Night Hours: when the watch sleeps hard (no radio, the face stays put, a
-  // wake an hour). Two hours to pick, local time, whole hours. From = To is
-  // no night at all. UP/DOWN change the hour, MENU moves From -> To -> save,
-  // BACK leaves without changing anything (so does 30 s of nothing).
-  void nightHoursScreen() {
+  // ---------------- My Watch screens ----------------
+  // Two whole local hours, From and To, for a window of the day: the night
+  // (kind 0: radio off, a wake an hour) or the AUTO theme's dark hours
+  // (kind 1). From = To is no window at all. UP/DOWN change the hour, MENU
+  // moves From -> To -> save, BACK leaves without changing anything (so does
+  // 30 s of nothing).
+  void hourWindowScreen(int kind) {
     guiState = APP_STATE;
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
     pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
     waitAllRelease();                 // the press that chose this item
-    int v[2] = { nightFrom, nightTo };
+    int v[2] = { kind ? darkFrom : nightFrom, kind ? darkTo : nightTo };
     int field = 0;
     bool redraw = true, save = false;
     unsigned long last = millis();
@@ -4598,7 +4675,7 @@ public:
         display.fillScreen(bg());
         display.setFont(&FreeMonoBold9pt7b);
         display.setTextColor(fg());
-        display.setCursor(0, 22); display.println("Night Hours");
+        display.setCursor(0, 22); display.println(kind ? "Dark Hours" : "Night Hours");
         const char *lab[2] = { "From", "To" };
         for (int i = 0; i < 2; i++) {
           int y = 60 + i * 30;
@@ -4614,13 +4691,16 @@ public:
         display.setTextColor(fg());
         display.setFont(NULL);
         int hrs = (v[1] - v[0] + 24) % 24;
-        char a[30], b[30];
-        if (hrs == 0) {
-          snprintf(a, 30, "NIGHT MODE OFF");
-          snprintf(b, 30, "(FROM = TO)");
+        char a[34], b[34];
+        if (kind == 0) {
+          if (hrs == 0) { snprintf(a, 34, "NIGHT MODE OFF"); snprintf(b, 34, "(FROM = TO)"); }
+          else { snprintf(a, 34, "%d H: NO RADIO, FACE HOLDS", hrs);
+                 snprintf(b, 34, "ANY BUTTON STILL WAKES IT"); }
         } else {
-          snprintf(a, 30, "%d H: NO RADIO, FACE HOLDS", hrs);
-          snprintf(b, 30, "ANY BUTTON STILL WAKES IT");
+          if (hrs == 0) snprintf(a, 34, "AUTO THEME NEVER DARK");
+          else          snprintf(a, 34, "%d H OF DARK FACE", hrs);
+          snprintf(b, 34, themeMode == 2 ? "THEME IS AUTO: APPLIES NOW"
+                                         : "DOWN ON FACE: THEME AUTO");
         }
         centerSmall(a, 118);
         centerSmall(b, 130);
@@ -4632,11 +4712,199 @@ public:
       delay(40);
     }
     if (save) {
-      nightFrom = v[0]; nightTo = v[1];
+      if (kind) { darkFrom = v[0]; darkTo = v[1]; themeDark = darkNow(); }
+      else      { nightFrom = v[0]; nightTo = v[1]; }
       savePrefs();
       buzz(30, 2);
-      Serial.printf("[night] %02d:00 to %02d:00%s\n", nightFrom, nightTo,
-                    nightOn() ? "" : " (off)");
+      Serial.printf("[%s] %02d:00 to %02d:00%s\n", kind ? "dark" : "night",
+                    v[0], v[1], v[0] == v[1] ? " (off)" : "");
+    }
+    waitAllRelease();
+    myShowMenu(menuIndex, false);
+  }
+
+  // One or two rows of choices: Haptics, Battery, Privacy. UP/DOWN cycle the
+  // highlighted row's value, MENU moves to the next row and saves on the
+  // last, BACK leaves without changing anything (so does 30 s of nothing).
+  // Two lines under the rows say what the current choice does.
+  enum { OPT_HAPTICS = 0, OPT_BATTERY = 1, OPT_PRIVACY = 2 };
+  void optionsScreen(int which) {
+    static const char *const ONOFF[2] = { "ON", "OFF" };
+    static const char *const STEPS[4] = { "OFF", "$500", "$1000", "$5000" };
+    static const uint16_t    STEPV[4] = { 0, 500, 1000, 5000 };
+    static const char *const PROF[3]  = { "LIVE", "BALANCED", "SAVER" };
+    static const char *const PRIV[2]  = { "SHOWN", "HIDDEN" };
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    const char *title = "";
+    const char *lab[2] = { "", "" };
+    const char *const *opt[2] = { ONOFF, ONOFF };
+    int n[2] = { 2, 2 }, val[2] = { 0, 0 }, rows = 1;
+    if (which == OPT_HAPTICS) {
+      title = "Haptics"; rows = 2;
+      lab[0] = "Block"; opt[0] = ONOFF; n[0] = 2; val[0] = buzzBlock ? 0 : 1;
+      lab[1] = "Price"; opt[1] = STEPS; n[1] = 4; val[1] = 2;
+      for (int k = 0; k < 4; k++) if (STEPV[k] == priceStep) val[1] = k;
+    } else if (which == OPT_BATTERY) {
+      title = "Battery";
+      lab[0] = "Mode"; opt[0] = PROF; n[0] = 3; val[0] = battProfile;
+    } else {
+      title = "Privacy";
+      lab[0] = "Wallet"; opt[0] = PRIV; n[0] = 2; val[0] = walletPrivate ? 1 : 0;
+    }
+    int field = 0;
+    bool redraw = true, save = false;
+    unsigned long last = millis();
+    display.setFullWindow();
+    while (1) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) break;
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        if (field < rows - 1) { field++; redraw = true; last = millis();
+                                waitRelease(MENU_BTN_PIN); }
+        else { save = true; break; }
+      }
+      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
+        val[field] = (val[field] + 1) % n[field];
+        redraw = true; last = millis(); delay(180); }
+      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+        val[field] = (val[field] + n[field] - 1) % n[field];
+        redraw = true; last = millis(); delay(180); }
+      if (millis() - last > 30000) break;
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(bg());
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setTextColor(fg());
+        display.setCursor(0, 22); display.println(title);
+        for (int i = 0; i < rows; i++) {
+          int y = 60 + i * 30;
+          char line[22];
+          snprintf(line, 22, "%-6s %s", lab[i], opt[i][val[i]]);
+          display.setCursor(16, y);
+          if (i == field) {
+            display.fillRect(8, y - 15, 184, 21, fg());
+            display.setTextColor(bg());
+          } else display.setTextColor(fg());
+          display.println(line);
+        }
+        display.setTextColor(fg());
+        display.setFont(NULL);
+        char a[34] = "", b[34] = "";
+        if (which == OPT_HAPTICS) {
+          snprintf(a, 34, val[0] == 0 ? "A TICK ON EVERY NEW BLOCK" : "NO BLOCK TICK");
+          if (val[1] == 0) snprintf(b, 34, "NO PRICE BUZZ");
+          else             snprintf(b, 34, "A BUZZ EACH %s MOVE", STEPS[val[1]]);
+        } else if (which == OPT_BATTERY) {
+          if (val[0] == BATT_LIVE) {
+            snprintf(a, 34, "FETCH ABOUT EVERY 15 MIN");
+            snprintf(b, 34, "FRESHEST, MOST BATTERY");
+          } else if (val[0] == BATT_BALANCED) {
+            snprintf(a, 34, "FETCH 30 MIN, WALLET 1 H");
+            snprintf(b, 34, "ABOUT HALF THE FETCHES");
+          } else {
+            snprintf(a, 34, "FETCH HOURLY, WALLET 2 H");
+            snprintf(b, 34, "A QUARTER OF THE FETCHES");
+          }
+        } else {
+          if (val[0] == 1) {
+            snprintf(a, 34, "BALANCE HIDDEN: UP PEEKS");
+            snprintf(b, 34, "QR VIEWS STAY USABLE");
+          } else {
+            snprintf(a, 34, "BALANCE ON THE WAL FACE");
+            snprintf(b, 34, "HOLD DOWN ON WAL: HIDE");
+          }
+        }
+        int iy = rows == 2 ? 118 : 96;
+        centerSmall(a, iy);
+        centerSmall(b, iy + 12);
+        centerSmall("UP/DOWN: CHANGE", 170);
+        centerSmall(field < rows - 1 ? "MENU: NEXT   BACK: CANCEL"
+                                     : "MENU: SAVE   BACK: CANCEL", 182);
+        display.display(true);
+      }
+      delay(40);
+    }
+    if (save) {
+      if (which == OPT_HAPTICS) {
+        buzzBlock = (val[0] == 0);
+        priceStep = STEPV[val[1]];
+        priceAnchor = 0;               // re-arm from the next price heard
+      } else if (which == OPT_BATTERY) {
+        battProfile = (uint8_t)val[0];
+      } else {
+        walletPrivate = (val[0] == 1);
+        walletPeek = false;
+      }
+      savePrefs();
+      buzz(30, 2);
+      Serial.printf("[mywatch] %s saved\n", title);
+    }
+    waitAllRelease();
+    myShowMenu(menuIndex, false);
+  }
+
+  // Faces: which of the nine the BACK button cycles through and the strip
+  // shows. UP/DOWN move, MENU shows or hides the highlighted face, BACK is
+  // done (the choice is kept, as it is after 30 s of nothing). The last face
+  // showing cannot be hidden: a buzz says no.
+  void facesScreen() {
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    const uint16_t ALL = (1 << NUM_MODES) - 1;
+    uint16_t hide = faceHide;
+    int sel = 0;
+    bool redraw = true;
+    unsigned long last = millis();
+    display.setFullWindow();
+    while (1) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) break;
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        uint16_t h2 = hide ^ (1 << sel);
+        if ((h2 & ALL) == ALL) buzz(80, 2);   // the last face stays
+        else hide = h2;
+        redraw = true; last = millis();
+        waitRelease(MENU_BTN_PIN);
+      }
+      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + NUM_MODES - 1) % NUM_MODES; redraw = true; last = millis(); delay(150); }
+      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + 1) % NUM_MODES; redraw = true; last = millis(); delay(150); }
+      if (millis() - last > 30000) break;
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(bg());
+        display.setTextColor(fg());
+        display.setFont(NULL);
+        centerSmall("FACES IN THE CYCLE", 5);
+        display.setFont(&FreeMonoBold9pt7b);
+        for (int i = 0; i < NUM_MODES; i++) {
+          int y = 31 + i * 17;
+          char line[24];
+          snprintf(line, 24, "%s %s", ((hide >> i) & 1) ? "[ ]" : "[x]", MODE_NAMES[i]);
+          display.setCursor(6, y);
+          if (i == sel) {
+            display.fillRect(2, y - 13, 196, 17, fg());
+            display.setTextColor(bg());
+          } else display.setTextColor(fg());
+          display.print(line);
+        }
+        display.setTextColor(fg());
+        display.setFont(NULL);
+        centerSmall("MENU: SHOW/HIDE   BACK: DONE", 188);
+        display.display(true);
+      }
+      delay(40);
+    }
+    if (hide != faceHide) {
+      faceHide = hide;
+      if (!faceShown(dispMode)) dispMode = nextFace(dispMode);
+      savePrefs();
+      buzz(30, 2);
+      Serial.printf("[faces] hidden mask 0x%03x\n", faceHide);
     }
     waitAllRelease();
     myShowMenu(menuIndex, false);
@@ -5269,7 +5537,7 @@ public:
       }
       WiFi.mode(WIFI_OFF); btStop();
     }
-    if (h <= 0 && blockHeight > 0 && heightStaleMinutes() < STALE_AFTER_MIN)
+    if (h <= 0 && blockHeight > 0 && heightStaleMinutes() < staleAfter())
       h = blockHeight;                             // fresh enough to stand by
     Preferences p; p.begin("btcchrono", false);
     p.putLong("sealH", h);                         // 0: no block to show
@@ -5294,6 +5562,8 @@ public:
     p.remove("wsat"); p.remove("ltx"); p.remove("ridx");
     p.remove("alH"); p.remove("alF");
     p.remove("nFrom"); p.remove("nTo");            // back to the default night
+    p.remove("dFrom"); p.remove("dTo"); p.remove("hBlk"); p.remove("hPrc");
+    p.remove("face"); p.remove("batt"); p.remove("wpriv");   // My Watch
     p.end();
     WiFi.persistent(true);                         // the radio's own stored
     WiFi.mode(WIFI_STA);                           // credentials too: erasing
@@ -6357,16 +6627,24 @@ public:
       case 1: setupWallet(); break;                     // ends in our menu
       case 2: alarmsScreen(); break;                    // block and fee
       case 3: timeTravel(); break;                      // arithmetic, not data
-      case 4: menuLevel = 1; menuIndex = 0;             // into Settings
+      case 4: menuLevel = 1; menuIndex = 0;             // into My Watch
               myShowMenu(menuIndex, false); break;
+      case 5: menuLevel = 2; menuIndex = 0;             // into Settings
+              myShowMenu(menuIndex, false); break;
+    } else if (menuLevel == 1) switch (menuIndex) {
+      case 0: facesScreen(); break;                     // which faces cycle
+      case 1: hourWindowScreen(1); break;               // AUTO theme hours
+      case 2: hourWindowScreen(0); break;               // the wearer's night
+      case 3: optionsScreen(OPT_HAPTICS); break;        // block, price buzz
+      case 4: optionsScreen(OPT_BATTERY); break;        // fetch cadence
+      case 5: optionsScreen(OPT_PRIVACY); break;        // wallet balance
     } else switch (menuIndex) {
       case 0: setTime();   myShowMenu(menuIndex, false); break;
       case 1: showTimezone(); break;                    // ends in our menu
       case 2: mySyncNTP(); break;                       // keychain-aware
       case 3: mySetupWifi(); break;                     // BACK returns to menu
       case 4: showNetworks(); break;                    // list and forget
-      case 5: nightHoursScreen(); break;                // the wearer's night
-      case 6: shipModeScreen(); break;                  // asleep for the box
+      case 5: shipModeScreen(); break;                  // asleep for the box
     }
   }
 
@@ -6493,7 +6771,7 @@ public:
           long h = http.getString().toInt();
           if (h >= 100000 && h > blockHeight) {
             blockHeight = h; lastHeightWake = wakeMin;
-            if (BUZZ_ON_BLOCK) vibMotor(75, 4);
+            if (buzzBlock) vibMotor(75, 4);
             Serial.printf("[dock] block %ld\n", h);
             extrasWant = true;     // fetch reward/miner AFTER the
             lastExtrasTry = 0;     // extras indexer catches up — an
@@ -6704,8 +6982,8 @@ public:
           forceFetch = true;               // shouldn't wait 15 minutes
           fetchPending = true;             // and the corner reports it
           if (dispMode == M_WALT)          // (in WAL: rescan too)
-            lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
-                              ? wakeMin - WALLET_EVERY_MIN : 0;
+            lastWalletMin = (wakeMin > walletEveryMin())
+                              ? wakeMin - walletEveryMin() : 0;
         } else if (dispMode == M_JOE) {
           joeReveal = !joeReveal;      // the chain, for one glance
         } else if (dispMode == M_WALT) walletToggleView();
@@ -6761,8 +7039,20 @@ public:
       Serial.println("[travel] home");
       return true;
     }
-    dispMode = (dispMode + 1) % NUM_MODES;
+    dispMode = nextFace(dispMode);
+    walletPeek = false;               // leaving the wallet ends a peek
     return false;
+  }
+
+  // Faces the wearer left out are skipped by BACK and missing from the strip.
+  // There is always at least one: the Faces screen will not hide the last.
+  bool faceShown(int m) { return !((faceHide >> m) & 1); }
+  int nextFace(int from) {
+    for (int k = 1; k <= NUM_MODES; k++) {
+      int m = (from + k) % NUM_MODES;
+      if (faceShown(m)) return m;
+    }
+    return M_HGHT;
   }
 
   bool heldFor(int pin, unsigned long ms) {
@@ -6864,8 +7154,8 @@ public:
           forceFetch = true;               // shouldn't wait 15 minutes
           fetchPending = true;             // and the corner reports it
           if (dispMode == M_WALT)          // (in WAL: rescan too)
-            lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
-                              ? wakeMin - WALLET_EVERY_MIN : 0;
+            lastWalletMin = (wakeMin > walletEveryMin())
+                              ? wakeMin - walletEveryMin() : 0;
         } else if (dispMode == M_JOE) {
           joeReveal = !joeReveal;      // the chain, for one glance
         } else if (dispMode == M_WALT) walletToggleView();   // balance <-> QR
@@ -6951,8 +7241,8 @@ public:
           forceFetch = true;               // shouldn't wait 15 minutes
           fetchPending = true;             // and the corner reports it
           if (dispMode == M_WALT)          // (in WAL: rescan too)
-            lastWalletMin = (wakeMin > WALLET_EVERY_MIN)
-                              ? wakeMin - WALLET_EVERY_MIN : 0;
+            lastWalletMin = (wakeMin > walletEveryMin())
+                              ? wakeMin - walletEveryMin() : 0;
         } else if (dispMode == M_JOE) {
           joeReveal = !joeReveal;      // the chain, for one glance
         } else if (dispMode == M_WALT) walletToggleView();
