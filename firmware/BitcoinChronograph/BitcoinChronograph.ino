@@ -4798,8 +4798,8 @@ public:
           else             snprintf(b, 34, "A BUZZ EACH %s MOVE", STEPS[val[1]]);
         } else if (which == OPT_BATTERY) {
           if (val[0] == BATT_LIVE) {
-            snprintf(a, 34, "FETCH ABOUT EVERY 15 MIN");
-            snprintf(b, 34, "FRESHEST, MOST BATTERY");
+            snprintf(a, 34, "FETCH ~15 MIN, WALLET 30 MIN");
+            snprintf(b, 34, "FRESHEST: EVERY FETCH");
           } else if (val[0] == BATT_BALANCED) {
             snprintf(a, 34, "FETCH 30 MIN, WALLET 1 H");
             snprintf(b, 34, "ABOUT HALF THE FETCHES");
