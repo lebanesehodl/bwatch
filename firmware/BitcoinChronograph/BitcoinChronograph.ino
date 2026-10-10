@@ -165,8 +165,10 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // nobody can be reading the watch it puts up a face that stays true without
 // a clock (the chain, AS OF when it was fetched) and sleeps for minutes at a
 // time instead of one. Any button brings it straight back.
-#define NIGHT_FROM_H     0   // 00:00 local ...
-#define NIGHT_TO_H       6   // ... to 06:00: no radio, no minute wakes
+#define NIGHT_FROM_H     0   // default night: 00:00 local ...
+#define NIGHT_TO_H       6   // ... to 06:00: no radio, no minute wakes.
+                             // The wearer sets their own in Menu > Night
+                             // Hours (kept in flash); From = To turns it off
 #define PRESS_GRACE_MIN  3   // after any press the full face stays this long,
                              // or a watch on a table would rest again at once
 #define REST_WAKE_MIN    5   // resting by day: check for a pickup this often
@@ -219,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0137
+#define RTC_LAYOUT_MAGIC 0xB17C0138
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -364,6 +366,8 @@ RTC_DATA_ATTR bool     sawMillion    = false;  // block 1,000,000 has been
                                                // met and marked. Stored in
                                                // NVS: it happens once and the
                                                // watch should not forget
+RTC_DATA_ATTR int8_t   nightFrom     = NIGHT_FROM_H;  // the wearer's night,
+RTC_DATA_ATTR int8_t   nightTo       = NIGHT_TO_H;    // whole local hours
 RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
                                                // ghost: next minute, full
 RTC_DATA_ATTR bool     fetchPending  = false;  // a long-press asked for data
@@ -948,10 +952,13 @@ public:
     return dt.Hour * 60 + dt.Minute;
   }
 
+  bool nightOn() { return nightFrom != nightTo; }   // From = To: no night
+
   bool inNightWindow() {
+    if (!nightOn()) return false;
     int h = localMinuteOfDay() / 60;
-    return (NIGHT_FROM_H <= NIGHT_TO_H) ? (h >= NIGHT_FROM_H && h < NIGHT_TO_H)
-                                        : (h >= NIGHT_FROM_H || h < NIGHT_TO_H);
+    return (nightFrom < nightTo) ? (h >= nightFrom && h < nightTo)
+                                 : (h >= nightFrom || h < nightTo);  // 22-6
   }
 
   // minutes from now until the clock reads hh:00 local
@@ -1029,11 +1036,12 @@ public:
   // By day, a few minutes, but never past the start of the night.
   uint32_t restSleepMinutes() {
     if (restState == REST_NIGHT) {
-      int toEnd = minutesUntilHour(NIGHT_TO_H);
+      int toEnd = minutesUntilHour(nightTo);
       int toHour = 60 - localMinuteOfDay() % 60;
       return (uint32_t)(toHour < toEnd ? toHour : toEnd);
     }
-    int toNight = minutesUntilHour(NIGHT_FROM_H);
+    if (!nightOn()) return REST_WAKE_MIN;
+    int toNight = minutesUntilHour(nightFrom);
     return (uint32_t)(REST_WAKE_MIN < toNight ? REST_WAKE_MIN : toNight);
   }
 
@@ -1282,6 +1290,9 @@ public:
     sawMillion = p.getBool("m1", false);
     alarmHeight = p.getLong("alH", 0);
     feeAlarm    = p.getUShort("alF", 0);
+    { int nf = p.getChar("nFrom", NIGHT_FROM_H), nt = p.getChar("nTo", NIGHT_TO_H);
+      nightFrom = (nf >= 0 && nf < 24) ? nf : NIGHT_FROM_H;
+      nightTo   = (nt >= 0 && nt < 24) ? nt : NIGHT_TO_H; }
     // read BEFORE end(): it used to be read after, which always returned the
     // empty default, so a lightning address set on the watch was replaced by
     // the compiled-in one after every power loss or reflash
@@ -1325,6 +1336,8 @@ public:
     p.putBool("m1", sawMillion);
     p.putLong("alH", alarmHeight);
     p.putUShort("alF", feeAlarm);
+    p.putChar("nFrom", nightFrom);
+    p.putChar("nTo", nightTo);
     p.end();
   }
 
@@ -3641,7 +3654,7 @@ public:
       centerSmall(line, night ? 126 : 136);
     }
     if (night) {
-      snprintf(line, 26, "RADIO OFF TO %02d:00", NIGHT_TO_H);
+      snprintf(line, 26, "RADIO OFF TO %02d:00", nightTo);
       centerSmall(line, 146);
     }
 
@@ -4404,14 +4417,15 @@ public:
   }
 
   // ---------------- menu: stock items + Timezone ----------------
-  static const int MY_MENU_LEN = 10;
+  static const int MY_MENU_LEN = 11;
   static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
                                            // row's descenders run off the panel
 
   void myShowMenu(byte idx, bool partial) {
     const char *items[MY_MENU_LEN] = {
       "About BWATCH", "Set Time", "Setup WiFi", "Networks", "Sync NTP",
-      "Setup Wallet", "Set Timezone", "Time Travel", "Alarms", "Ship Mode"};
+      "Setup Wallet", "Set Timezone", "Time Travel", "Alarms", "Night Hours",
+      "Ship Mode"};
     // The menu follows the theme, like everything else. It used to be black
     // whatever the face was doing, which meant a light-mode wearer went from
     // a white face to a black menu and back — a full-panel inversion twice,
@@ -4515,6 +4529,81 @@ public:
       }
       delay(30);
     }
+    myShowMenu(menuIndex, false);
+  }
+
+  // Night Hours: when the watch sleeps hard (no radio, the face stays put, a
+  // wake an hour). Two hours to pick, local time, whole hours. From = To is
+  // no night at all. UP/DOWN change the hour, MENU moves From -> To -> save,
+  // BACK leaves without changing anything (so does 30 s of nothing).
+  void nightHoursScreen() {
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();                 // the press that chose this item
+    int v[2] = { nightFrom, nightTo };
+    int field = 0;
+    bool redraw = true, save = false;
+    unsigned long last = millis();
+    display.setFullWindow();
+    while (1) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) break;
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        if (field == 0) { field = 1; redraw = true; last = millis();
+                          waitRelease(MENU_BTN_PIN); }
+        else { save = true; break; }
+      }
+      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
+        v[field] = (v[field] + 1) % 24; redraw = true; last = millis(); delay(150); }
+      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+        v[field] = (v[field] + 23) % 24; redraw = true; last = millis(); delay(150); }
+      if (millis() - last > 30000) break;
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(bg());
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setTextColor(fg());
+        display.setCursor(0, 22); display.println("Night Hours");
+        const char *lab[2] = { "From", "To" };
+        for (int i = 0; i < 2; i++) {
+          int y = 60 + i * 30;
+          char line[20];
+          snprintf(line, 20, "%-5s %02d:00", lab[i], v[i]);
+          display.setCursor(16, y);
+          if (i == field) {
+            display.fillRect(8, y - 15, 184, 21, fg());
+            display.setTextColor(bg());
+          } else display.setTextColor(fg());
+          display.println(line);
+        }
+        display.setTextColor(fg());
+        display.setFont(NULL);
+        int hrs = (v[1] - v[0] + 24) % 24;
+        char a[30], b[30];
+        if (hrs == 0) {
+          snprintf(a, 30, "NIGHT MODE OFF");
+          snprintf(b, 30, "(FROM = TO)");
+        } else {
+          snprintf(a, 30, "%d H: NO RADIO, FACE HOLDS", hrs);
+          snprintf(b, 30, "ANY BUTTON STILL WAKES IT");
+        }
+        centerSmall(a, 118);
+        centerSmall(b, 130);
+        centerSmall("UP/DOWN: CHANGE HOUR", 170);
+        centerSmall(field == 0 ? "MENU: NEXT   BACK: CANCEL"
+                               : "MENU: SAVE   BACK: CANCEL", 182);
+        display.display(true);
+      }
+      delay(40);
+    }
+    if (save) {
+      nightFrom = v[0]; nightTo = v[1];
+      savePrefs();
+      buzz(30, 2);
+      Serial.printf("[night] %02d:00 to %02d:00%s\n", nightFrom, nightTo,
+                    nightOn() ? "" : " (off)");
+    }
+    waitAllRelease();
     myShowMenu(menuIndex, false);
   }
 
@@ -5170,6 +5259,7 @@ public:
     p.putString("lnaddr", "");                     // defaults do not return
     p.remove("wsat"); p.remove("ltx"); p.remove("ridx");
     p.remove("alH"); p.remove("alF");
+    p.remove("nFrom"); p.remove("nTo");            // back to the default night
     p.end();
     WiFi.persistent(true);                         // the radio's own stored
     WiFi.mode(WIFI_STA);                           // credentials too: erasing
@@ -6238,7 +6328,8 @@ public:
       case 6: showTimezone(); break;                    // ends in our menu
       case 7: timeTravel(); break;                      // arithmetic, not data
       case 8: alarmsScreen(); break;                    // block and fee
-      case 9: shipModeScreen(); break;                  // asleep for the box
+      case 9: nightHoursScreen(); break;                // the wearer's night
+      case 10: shipModeScreen(); break;                 // asleep for the box
     }
   }
 
