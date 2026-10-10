@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C013A
+#define RTC_LAYOUT_MAGIC 0xB17C013B
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -460,12 +460,24 @@ const char *MODE_UNITS [NUM_MODES] =
 // the currency dial: UP in PRC/SAT/CAP cycles it; SATS and MCAP
 // inherit whatever PRICE speaks. Chart shape stays USD (Coinbase only
 // has candle history for real pairs); the %% is computed per-currency.
-const char *CUR_CODES[6] = {"USD","EUR","CAD","JPY","GBP","CHF"};
+// Twenty, all from the one Coinbase call that already priced the first six.
+// The first six keep their places: curIdx is saved as an index.
+#define NUM_CUR 20
+const char *CUR_CODES[NUM_CUR] = {"USD","EUR","CAD","JPY","GBP","CHF",
+  "AUD","CNY","HKD","SGD","INR","KRW","BRL","MXN","ARS","TRY","ZAR","NGN",
+  "AED","LBP"};
+const char *CUR_NAMES[NUM_CUR] = {"US DOLLAR","EURO","CANADIAN DOLLAR",
+  "JAPANESE YEN","BRITISH POUND","SWISS FRANC","AUSTRALIAN DOLLAR",
+  "CHINESE YUAN","HONG KONG DOLLAR","SINGAPORE DOLLAR","INDIAN RUPEE",
+  "KOREAN WON","BRAZILIAN REAL","MEXICAN PESO","ARGENTINE PESO",
+  "TURKISH LIRA","SA RAND","NIGERIAN NAIRA","UAE DIRHAM","LEBANESE POUND"};
 RTC_DATA_ATTR uint8_t curIdx = 0;
-// BTC priced in all six, fetched together once per cycle. Fiat rates
+RTC_DATA_ATTR uint32_t curOn = 0x3F;    // the ones UP cycles through: the
+                                        // original six until the wearer picks
+// BTC priced in all of them, fetched together once per cycle. Fiat rates
 // crawl (~0.5%%/day); BTC is the only volatile leg — so the dial turns
 // on cached arithmetic instead of waiting on the radio.
-RTC_DATA_ATTR float   fxRate[6] = {0};
+RTC_DATA_ATTR float   fxRate[NUM_CUR] = {0};
 
 // PER-MODE box dial (declared after the enum that sizes it). It was
 // one shared integer, and clicking FEE's tier silently re-aimed the
@@ -648,11 +660,29 @@ public:
   // no wait — the same ~0.4s as every other dial on the watch
   // the face's currency, kept in flash: it used to live only in RTC memory,
   // so a reflash or a flat cell quietly put a EUR wearer back on USD
+  // UP on the price faces: the next currency the wearer kept in the cycle
+  uint8_t nextCur(uint8_t from) {
+    for (int k = 1; k <= NUM_CUR; k++) {
+      int c = (from + k) % NUM_CUR;
+      if ((curOn >> c) & 1) return c;
+    }
+    return from;
+  }
   void saveCurrency() {
     Preferences p; p.begin("btcchrono", false);
     p.putUChar("cur", curIdx);
     p.end();
   }
+  // Sats per unit of fiat, or, when a unit is worth less than a sat (a won,
+  // a dong, a Lebanese pound), units per sat: 0.01 sats reads as nothing,
+  // 74 LBP a sat reads as something. Small values keep their decimals.
+  bool satsFlip(double price) { return price > 1e8; }
+  void fmtSats(char *out, size_t n, double price) {
+    if (price <= 0) { snprintf(out, n, "----"); return; }
+    double v = satsFlip(price) ? price / 1e8 : 1e8 / price;
+    snprintf(out, n, v < 10 ? "%.2f" : (v < 100 ? "%.1f" : "%.0f"), v);
+  }
+
   void applyCurrency() {
     if (fxRate[curIdx] > 0) btcPrice = fxRate[curIdx];
     if (blockHeight > 0)
@@ -661,6 +691,24 @@ public:
 
   // ONE call prices BTC in every currency we speak, plus gold in USD
   // (the %% GOLD ratio is currency-invariant, so USD on both legs)
+  // Read BTC in every currency we speak out of Coinbase's exchange-rates
+  // answer. The filter names only ours: the full answer is ~170 rates.
+  bool readRates(HTTPClient &http) {
+    JsonDocument filter;
+    for (int i = 0; i < NUM_CUR; i++) filter["data"]["rates"][CUR_CODES[i]] = true;
+    JsonDocument doc;
+    // getString, NOT getStream: Coinbase answers chunked, and the
+    // raw stream includes chunk-size headers the parser chokes on
+    // (field: "price is 0 in all currencies")
+    if (deserializeJson(doc, http.getString(),
+                        DeserializationOption::Filter(filter))) return false;
+    for (int i = 0; i < NUM_CUR; i++) {
+      float r = atof(doc["data"]["rates"][CUR_CODES[i]] | "0");
+      if (r > 0) fxRate[i] = r;
+    }
+    return fxRate[0] > 0;
+  }
+
   bool fetchRates(bool ownRadio, bool wantGold = true) {
     if (ownRadio && !myConnectWiFi()) return false;
     WiFiClientSecure client; client.setInsecure();
@@ -669,19 +717,7 @@ public:
       if (http.begin(client, "https://api.coinbase.com/v2/"
                              "exchange-rates?currency=BTC")
           && http.GET() == 200) {
-        JsonDocument filter; filter["data"]["rates"] = true;
-        JsonDocument doc;
-        // getString, NOT getStream: Coinbase answers chunked, and the
-        // raw stream includes chunk-size headers the parser chokes on
-        // (field: "price is 0 in all currencies")
-        if (!deserializeJson(doc, http.getString(),
-                             DeserializationOption::Filter(filter))) {
-          for (int i = 0; i < 6; i++) {
-            float r = atof(doc["data"]["rates"][CUR_CODES[i]] | "0");
-            if (r > 0) fxRate[i] = r;
-          }
-          if (fxRate[0] > 0) ok = true;
-        }
+        ok = readRates(http);
       }
       http.end(); }
     if (wantGold) { // gold, USD: XAU spot x ~6.95B above-ground ounces (216k
@@ -1320,7 +1356,10 @@ public:
     battProfile = p.getUChar("batt", 0);
     if (battProfile > 2) battProfile = 0;
     walletPrivate = p.getBool("wpriv", false);
-    { uint8_t c = p.getUChar("cur", 0); curIdx = c < 6 ? c : 0; }
+    { uint8_t c = p.getUChar("cur", 0); curIdx = c < NUM_CUR ? c : 0;
+      uint32_t on = p.getULong("curOn", 0x3F) & ((1UL << NUM_CUR) - 1);
+      curOn = on ? on : 0x3F;
+      curOn |= 1UL << curIdx; }              // the one showing is in the cycle
     // read BEFORE end(): it used to be read after, which always returned the
     // empty default, so a lightning address set on the watch was replaced by
     // the compiled-in one after every power loss or reflash
@@ -1374,6 +1413,7 @@ public:
     p.putUChar("batt", battProfile);
     p.putBool("wpriv", walletPrivate);
     p.putUChar("cur", curIdx);
+    p.putULong("curOn", curOn);
     p.end();
   }
 
@@ -1541,7 +1581,7 @@ public:
     if (dispMode == M_JOE) joeReveal = !joeReveal;
     else if (dispMode == M_WALT) walletToggleView();
     else if (dispMode == M_PRICE || dispMode == M_SATS || dispMode == M_MCAP) {
-      curIdx = (curIdx + 1) % 6;
+      curIdx = nextCur(curIdx);
       applyCurrency();
       saveCurrency();
     } else {
@@ -2487,8 +2527,7 @@ public:
           snprintf(big, 16, "%.0f", mp);    // spelled out: 6,450,000, not 6.45
           return;
         case M_SATS:                        // sats per unit of fiat
-          if (mp <= 0) { strcpy(big, "----"); return; }
-          snprintf(big, 16, "%.0f", 1e8 / mp);
+          fmtSats(big, 16, mp);
           return;
         case M_MCAP: {                      // supply is exact, price is modelled
           if (mp <= 0) { strcpy(big, "----"); return; }
@@ -2511,7 +2550,7 @@ public:
         // size instead of the number stepping down a scale.
         snprintf(big, 14, "%.0f", btcPrice);
         break;
-      case M_SATS:  snprintf(big, 12, "%.0f", btcPrice > 0 ? 1e8/btcPrice : 0); break;
+      case M_SATS:  fmtSats(big, 12, btcPrice); break;
       case M_MCAP:  fmtCap(big, 14, btcMcapB); break;
       case M_FEES:  fmtFee(big, 14, fastFee); break;
       case M_SUPL: {
@@ -3579,7 +3618,7 @@ public:
     priceAnchor = 0; diffChangeEst = 0;
     for (int i = 0; i < NUM_MODES; i++) cellSel[i] = 0;
     curIdx = 0;
-    for (int i = 0; i < 6; i++) fxRate[i] = 0;
+    for (int i = 0; i < NUM_CUR; i++) fxRate[i] = 0;
     lastRewardBtc = 0; lastTxCount = 0; netHashEH = 0; lastCurio = 0;
     minVoltSeen = 9.9f; minVoltWake = 0; minVoltFlags = 0;
     usbSeenWake = 0;
@@ -3723,7 +3762,7 @@ public:
         if (left > 0 && left % 3 == 0) g[o++] = ',';
       }
       g[o] = 0;
-      snprintf(line, 26, "%s %s", g, CUR_CODES[curIdx < 6 ? curIdx : 0]);
+      snprintf(line, 26, "%s %s", g, CUR_CODES[curIdx < NUM_CUR ? curIdx : 0]);
       centerSmall(line, night ? 126 : 136);
     }
     if (night) {
@@ -3884,7 +3923,7 @@ public:
     if (themeMode < 0 || themeMode > 2) themeMode = 0;
     for (int i = 0; i < NUM_MODES; i++)  // index-ish RTC values must clamp,
       if (cellSel[i] >= cellStops(i)) cellSel[i] = 0;   // survives a stop count change
-    if (curIdx > 5) curIdx = 0;
+    if (curIdx >= NUM_CUR) curIdx = 0;
     if (walletView > 2) walletView = 0;  // never dereference
 
     walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
@@ -3995,17 +4034,21 @@ public:
       }
       if (travelActive) {
         static char tu[26];
+        // the past is recorded in dollars (the anchors and mempool's
+        // history both are), so say USD there whatever the dial is on;
+        // ahead, the model scales today's price, in today's currency
+        bool past = estHeight() < blockHeight;
+        const char *cc = past ? "USD" : CUR_CODES[curIdx];
+        double tp = past ? pastPrice(estHeight()) : modelPrice(estHeight());
         if (dispMode == M_PRICE) {
-          snprintf(tu, 26, "%s / BTC", CUR_CODES[curIdx]);
+          snprintf(tu, 26, "%s / BTC", cc);
           unit = tu;
         } else if (dispMode == M_SATS) {
-          snprintf(tu, 26, "SAT / %s", CUR_CODES[curIdx]); unit = tu;
+          snprintf(tu, 26, satsFlip(tp) ? "%s / SAT" : "SAT / %s", cc); unit = tu;
         } else if (dispMode == M_MCAP) {
-          double cb = supplyBTC(estHeight()) *
-                      (estHeight() < blockHeight ? pastPrice(estHeight())
-                                                 : modelPrice(estHeight())) / 1e9;
+          double cb = supplyBTC(estHeight()) * tp / 1e9;
           snprintf(tu, 26, capInTrillions(cb) ? "TRILLION %s" : "BILLION %s",
-                   CUR_CODES[curIdx]); unit = tu;
+                   cc); unit = tu;
         } else if (dispMode == M_FEES) {
           unit = "NOT DERIVABLE";
         }
@@ -4014,7 +4057,8 @@ public:
         snprintf(ub, 24, "%s / BTC", CUR_CODES[curIdx]);
         unit = ub;
       } else if (dispMode == M_SATS) {
-        snprintf(ub, 24, "SAT / %s", CUR_CODES[curIdx]);
+        snprintf(ub, 24, satsFlip(btcPrice) ? "%s / SAT" : "SAT / %s",
+                 CUR_CODES[curIdx]);
         unit = ub;
       } else if (dispMode == M_MCAP) {
         snprintf(ub, 24, capInTrillions(btcMcapB) ? "TRILLION %s" : "BILLION %s",
@@ -4738,7 +4782,7 @@ public:
   // highlighted row's value, MENU moves to the next row and saves on the
   // last, BACK leaves without changing anything (so does 30 s of nothing).
   // Two lines under the rows say what the current choice does.
-  enum { OPT_HAPTICS = 0, OPT_BATTERY = 1, OPT_PRIVACY = 2, OPT_CURRENCY = 3 };
+  enum { OPT_HAPTICS = 0, OPT_BATTERY = 1, OPT_PRIVACY = 2 };
   void optionsScreen(int which) {
     static const char *const ONOFF[2] = { "ON", "OFF" };
     static const char *const STEPS[4] = { "OFF", "$500", "$1000", "$5000" };
@@ -4758,9 +4802,6 @@ public:
       lab[0] = "Block"; opt[0] = ONOFF; n[0] = 2; val[0] = buzzBlock ? 0 : 1;
       lab[1] = "Price"; opt[1] = STEPS; n[1] = 4; val[1] = 2;
       for (int k = 0; k < 4; k++) if (STEPV[k] == priceStep) val[1] = k;
-    } else if (which == OPT_CURRENCY) {
-      title = "Currency";
-      lab[0] = "Show"; opt[0] = CUR_CODES; n[0] = 6; val[0] = curIdx < 6 ? curIdx : 0;
     } else if (which == OPT_BATTERY) {
       title = "Battery";
       lab[0] = "Mode"; opt[0] = PROF; n[0] = 3; val[0] = battProfile;
@@ -4810,9 +4851,6 @@ public:
           snprintf(a, 34, val[0] == 0 ? "A TICK ON EVERY NEW BLOCK" : "NO BLOCK TICK");
           if (val[1] == 0) snprintf(b, 34, "NO PRICE BUZZ");
           else             snprintf(b, 34, "A BUZZ EACH %s MOVE", STEPS[val[1]]);
-        } else if (which == OPT_CURRENCY) {
-          snprintf(a, 34, "PRICE, SATS AND MCAP FACES");
-          snprintf(b, 34, "UP ON THOSE FACES CYCLES IT");
         } else if (which == OPT_BATTERY) {
           if (val[0] == BATT_LIVE) {
             // Live follows the chain: 1.5 blocks' worth of time, 10-18 min,
@@ -4851,9 +4889,6 @@ public:
         buzzBlock = (val[0] == 0);
         priceStep = STEPV[val[1]];
         priceAnchor = 0;               // re-arm from the next price heard
-      } else if (which == OPT_CURRENCY) {
-        curIdx = (uint8_t)val[0];
-        applyCurrency();
       } else if (which == OPT_BATTERY) {
         battProfile = (uint8_t)val[0];
       } else {
@@ -4863,6 +4898,97 @@ public:
       savePrefs();
       buzz(30, 2);
       Serial.printf("[mywatch] %s saved\n", title);
+    }
+    waitAllRelease();
+    myShowMenu(menuIndex, false);
+  }
+
+  // Currency: every currency the watch can show, as a list. [x] marks the ones
+  // UP cycles through on the price, sats and mcap faces; the title says which
+  // one is showing. UP/DOWN move, MENU puts one in or out of the cycle, a held
+  // MENU shows it now, BACK is done (so is 30 s of nothing). The cycle always
+  // keeps at least one, and the one showing is always in it.
+  void currencyScreen() {
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    uint32_t on = curOn | (1UL << curIdx);
+    uint8_t cur = curIdx < NUM_CUR ? curIdx : 0;
+    int sel = cur;
+    const int ROWS = 9;
+    bool redraw = true;
+    unsigned long last = millis();
+    display.setFullWindow();
+    while (1) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) break;
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        if (heldFor(MENU_BTN_PIN, 600)) {          // held: show this one now
+          cur = sel; on |= 1UL << sel;
+          buzz(30, 2);
+        } else {                                   // tapped: in or out
+          uint32_t o2 = on ^ (1UL << sel);
+          if (o2 == 0) buzz(80, 2);                // the last one stays
+          else {
+            on = o2;
+            if (!((on >> cur) & 1)) {              // the shown one left:
+              for (int k = 1; k <= NUM_CUR; k++) { // the next one kept shows
+                int c = (cur + k) % NUM_CUR;
+                if ((on >> c) & 1) { cur = c; break; }
+              }
+            }
+          }
+        }
+        redraw = true; last = millis();
+        waitRelease(MENU_BTN_PIN);
+      }
+      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + NUM_CUR - 1) % NUM_CUR; redraw = true; last = millis(); delay(150); }
+      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + 1) % NUM_CUR; redraw = true; last = millis(); delay(150); }
+      if (millis() - last > 30000) break;
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(bg());
+        display.setTextColor(fg());
+        display.setFont(NULL);
+        int kept = 0;
+        for (int i = 0; i < NUM_CUR; i++) if ((on >> i) & 1) kept++;
+        char t[34];
+        snprintf(t, 34, "SHOWING %s  -  %d ON UP", CUR_CODES[cur], kept);
+        centerSmall(t, 5);
+        int first = sel >= ROWS ? sel - (ROWS - 1) : 0;   // scrolls with you
+        for (int i = first; i < NUM_CUR && i < first + ROWS; i++) {
+          int y = 31 + (i - first) * 17;
+          bool inv = (i == sel);
+          if (inv) display.fillRect(2, y - 13, 196, 17, fg());
+          display.setTextColor(inv ? bg() : fg());
+          display.setFont(&FreeMonoBold9pt7b);
+          char line[12];
+          snprintf(line, 12, "%s %s", ((on >> i) & 1) ? "[x]" : "[ ]", CUR_CODES[i]);
+          display.setCursor(6, y);
+          display.print(line);
+          display.setFont(NULL);
+          display.setCursor(90, y - 8);
+          display.print(CUR_NAMES[i]);
+        }
+        display.setTextColor(fg());
+        // where the list is, when it runs past the panel
+        if (first > 0)                    display.fillTriangle(194, 6, 190, 11, 198, 11, fg());
+        if (first + ROWS < NUM_CUR)       display.fillTriangle(190, 172, 198, 172, 194, 176, fg());
+        centerSmall("MENU: IN/OUT   HOLD: SHOW NOW", 178);
+        centerSmall("BACK: DONE", 189);
+        display.display(true);
+      }
+      delay(40);
+    }
+    if (on != curOn || cur != curIdx) {
+      curOn = on; curIdx = cur;
+      applyCurrency();
+      savePrefs();                     // both the cycle and the one showing
+      buzz(30, 2);
+      Serial.printf("[cur] showing %s, cycle 0x%05lx\n", CUR_CODES[curIdx],
+                    (unsigned long)curOn);
     }
     waitAllRelease();
     myShowMenu(menuIndex, false);
@@ -5587,7 +5713,7 @@ public:
     p.remove("nFrom"); p.remove("nTo");            // back to the default night
     p.remove("dFrom"); p.remove("dTo"); p.remove("hBlk"); p.remove("hPrc");
     p.remove("face"); p.remove("batt"); p.remove("wpriv");   // My Watch
-    p.remove("cur");
+    p.remove("cur"); p.remove("curOn");
     p.end();
     WiFi.persistent(true);                         // the radio's own stored
     WiFi.mode(WIFI_STA);                           // credentials too: erasing
@@ -6657,7 +6783,7 @@ public:
               myShowMenu(menuIndex, false); break;
     } else if (menuLevel == 1) switch (menuIndex) {
       case 0: facesScreen(); break;                     // which faces cycle
-      case 1: optionsScreen(OPT_CURRENCY); break;       // the fiat it speaks
+      case 1: currencyScreen(); break;                  // the fiat it speaks
       case 2: hourWindowScreen(1); break;               // AUTO theme hours
       case 3: hourWindowScreen(0); break;               // the wearer's night
       case 4: optionsScreen(OPT_HAPTICS); break;        // block, price buzz
@@ -6815,19 +6941,10 @@ public:
         if (http.begin(c, "https://api.coinbase.com/v2/"
                           "exchange-rates?currency=BTC")
             && http.GET() == 200) {
-          JsonDocument filter; filter["data"]["rates"] = true;
-          JsonDocument doc;
-          if (!deserializeJson(doc, http.getString(),
-                               DeserializationOption::Filter(filter))) {
-            for (int i = 0; i < 6; i++) {
-              float r = atof(doc["data"]["rates"][CUR_CODES[i]] | "0");
-              if (r > 0) fxRate[i] = r;
-            }
-            if (fxRate[0] > 0) {            // every currency refreshed
-              priceBuzzCheck();             // in one docked call
-              applyCurrency();
-              redraw = true;
-            }
+          if (readRates(http)) {            // every currency refreshed
+            priceBuzzCheck();               // in one docked call
+            applyCurrency();
+            redraw = true;
           }
         }
         http.end();
@@ -7015,7 +7132,7 @@ public:
         else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
               dispMode == M_MCAP) {        // the CURRENCY dial: SATS
-            curIdx = (curIdx + 1) % 6;     // and MCAP inherit whatever
+            curIdx = nextCur(curIdx);      // and MCAP inherit whatever
             applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
                                            // rates are already cached
           } else if (dispMode == M_HALV) { // HLV: six epochs of emission
@@ -7187,7 +7304,7 @@ public:
         else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
               dispMode == M_MCAP) {        // the CURRENCY dial: SATS
-            curIdx = (curIdx + 1) % 6;     // and MCAP inherit whatever
+            curIdx = nextCur(curIdx);      // and MCAP inherit whatever
             applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
                                            // rates are already cached
           } else if (dispMode == M_HALV) { // HLV: six epochs of emission
@@ -7274,7 +7391,7 @@ public:
             else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
               dispMode == M_MCAP) {        // the CURRENCY dial: SATS
-            curIdx = (curIdx + 1) % 6;     // and MCAP inherit whatever
+            curIdx = nextCur(curIdx);      // and MCAP inherit whatever
             applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
                                            // rates are already cached
           } else if (dispMode == M_HALV) { // HLV: six epochs of emission
