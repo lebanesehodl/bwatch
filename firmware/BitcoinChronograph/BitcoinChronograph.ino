@@ -4546,10 +4546,11 @@ public:
   static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
                                            // row's descenders run off the panel
   static const int MAIN_LEN = 6, MY_LEN = 7, SET_LEN = 6;
-  static const int MYWATCH_POS = 4, SETTINGS_POS = 5;
+  // most used first; About, a status page, last
+  static const int MYWATCH_POS = 2, SETTINGS_POS = 4;
   const char *const MAIN_ITEMS[MAIN_LEN] = {
-    "About BWATCH", "Setup Wallet", "Alarms", "Time Travel", "My Watch  >",
-    "Settings  >"};
+    "Alarms", "Time Travel", "My Watch  >", "Setup Wallet", "Settings  >",
+    "About BWATCH"};
   const char *const MY_ITEMS[MY_LEN] = {
     "Faces", "Currency", "Dark Hours", "Night Hours", "Haptics", "Battery",
     "Privacy"};
@@ -6773,14 +6774,14 @@ public:
 
   void dispatchMenu() {
     if (!menuLevel) switch (menuIndex) {
-      case 0: myShowAbout(); break;                     // state, not the radio
-      case 1: setupWallet(); break;                     // ends in our menu
-      case 2: alarmsScreen(); break;                    // block and fee
-      case 3: timeTravel(); break;                      // arithmetic, not data
-      case 4: menuLevel = 1; menuIndex = 0;             // into My Watch
+      case 0: alarmsScreen(); break;                    // block and fee
+      case 1: timeTravel(); break;                      // arithmetic, not data
+      case 2: menuLevel = 1; menuIndex = 0;             // into My Watch
               myShowMenu(menuIndex, false); break;
-      case 5: menuLevel = 2; menuIndex = 0;             // into Settings
+      case 3: setupWallet(); break;                     // ends in our menu
+      case 4: menuLevel = 2; menuIndex = 0;             // into Settings
               myShowMenu(menuIndex, false); break;
+      case 5: myShowAbout(); break;                     // state, not the radio
     } else if (menuLevel == 1) switch (menuIndex) {
       case 0: facesScreen(); break;                     // which faces cycle
       case 1: currencyScreen(); break;                  // the fiat it speaks
