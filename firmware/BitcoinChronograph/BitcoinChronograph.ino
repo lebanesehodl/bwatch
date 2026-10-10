@@ -4798,8 +4798,11 @@ public:
           else             snprintf(b, 34, "A BUZZ EACH %s MOVE", STEPS[val[1]]);
         } else if (which == OPT_BATTERY) {
           if (val[0] == BATT_LIVE) {
-            snprintf(a, 34, "FETCH ~15 MIN, WALLET 30 MIN");
-            snprintf(b, 34, "FRESHEST: EVERY FETCH");
+            // Live follows the chain: 1.5 blocks' worth of time, 10-18 min,
+            // the same MIN/BLK the height face shows. Say what it is now.
+            snprintf(a, 34, "FETCH PACED BY MIN/BLK");
+            snprintf(b, 34, "NOW EVERY %lu MIN, WALLET %dM",
+                     (unsigned long)fetchEveryMin(), WALLET_EVERY_MIN);
           } else if (val[0] == BATT_BALANCED) {
             snprintf(a, 34, "FETCH 30 MIN, WALLET 1 H");
             snprintf(b, 34, "ABOUT HALF THE FETCHES");
