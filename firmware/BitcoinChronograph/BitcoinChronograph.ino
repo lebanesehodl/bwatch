@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C013B
+#define RTC_LAYOUT_MAGIC 0xB17C013C
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -368,6 +368,11 @@ RTC_DATA_ATTR bool     sawMillion    = false;  // block 1,000,000 has been
                                                // watch should not forget
 RTC_DATA_ATTR int8_t   nightFrom     = NIGHT_FROM_H;  // the wearer's night,
 RTC_DATA_ATTR int8_t   nightTo       = NIGHT_TO_H;    // whole local hours
+// Which way round the panel is right now: light or dark. A partial refresh
+// that flips the whole panel (theme change, a light menu over a dark face)
+// under-drives every pixel, and the image fades within seconds. Any paint
+// whose polarity differs from this one is done as a full refresh instead.
+RTC_DATA_ATTR bool     paintedDark   = false;
 RTC_DATA_ATTR int8_t   menuLevel     = 0;      // 0 main, 1 My Watch, 2 Settings
 // My Watch: the wearer's choices, all kept in flash (loadPrefs/savePrefs)
 RTC_DATA_ATTR int8_t   darkFrom      = 20;     // AUTO theme is dark from ...
@@ -3721,6 +3726,7 @@ public:
   void drawRestFace() {
     bool night = (restState == REST_NIGHT);
     themeDark = darkNow();
+    paintedDark = themeDark;          // its callers refresh it full
     display.setFullWindow();
     display.fillScreen(bg());
     display.setTextColor(fg());
@@ -3942,7 +3948,10 @@ public:
     if (fetchPending && !prePaint) {
       prePaint = true;
       drawWatchFace();                // corner reads FTCH; no fetch inside
-      display.display(true);          // partial: fast, the full comes after
+      // partial: fast, the full comes after. Unless it flips the panel:
+      // then partial is exactly what fades, so this frame goes full
+      display.display(themeDark == paintedDark);
+      paintedDark = themeDark;
       prePaint = false;
     }
     if (!prePaint) maybeFetch();
@@ -3999,6 +4008,7 @@ public:
                                 // large black<->white flips (ghost
                                 // "LN..." fragments over the QR in dark
                                 // mode) and a QR must scan crisply
+      paintedDark = themeDark;
       if (vigilPending && !inDocked && !inVigil) {
         vigilPending = false;
         paymentVigil();                   // stand watch ~2 min
@@ -4482,12 +4492,16 @@ public:
       display.drawFastHLine(6, 179, tx - 10, fg());
       display.drawFastHLine(tx + w + 4, 179, 194 - (tx + w + 4), fg()); }
     drawModeStrip();
+    // the theme changed since the last paint (DOWN, or AUTO at its hours):
+    // a whole-panel flip, which a partial refresh only half drives
+    if (!prePaint && themeDark != paintedDark) restExitFull = true;
     if (restExitFull && !prePaint) { // first face after a rest: full refresh,
       restExitFull = false;          // so the old image leaves no ghost (not
                                      // the FTCH frame: that one is the fast
                                      // answer, the full comes with the data)
       display.display(false);
     }
+    if (!prePaint) paintedDark = themeDark;   // what the panel now shows
 
     // first WAL entry / due rescan: the face above goes to the panel
     // NOW, then the slow address sweep runs, then we re-render.
@@ -4585,6 +4599,10 @@ public:
     const char *const *items = menuLevel == 1 ? MY_ITEMS
                              : menuLevel == 2 ? SET_ITEMS : MAIN_ITEMS;
     if (idx >= len) idx = menuIndex = 0;
+    // themeDark is worked out when the face draws, and a button wake straight
+    // into the menu never drew one: work it out here, or a dark-theme wearer
+    // gets a white menu over a black face
+    themeDark = darkNow();
     // The menu follows the theme, like everything else. It used to be black
     // whatever the face was doing, which meant a light-mode wearer went from
     // a white face to a black menu and back — a full-panel inversion twice,
@@ -4615,9 +4633,11 @@ public:
       centerSmall(menuLevel == 1 ? "MY WATCH  -  BACK: MAIN MENU"
                                  : "SETTINGS  -  BACK: MAIN MENU", 186);
     }
-    // always partial: the entry flash annoyed the owner, and the menu now
-    // shares the face's palette, so there is no inversion to clean up on exit.
-    display.display(true);
+    // partial: the entry flash annoyed the owner, and the menu shares the
+    // face's palette, so normally nothing flips. If the panel is the other
+    // way round (the theme changed since it was painted), full, once.
+    display.display(themeDark == paintedDark);
+    paintedDark = themeDark;
     guiState = MAIN_MENU_STATE;
     alreadyInMenu = false;
   }
