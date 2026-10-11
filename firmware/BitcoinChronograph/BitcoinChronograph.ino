@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C013C
+#define RTC_LAYOUT_MAGIC 0xB17C013D
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -414,6 +414,18 @@ RTC_DATA_ATTR float    battFullV    = 4.20f;  // what this board reads at a
                                 // is believed to mean finished
 #define CHG_EST_CAP      95     // an estimate never claims full: only the
                                 // charge IC's "done" shows 100
+// Hours left = the curve's share of a run still to come x how long a full
+// run lasts. Measured on Live: ~42 h. Balanced and Saver start from cautious
+// guesses until a run of their own is measured, then learn (blended 50/50,
+// in flash), like the charge rate does.
+#define RUN_H_LIVE      42.0f
+#define RUN_H_BALANCED  48.0f
+#define RUN_H_SAVER     54.0f
+RTC_DATA_ATTR float    runH[3]      = { RUN_H_LIVE, RUN_H_BALANCED, RUN_H_SAVER };
+RTC_DATA_ATTR uint32_t runStartT    = 0;    // RTC time the cable came out
+RTC_DATA_ATTR int8_t   runStartPct  = -1;   // and the level then
+RTC_DATA_ATTR uint8_t  runProf      = 0;    // and the battery profile
+RTC_DATA_ATTR int16_t  restHrsShown = -2;   // hours printed on the rest face
 RTC_DATA_ATTR int8_t   chgFromPct   = -1;   // level when the cable went in
 RTC_DATA_ATTR uint32_t chgFromT     = 0;    // RTC time then (0: not charging)
 RTC_DATA_ATTR bool     chgLearned   = false;// this charge already measured
@@ -1225,6 +1237,11 @@ public:
       if (darkNow() != paintedDark) {
         Serial.printf("[rest] theme now %s\n", darkNow() ? "dark" : "light");
         drawRestFace(); displayFull();     // full: the whole panel flips
+      } else if (hoursLeft() != restHrsShown) {
+        // the hours-left figure moved (every couple of hours): a resting
+        // watch otherwise never redraws, and a stale "~1D" is the kind of
+        // number that strands a wearer. Partial: nothing flips
+        drawRestFace(); display.display(true);
       }
       // still resting, nothing changed: the panel already says it. Straight
       // back to sleep, no refresh at all.
@@ -1353,6 +1370,12 @@ public:
       strncpy(wifiPass[i], w.c_str(), 64); wifiPass[i][64] = 0;
     }
     battFullV = p.getFloat("bfv", 4.20f);
+    { const float def[3] = { RUN_H_LIVE, RUN_H_BALANCED, RUN_H_SAVER };
+      for (int i = 0; i < 3; i++) {                // learned run lengths
+        char k[6]; snprintf(k, 6, "runH%d", i);
+        float v = p.getFloat(k, def[i]);
+        runH[i] = (v >= 10.0f && v <= 200.0f) ? v : def[i];
+      } }
     sawMillion = p.getBool("m1", false);
     alarmHeight = p.getLong("alH", 0);
     feeAlarm    = p.getUShort("alF", 0);
@@ -2955,6 +2978,45 @@ public:
 
   bool battEstimated = false;           // the last figure was an estimate
 
+  // The cable went in: if a long enough run on one profile just ended, it
+  // says how long a full run lasts. Only runs of 12 h+ that used 40%+ count,
+  // so a quick top-up or a reflash on the cable teaches nothing.
+  void endRun(int endPct) {
+    if (runStartT && runStartPct > 0 && endPct >= 0 && runProf == battProfile &&
+        battProfile < 3) {
+      float hrs = (rtcNow() - runStartT) / 3600.0f;
+      float used = (runStartPct - endPct) / 100.0f;
+      if (hrs >= 12.0f && used >= 0.40f) {
+        float est = hrs / used;
+        if (est >= 10.0f && est <= 200.0f) {
+          float was = runH[battProfile];
+          runH[battProfile] = 0.5f * was + 0.5f * est;
+          Preferences p; p.begin("btcchrono", false);
+          char k[6]; snprintf(k, 6, "runH%d", battProfile);
+          p.putFloat(k, runH[battProfile]);
+          p.end();
+          Serial.printf("[run] %.0f h used %d%%: full run %.0f h, was %.0f, now %.0f\n",
+                        hrs, (int)(used * 100), est, was, runH[battProfile]);
+        }
+      }
+    }
+    runStartT = 0;
+  }
+
+  // hours of battery left, or -1 on the cable (the cell is not being drained)
+  int hoursLeft() {
+    if (chargeState() != 0) return -1;
+    int p = batteryPctShown();
+    if (p < 0) return -1;
+    float h = runH[battProfile < 3 ? battProfile : 0];
+    return (int)(p / 100.0f * h + 0.5f);
+  }
+  void fmtHours(char *out, size_t n, int h) {
+    if (h < 1)       snprintf(out, n, "<1H");
+    else if (h < 24) snprintf(out, n, "~%dH", h);
+    else             snprintf(out, n, "~%dD %dH", h / 24, h % 24);
+  }
+
   float batteryPct() {
     if (chargeState() == 2) return 1.0f;   // terminated: the guard now lives
                                            // inside chargeState itself                         // terminated AND the cell agrees
@@ -2984,6 +3046,7 @@ public:
       chgFromT = rtcNow();
       chgFromPct = (shownBattPct >= 0) ? shownBattPct : (int8_t)lastLoggedPct();
       chgLearned = false;
+      endRun(chgFromPct);
       Serial.printf("[chg] start at %d%%\n", chgFromPct);
     }
     if (cs == 2) {                                     // the IC says finished
@@ -3029,6 +3092,7 @@ public:
       // the level from before the cable went in.
       chgFromT = 0; chgFromPct = -1;
       shownBattPct = rounded;
+      runStartT = rtcNow(); runStartPct = rounded; runProf = battProfile;
       return rounded;
     }
     if (shownBattPct < 0) { shownBattPct = rounded; return rounded; }
@@ -3751,6 +3815,12 @@ public:
     display.setFont(NULL);
 
     drawBattery(10, 3);
+    restHrsShown = hoursLeft();             // how long it has: the question a
+    if (restHrsShown >= 0) {                // wearer picking it up is asking
+      char hb[12]; fmtHours(hb, 12, restHrsShown);
+      display.setCursor(32, 3);
+      display.print(hb);
+    }
     const char *tag = night ? "NIGHT" : "REST";
     display.setCursor(188 - (int)strlen(tag) * 6, 3);
     display.print(tag);
@@ -6575,7 +6645,10 @@ public:
     int cs = chargeState();
     int p  = batteryPctShown();
     y += 20; display.setCursor(0, y);
-    if (p >= 0) display.printf(battEstimated ? "Batt ~%2d%%" : "Batt %3d%%", p);
+    if (p >= 0 && !battEstimated && cs == 0) {   // on the cell: and how long
+      char hb[12]; fmtHours(hb, 12, hoursLeft());
+      display.printf("Batt %d%% %s", p, hb);
+    } else if (p >= 0) display.printf(battEstimated ? "Batt ~%2d%%" : "Batt %3d%%", p);
     else        display.print("Batt  --%");   // charging, and the last
                                               // on-cell reading died with
                                               // the cell
