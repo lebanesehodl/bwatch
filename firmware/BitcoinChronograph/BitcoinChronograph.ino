@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C013D
+#define RTC_LAYOUT_MAGIC 0xB17C013E
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -3008,6 +3008,13 @@ public:
   }
 
   // hours of battery left, or -1 on the cable (the cell is not being drained)
+  // A stored RTC time that is in the future, or weeks old, is not a time:
+  // drop it rather than compute from it.
+  bool timeSane(uint32_t t) {
+    uint32_t now = rtcNow();
+    return t != 0 && t <= now && now - t < 30UL * 86400UL;
+  }
+
   int hoursLeft() {
     if (chargeState() != 0) return -1;
     int p = batteryPctShown();
@@ -3044,6 +3051,8 @@ public:
     if (rounded < 0)   rounded = 0;
     int cs = chargeState();
     battEstimated = false;
+    if (chgFromT && !timeSane(chgFromT)) { chgFromT = 0; chgFromPct = -1; }
+    if (runStartT && !timeSane(runStartT)) runStartT = 0;
     if (cs != 0 && chgFromT == 0) {
       // the cable just went in: note where the cell was, from the latch, else
       // from the hourly log in flash (a flat cell wipes the latch, not that)
@@ -3708,6 +3717,13 @@ public:
     rtcMagic = RTC_LAYOUT_MAGIC;
     Serial.begin(115200);
     Serial.println("[rtc] layout changed - state reset");
+    // Everything RTC-resident added since must be reset here too, or a
+    // reflash leaves it holding the old layout's bytes (a charge "started"
+    // 9 years in the future, a run that began never). Settings kept in
+    // flash come back through loadPrefs; these are working state.
+    chgFromT = 0; chgFromPct = -1; chgLearned = false;
+    runStartT = 0; runStartPct = -1; runProf = 0;
+    restHrsShown = -2; cleanNext = false; paintedDark = false;
     dispMode = M_HGHT; themeMode = 0; tzIndex = 0;
     btcPrice = 0; btcChange24h = 0; btcMcapB = 0;
     fearGreed = 50; fastFee = 0.0f;
