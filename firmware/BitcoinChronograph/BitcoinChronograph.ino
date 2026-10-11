@@ -3399,6 +3399,7 @@ public:
   struct BtcDate {
     uint8_t m, d; uint16_t y;
     const char *title, *l1, *l2;
+    const char *l3;              // optional: a signature, say
   };
   // today's date on the wall clock, or nothing when the clock can't be trusted
   bool localDate(tmElements_t &dt) {
@@ -3415,7 +3416,8 @@ public:
     static const BtcDate BTC_DATES[] = {
       { 1,  3, 2009, "GENESIS",    "BLOCK 0 WAS MINED",     "THE TIMES 03/JAN/2009" },
       { 1, 12, 2009, "FIRST SEND", "SATOSHI TO HAL FINNEY", "10 BTC IN BLOCK 170" },
-      { 4, 23, 2011, "MOVED ON",   "I'VE MOVED ON TO OTHER THINGS", "IT'S IN GOOD HANDS" },
+      { 4, 23, 2011, "FAREWELL",   "\"I'VE MOVED ON TO OTHER THINGS", "IT'S IN GOOD HANDS.\"",
+                                 "- SATOSHI NAKAMOTO" },
       { 5, 22, 2010, "PIZZA DAY",  "10,000 BTC FOR",        "TWO PIZZAS" },
       {10, 31, 2008, "WHITEPAPER", "A PEER-TO-PEER",        "ELECTRONIC CASH SYSTEM" },
       {12, 12, 2010, "LAST POST",  "SATOSHI'S LAST FORUM POST", "BITCOINTALK, V0.3.19" },
@@ -3479,7 +3481,8 @@ public:
     display.drawFastHLine(30, 138, 140, GxEPD_WHITE);
     centerSmall(b.l1, 150);
     centerSmall(b.l2, 162);
-    if (b.m == 5 && b.d == 22 && btcPrice > 0) {   // the pizzas, priced live
+    if (b.l3) centerSmall(b.l3, 178);
+    else if (b.m == 5 && b.d == 22 && btcPrice > 0) {   // the pizzas, priced live
       char w[16]; fmtWorth(w, 16, 10000.0 * btcPrice);
       snprintf(s, 34, "NOW %s %s", w, CUR_CODES[curIdx]);
       centerSmall(s, 178);
