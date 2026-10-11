@@ -1218,6 +1218,14 @@ public:
           return true;
         }
       }
+      // The AUTO theme's dark hours began or ended while resting: repaint
+      // the rest face the new way round. Without this a rest that started
+      // dark (say 06:10, dark until 07:00) stayed black all morning, since
+      // a resting watch otherwise never redraws: it looked dead.
+      if (darkNow() != paintedDark) {
+        Serial.printf("[rest] theme now %s\n", darkNow() ? "dark" : "light");
+        drawRestFace(); displayFull();     // full: the whole panel flips
+      }
       // still resting, nothing changed: the panel already says it. Straight
       // back to sleep, no refresh at all.
       if (!longSleep(restSleepMinutes())) drawRestFace();
