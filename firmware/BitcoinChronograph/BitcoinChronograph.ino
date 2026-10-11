@@ -2563,6 +2563,84 @@ public:
     return cap;
   }
 
+  // ---- RETARGET: the EPOC dial, blown up to the whole panel at 100 ----
+  // The little dial spends two weeks filling; when it fills, it takes the
+  // glass and says what the network just did to itself. stage 0: the ring
+  // nearly full, 1: closed at 100, 2: the recap inside it.
+  struct Retarget {
+    long epoch;            // the epoch that just ended
+    float change;          // difficulty, % (the adjustment that happened)
+    float days;            // how long its 2,016 blocks took; 0 = unknown
+    float mined, fees;     // BTC: subsidy, and fees on top; fees < 0 = unknown
+    long txs;              // transactions in it; 0 = unknown
+  };
+
+  void drawRetarget(const Retarget &r, int stage) {
+    const int cx = 100, cy = 100, R = 95;
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.drawCircle(cx, cy, R, GxEPD_WHITE);
+    for (int a = 0; a < 360; a += 90) {            // the quarter ticks
+      float rad = a * DEG_TO_RAD;
+      display.drawLine(cx + cosf(rad) * (R + 1), cy + sinf(rad) * (R + 1),
+                       cx + cosf(rad) * (R + 4), cy + sinf(rad) * (R + 4),
+                       GxEPD_WHITE);
+    }
+    // the arc, solid: a filled ring (spokes at this radius leave gaps)
+    display.fillCircle(cx, cy, R - 3, GxEPD_WHITE);
+    display.fillCircle(cx, cy, R - 10, GxEPD_BLACK);
+    if (stage == 0)                               // the last 3% still to go
+      for (float a = -90 - 0.03f * 360.0f; a <= -90; a += 0.25f) {
+        float rad = a * DEG_TO_RAD;
+        display.drawLine(cx + cosf(rad) * (R - 11), cy + sinf(rad) * (R - 11),
+                         cx + cosf(rad) * (R - 2), cy + sinf(rad) * (R - 2),
+                         GxEPD_BLACK);
+      }
+    display.setFont(NULL); display.setTextSize(1);
+    centerSmall(stage == 0 ? "EPOC 97" : "EPOC 100", 168);
+    if (stage < 2) return;
+
+    char s[34];
+    snprintf(s, 34, "EPOCH %ld", r.epoch);
+    centerSmall(s, 30);
+    centerSmall("DIFFICULTY ADJUSTED", 44);
+
+    // the change, big: digits in the face's 7-segment, sign and % beside
+    // (the font carries digits, '-' and '.', no '+' or '%')
+    char v[12]; snprintf(v, 12, "%.2f", fabsf(r.change));
+    int16_t x1, y1; uint16_t w, h;
+    display.setFont(&DSEG7_Classic_Bold_32);
+    display.getTextBounds(v, 0, 0, &x1, &y1, &w, &h);
+    int total = 14 + w + 18, x = (200 - total) / 2;
+    display.setFont(NULL); display.setTextSize(2);
+    display.setCursor(x, 67); display.print(r.change < 0 ? "-" : "+");
+    display.setTextSize(1);                       // a GFX font scales too
+    display.setFont(&DSEG7_Classic_Bold_32);
+    display.setCursor(x + 14 - x1, 90); display.print(v);
+    display.setFont(NULL); display.setTextSize(2);
+    display.setCursor(x + 14 + w + 6, 67); display.print("%");
+    display.setTextSize(1);
+
+    display.drawFastHLine(70, 102, 60, GxEPD_WHITE);
+    if (r.days > 0) {
+      snprintf(s, 34, "2,016 BLOCKS IN %.1f DAYS", r.days);
+      centerSmall(s, 112);
+    } else centerSmall("2,016 BLOCKS", 112);
+    if (r.fees >= 0) {
+      char g[12]; grouped(g, 12, (long long)(r.mined + 0.5));
+      snprintf(s, 34, "%s MINED + %.1f FEES", g, r.fees);
+    } else {
+      char g[12]; grouped(g, 12, (long long)(r.mined + 0.5));
+      snprintf(s, 34, "%s BTC MINED", g);
+    }
+    centerSmall(s, 125);
+    if (r.txs > 0) {
+      snprintf(s, 34, "%.1fM TRANSACTIONS", r.txs / 1e6);
+      centerSmall(s, 138);
+    }
+  }
+
   // round ticker: ring dial with quarter ticks + progress arc + % in center
   void drawSubdial(int cx, int cy, int r, float pct, const char *label) {
     display.drawCircle(cx, cy, r, fg());
