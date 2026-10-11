@@ -2903,16 +2903,26 @@ public:
   }
 
   // the discharge curve, from a calibrated (true) cell voltage to 0..1
+  // Measured, not assumed: two full runs from the 72-hour log (Oct 2026).
+  // This cell holds 4.1-4.2 V for most of its life and then falls about six
+  // times faster below 4.0 V: run 2 took 29 h from the charger to 3.97 V and
+  // only 11 h more to 3.56 V (run 1: 10 h for the same stretch). The old
+  // textbook curve called 3.97 V 80% when about a quarter of the time was
+  // left, so "85% at bedtime" was nearly empty by morning. These points are
+  // the share of the run's TIME still to come at each voltage, so the figure
+  // reads as "how long have I got", which is what a wearer means by it.
   float curvePct(float v) {
-    float p;
-    if      (v >= 4.15f) p = 1.00f;
-    else if (v >= 4.00f) p = 0.85f + (v - 4.00f) * (0.15f / 0.15f);
-    else if (v >= 3.85f) p = 0.60f + (v - 3.85f) * (0.25f / 0.15f);
-    else if (v >= 3.70f) p = 0.35f + (v - 3.70f) * (0.25f / 0.15f);
-    else if (v >= 3.55f) p = 0.15f + (v - 3.55f) * (0.20f / 0.15f);
-    else if (v >= 3.30f) p = (v - 3.30f) * (0.15f / 0.25f);
-    else                 p = 0.0f;
-    return p < 0 ? 0 : (p > 1 ? 1 : p);
+    static const float V[] = { 4.20f, 4.16f, 4.12f, 4.08f, 4.03f, 3.97f,
+                               3.90f, 3.80f, 3.70f, 3.60f, 3.50f, 3.36f };
+    static const float P[] = { 1.00f, 0.85f, 0.72f, 0.55f, 0.43f, 0.32f,
+                               0.27f, 0.20f, 0.13f, 0.08f, 0.04f, 0.00f };
+    const int n = sizeof(V) / sizeof(V[0]);
+    if (v >= V[0])     return 1.0f;
+    if (v <= V[n - 1]) return 0.0f;
+    for (int i = 1; i < n; i++)
+      if (v >= V[i])
+        return P[i] + (v - V[i]) * (P[i - 1] - P[i]) / (V[i - 1] - V[i]);
+    return 0.0f;
   }
 
   // The newest on-cell sample in the hourly log, as a percentage, or -1. The
