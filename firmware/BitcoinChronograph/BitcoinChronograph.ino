@@ -3247,6 +3247,7 @@ public:
     display.setCursor((200 - 16 * 6) / 2, 176); display.print("CHARGE TO RESUME");
     displayFull();            // full refresh: this one has to last
     Serial.println("[batt] resting");
+    paintedDark = true;          // black: the face after a charge flips full
   }
 
   // Boot. E-paper cannot move, so nothing here pretends to: each partial
@@ -3367,6 +3368,8 @@ public:
     display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
     display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
     displayFull();
+    paintedDark = true;           // white on black, whatever the theme: the
+                                  // face after it must not flip by partial
     buzz(35, 2);
     Serial.printf("[curio] %ld — %s\n", h, why);
     delay(2600);
@@ -5656,6 +5659,7 @@ public:
     centerText("SINCE JANUARY 2009", 168, NULL);
     centerText("TICK TOCK NEXT BLOCK", 190, NULL);
     displayFull();            // full refresh: this one is worth it
+    paintedDark = true;       // always black: the next face flips full
 
     for (int i = 0; i < 10; i++) { buzz(60, 4); delay(140); }
 
