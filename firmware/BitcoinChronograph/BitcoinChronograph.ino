@@ -3431,11 +3431,12 @@ public:
   }
 
   // A line along the bottom of whatever boot screen is up, for the wait
-  // that follows it. Every sequence keeps y 186-199 clear for this.
+  // that follows it. Every sequence keeps y 184-199 clear for this (the
+  // lowest boot text, SEGMENT TEST's BITCOIN IS TIME, ends at 183).
   void bootStatus(const char *s) {
-    display.fillRect(0, 186, 200, 14, GxEPD_BLACK);
+    display.fillRect(0, 184, 200, 16, GxEPD_BLACK);
     display.setTextColor(GxEPD_WHITE);
-    bootCenter(s, 190, 1);
+    bootCenter(s, 186, 1);
     display.display(true);
   }
 
@@ -3540,7 +3541,7 @@ public:
     bootCenter("MINING THE GENESIS HEADER", 46, 1);
     display.drawFastHLine(10, 58, 180, GxEPD_WHITE);
     display.display(true);
-    delay(400);                       // read the title before the hashing
+    delay(200);                       // read the title before the hashing
 
     uint8_t hdr[80];
     memcpy(hdr, HDR, 76);
@@ -3567,7 +3568,7 @@ public:
       display.display(true);
       // paced so each try lands: it raced through in ~2 s and then sat on
       // the last frame through the first fetch, which read as frozen
-      delay(k == 0 ? 700 : 350);
+      delay(k == 0 ? 350 : 175);
     }
 
     display.drawFastHLine(10, 140, 180, GxEPD_WHITE);
