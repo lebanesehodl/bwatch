@@ -4079,9 +4079,13 @@ public:
     // Due, and not while the radio is backed off: offline, a scan is the
     // same 12 s WiFi search the fetch backoff exists to stop, and a failed
     // scan used to stay due, so the wallet face searched on every wake.
+    // And never on a button press: cycling faces with BACK and passing over
+    // WAL used to stop there for a whole sweep. A press shows the balance
+    // the watch already has; if the wearer is still on WAL at the next
+    // minute wake, that wake sweeps. A long UP (forceFetch) still goes now.
     walletScanAsked = forceFetch;
     walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
-      (forceFetch || (!radioBackedOff() &&
+      (forceFetch || ((timerWake || inDocked) && !radioBackedOff() &&
                       (!haveWallet || wakeMin - lastWalletMin >= walletEveryMin())));
 
     // A requested fetch paints FIRST, then goes to the radio. maybeFetch()
