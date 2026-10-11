@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C013F
+#define RTC_LAYOUT_MAGIC 0xB17C0140
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -318,6 +318,7 @@ RTC_DATA_ATTR bool     feeArmed      = true;   // false after firing, until
 RTC_DATA_ATTR uint8_t  evQueue       = 0;      // EV_* bits waiting to be seen
 RTC_DATA_ATTR uint8_t  evShown       = 0;      // the one on the glass now
 RTC_DATA_ATTR uint32_t evWake        = 0;      // wakeMin the last one fired
+RTC_DATA_ATTR long     evCurioH      = 0;      // the curiosity waiting to be seen
 RTC_DATA_ATTR long     evBlockH      = 0;      // what each screen reports,
 RTC_DATA_ATTR float    evFee         = 0;      // captured when it fired so a
 RTC_DATA_ATTR uint16_t evFeeAt       = 0;      // later edit or a finished
@@ -1157,8 +1158,13 @@ public:
     // the whole WiFi join and TLS round (seconds) before anything answered.
     // fetchPending takes the prePaint path: the face goes up at once with
     // FTCH in the corner, then the radio, then the fresh face.
-    if (staleMinutes() >= staleAfter() ||
-        heightStaleMinutes() >= staleAfter()) {
+    // Unless the last tries failed: then the watch is offline (driving, say)
+    // and a forced fetch is a 12 s WiFi search, FTCH in the corner, for a
+    // network that was not there an hour ago either. The backoff decides
+    // when to try again, on a minute wake; hold UP still forces one.
+    if (failCount == 0 &&
+        (staleMinutes() >= staleAfter() ||
+         heightStaleMinutes() >= staleAfter())) {
       forceFetch = true;
       fetchPending = true;
     }
@@ -1297,6 +1303,8 @@ public:
     Serial.printf("[rest] begin (%s)\n", why);
     restState = want;
     restPose  = accPose;
+    evShown = 0;                // the rest face covers anything waiting: it
+                                // goes back up (and waits) after the rest
     drawRestFace();
     displayFull();     // full refresh: this image may hold for hours,
                                 // so it starts clean of any ghosting
@@ -1340,6 +1348,9 @@ public:
       every = ALARM_NEAR_EVERY;
     bool due = forceFetch || !haveData ||
                (wakeMin - lastFetchMin >= every);
+    // offline and a press woke it: the retry the backoff allows can wait for
+    // the next minute wake, not hold the face up for a 12 s search
+    if (pressRun && failCount > 0 && !forceFetch) due = false;
     if (due && (forceFetch || wakeMin >= nextTryWake)) {
       bool fok = fetchAll();
       syncEnd(fok && blockHeight > 0);
@@ -1383,7 +1394,18 @@ public:
       for (long h = blockHeight; h >= from; h--) {
         if (h <= lastCurio) break;
         const char *why = curiosity(h);
-        if (why) { lastCurio = h; curiosityScreen(h, why); break; }
+        if (why) {
+          lastCurio = h;
+          curiosityScreen(h, why);
+          // It used to hold 2.6 s and give way to the face. A fetch on a
+          // minute wake has nobody watching, so it was seen by luck (970,970
+          // came and went unseen). Now it waits on the glass like an alarm,
+          // until a press. Already up: the hold just sleeps on it.
+          evCurioH = h;
+          fireEvent(EV_CURIO);
+          evShown = EV_CURIO;
+          break;
+        }
       }
       curioSeen = blockHeight;
     }
@@ -3409,14 +3431,43 @@ public:
     delay(240);
 
     // 4. and the clean frame that stays up
-    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
-    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    drawCurioFrame(h, why);
     displayFull();
     paintedDark = true;           // white on black, whatever the theme: the
                                   // face after it must not flip by partial
     buzz(35, 2);
     Serial.printf("[curio] %ld — %s\n", h, why);
-    delay(2600);
+  }
+
+  // The finished card, whole: the end of the animation, and what an event
+  // redraws while it waits to be seen
+  void drawCurioFrame(long h, const char *why) {
+    char s[16]; snprintf(s, 16, "%ld", h);
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    centerText(s, 104, &DSEG7_Classic_Bold_25);
+    int off = 10;                                    // the arrows, closed
+    display.fillTriangle(100 - off, 128, 100 - off - 9, 122,
+                         100 - off - 9, 134, GxEPD_WHITE);
+    display.fillTriangle(100 + off, 128, 100 + off + 9, 122,
+                         100 + off + 9, 134, GxEPD_WHITE);
+    display.setFont(NULL);
+    display.setTextSize(2);
+    { char a[16], b[8]; const char *sp = strchr(why, ' ');
+      int n = sp ? (int)(sp - why) : (int)strlen(why);
+      if (n > 15) n = 15;
+      memcpy(a, why, n); a[n] = 0;
+      snprintf(b, 8, "%s", sp ? sp + 1 : "");
+      display.setCursor((200 - n * 12) / 2, 146);
+      display.print(a);
+      if (b[0]) {
+        display.setCursor((200 - (int)strlen(b) * 12) / 2, 168);
+        display.print(b);
+      } }
+    display.setTextSize(1);
+    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
   }
 
   // Bitcoin dates. The block curiosities are found in the chain; these are on
@@ -3915,6 +3966,7 @@ public:
   }
 
   bool buttonWake = false;   // set by handleButtonPress; not an RTC wake
+  bool pressRun = false;     // this run began with a press (never cleared)
   bool showThemeName = false; // DOWN was pressed: announce the theme
                               // in the divider title for one render
                               // (the status row has no free pixels)
@@ -4029,7 +4081,7 @@ public:
     restState = 0; restPose = 0; sleptSince = 0; stillRun = 0;
     candleWake = 0; goldWake = 0; slowWake = 0; fngWake = 0; dayAgoUsd = 0;
     alarmHeight = 0; feeAlarm = 0; feeArmed = true;   // NVS reloads the alarms
-    evQueue = 0; evShown = 0; evWake = 0; evBlockH = 0; evFee = 0; evFeeAt = 0;
+    evQueue = 0; evShown = 0; evWake = 0; evCurioH = 0; evBlockH = 0; evFee = 0; evFeeAt = 0;
     evConfN = 0; evConfSats = 0; evConfBlock = 0; evPaySats = 0; evPayLn = false;
     lateKind = 0; lateIdx = -1; lateBase = 0; lateUntil = 0;
     shipMode = false; shipSince = 0;
@@ -4306,7 +4358,10 @@ public:
         lastMoveWake = wakeMin;
         // picked up after a long rest: the face is stale, so refresh now
         // rather than making the wearer wait for the next slot
-        if (wasIdle) { forceFetch = true; Serial.println("[accel] picked up"); }
+        // (not when the last tries failed: offline, the backoff decides)
+        if (wasIdle && failCount == 0) {
+          forceFetch = true; Serial.println("[accel] picked up");
+        }
       }
     }
     buttonWake = false;
@@ -6439,7 +6494,7 @@ public:
   }
 
   // ---------------- alarms ----------------
-  enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4, EV_PAY = 8 };
+  enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4, EV_PAY = 8, EV_CURIO = 16 };
   enum { TRACK_NONE = 0, TRACK_RESOLVE = 1, TRACK_ON = 2 };
 
   bool alarmsArmed() { return alarmHeight > 0 || feeAlarm > 0; }
@@ -6736,8 +6791,8 @@ public:
     Serial.printf("[alarm] fired %u (queue %u)\n", bit, evQueue);
     // each its own pattern, so the wrist knows which before the eyes do.
     // Through buzz(): an odd vibMotor length leaves the motor running.
-    if (bit == EV_PAY) {
-      // silent here: whoever saw it land has already played the payment
+    if (bit == EV_PAY || bit == EV_CURIO) {
+      // silent here (a curiosity buzzes in its own animation): whoever saw it land has already played the payment
       // pattern, the same one the wallet face has always used
     } else if (bit == EV_BLOCK) {
       buzz(75, 14);                                         // one long
@@ -6791,6 +6846,11 @@ public:
   // filled tag on the watch), what happened, one big number, context, and
   // the one thing to do about it.
   void drawEventScreen(uint8_t ev) {
+    if (ev == EV_CURIO) {
+      const char *why = curiosity(evCurioH);
+      drawCurioFrame(evCurioH, why ? why : "CURIOUS BLOCK");
+      return;
+    }
     themeDark = darkNow();
     display.setFullWindow();
     display.fillScreen(bg());
@@ -6877,10 +6937,14 @@ public:
     }
     drawEventScreen(ev);
     evShown = ev;
+    // the curiosity is black whatever the theme: a flip either way goes full
+    bool dark = (ev == EV_CURIO) ? true : themeDark;
     if (timerWake && !inDocked) {                 // first sight: a full
       displayFull();                     // refresh, then sleep
+      paintedDark = dark;
       longSleep(1);                               // without a second one
     }
+    if (dark != paintedDark) { displayFull(); paintedDark = dark; }
     return true;                                  // otherwise the caller
   }                                               // sends it to the panel
 
@@ -7789,6 +7853,7 @@ public:
     wakeMin += catchUpWakeClock();     // a press can cut a long sleep short
     uint64_t wake = esp_sleep_get_ext1_wakeup_status();
     buttonWake = true;                 // don't tick the wake clock
+    pressRun = true;
     // the accelerometer, not a button: only ever armed for a rest sleep
     bool shook = (wake & ACC_INT_MASK) && !(wake & (BTN_PIN_MASK));
     if (shook) shakeClear();           // release the latched line
