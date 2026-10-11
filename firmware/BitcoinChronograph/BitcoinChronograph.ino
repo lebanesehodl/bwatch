@@ -3415,8 +3415,10 @@ public:
     static const BtcDate BTC_DATES[] = {
       { 1,  3, 2009, "GENESIS",    "BLOCK 0 WAS MINED",     "THE TIMES 03/JAN/2009" },
       { 1, 12, 2009, "FIRST SEND", "SATOSHI TO HAL FINNEY", "10 BTC IN BLOCK 170" },
+      { 4, 23, 2011, "MOVED ON",   "I'VE MOVED ON TO OTHER THINGS", "IT'S IN GOOD HANDS" },
       { 5, 22, 2010, "PIZZA DAY",  "10,000 BTC FOR",        "TWO PIZZAS" },
       {10, 31, 2008, "WHITEPAPER", "A PEER-TO-PEER",        "ELECTRONIC CASH SYSTEM" },
+      {12, 12, 2010, "LAST POST",  "SATOSHI'S LAST FORUM POST", "BITCOINTALK, V0.3.19" },
     };
     tmElements_t dt;
     if (!localDate(dt)) return nullptr;
