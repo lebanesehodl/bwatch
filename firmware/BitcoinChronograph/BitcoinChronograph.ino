@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0140
+#define RTC_LAYOUT_MAGIC 0xB17C0141
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -272,6 +272,11 @@ RTC_DATA_ATTR uint32_t usbSeenWake   = 0;    // first wake USB was noticed, so
 RTC_DATA_ATTR float    minVoltSeen   = 9.9f; // the lowest true reading ever
 RTC_DATA_ATTR uint32_t minVoltWake   = 0;    // and the wake it happened on
 RTC_DATA_ATTR uint8_t  minVoltFlags  = 0;    // bit0 travelling, bit1 docked
+RTC_DATA_ATTR long     retEpoch      = 0;   // the epoch the watch last knew it was in
+RTC_DATA_ATTR uint32_t retStartT     = 0;   // when that epoch began (its first block)
+RTC_DATA_ATTR long     evRetEpoch    = 0;   // the retarget recap waiting to be seen
+RTC_DATA_ATTR float    evRetChange   = 0, evRetDays = 0, evRetMined = 0, evRetFees = -1;
+RTC_DATA_ATTR long     evRetTxs      = 0;
 RTC_DATA_ATTR long     lastCurio     = 0;   // height of the last curiosity
 RTC_DATA_ATTR long     curioSeen     = 0;   // every height up to here checked
                                             // marked, so one never repeats
@@ -850,6 +855,98 @@ public:
     http.setReuse(true);
   }
 
+  // ---- RETARGET: noticing the end of an epoch, and reading what it did ----
+  // The tip is the clock: when its epoch (height / 2016) moves on, the
+  // difficulty adjustment has happened. mempool's difficulty answer then
+  // reports it (previousRetarget) and when it happened (previousTime); the
+  // epoch's fees and transactions come from reward-stats, which counts back
+  // from the tip, so when the watch is late (offline, asleep) the blocks
+  // since the boundary are subtracted out. If the answer still describes
+  // the old epoch (an indexer a few seconds behind), the next fetch retries.
+  bool retPending = false;
+  struct Retarget {
+    long epoch;            // the epoch that just ended
+    float change;          // difficulty, % (the adjustment that happened)
+    float days;            // how long its 2,016 blocks took; 0 = unknown
+    float mined, fees;     // BTC: subsidy, and fees on top; fees < 0 = unknown
+    long txs;              // transactions in it; 0 = unknown
+  };
+
+  static double jnum(JsonVariantConst v) {       // numbers sent as strings
+    if (v.is<const char *>()) return atof(v.as<const char *>());
+    return v.as<double>();
+  }
+
+  bool rewardStats(HTTPClient &mp, WiFiClientSecure &client, long n,
+                   double &fee, double &tx) {
+    if (n <= 0) { fee = 0; tx = 0; return true; }
+    char url[80];
+    snprintf(url, 80, "https://mempool.space/api/v1/mining/reward-stats/%ld", n);
+    String body;
+    if (!mpGet(mp, client, url, body)) return false;
+    JsonDocument doc;
+    if (deserializeJson(doc, body)) return false;
+    fee = jnum(doc["totalFee"]) / 1e8;
+    tx  = jnum(doc["totalTx"]);
+    return true;
+  }
+
+  void retargetCheck(HTTPClient &mp, WiFiClientSecure &client) {
+    if (blockHeight <= 0) return;
+    long ep = blockHeight / 2016;
+    if (retEpoch == 0) { retEpoch = ep; return; }  // first sight: no card
+    if (ep <= retEpoch) return;
+    String body;
+    if (!mpGet(mp, client, DIFF_URL, body)) return;   // next fetch, then
+    JsonDocument doc;
+    if (deserializeJson(doc, body)) return;
+    long nrh = doc["nextRetargetHeight"] | 0L;
+    long boundary = ep * 2016L;
+    if (nrh != boundary + 2016) {
+      Serial.printf("[retarget] %ld: answer not caught up (%ld)\n", boundary, nrh);
+      return;
+    }
+    uint32_t endT = (uint32_t)(doc["previousTime"] | 0.0);
+    evRetChange = doc["previousRetarget"] | 0.0f;
+    evRetEpoch  = ep - 1;                       // the one that just ended
+    // how long it took: only when the watch saw it start, and only one
+    // epoch back (two weeks offline: the start is the one before)
+    evRetDays = (ep == retEpoch + 1 && retStartT > 0 && endT > retStartT)
+                  ? (endT - retStartT) / 86400.0f : 0;
+    evRetMined = supplyBTC(boundary) - supplyBTC(boundary - 2016);
+    // fees and transactions: the last (late + 2016) blocks, less the late ones
+    long late = blockHeight - boundary + 1;     // blocks of the new epoch
+    double fA, tA, fB, tB;
+    if (late < 300 && rewardStats(mp, client, late + 2016, fA, tA) &&
+        rewardStats(mp, client, late, fB, tB)) {
+      evRetFees = fA - fB; evRetTxs = (long)(tA - tB);
+    } else { evRetFees = -1; evRetTxs = 0; }
+    retEpoch = ep;
+    retStartT = endT;                           // the new epoch began then
+    retPending = true;
+    Serial.printf("[retarget] epoch %ld: %+.2f%%, %.1f days, %.0f + %.2f BTC, %ld tx\n",
+                  evRetEpoch, evRetChange, evRetDays, evRetMined, evRetFees, evRetTxs);
+  }
+
+  Retarget heldRetarget() {
+    return Retarget{evRetEpoch, evRetChange, evRetDays, evRetMined, evRetFees, evRetTxs};
+  }
+
+  // the takeover: the face's dial grows, closes, says what happened
+  void retargetScreen() {
+    Retarget r = heldRetarget();
+    static const int HOLD[] = {420, 260, 380, 420};
+    for (int st = 0; st < 4; st++) {
+      drawRetarget(r, st);
+      display.display(true);
+      delay(HOLD[st]);
+    }
+    drawRetarget(r, 4);
+    displayFull();
+    paintedDark = true;            // always black: the face after flips full
+    buzz(35, 2); delay(140); buzz(35, 2);
+  }
+
   bool fetchAll() {
     if (!myConnectWiFi()) {
       syncStep(SY_WIFI, "NOT FOUND", 2);
@@ -934,6 +1031,7 @@ public:
           break;
         }
       }
+      retargetCheck(mp, client);                  // an epoch ended?
       if (syncOn) {                               // the height itself
         char t[16] = "NO ANSWER";
         if (lastHeightWake == wakeMin && blockHeight > 0)
@@ -954,6 +1052,13 @@ public:
           JsonDocument doc;
           if (!deserializeJson(doc, body)) {
             diffChangeEst = doc["difficultyChange"] | 0.0f;
+            // when this epoch began: kept for the recap at its end. Only
+            // for the epoch the watch thinks it is in, so a read that lands
+            // after a crossing the tip has not shown yet cannot overwrite it
+            long nrh = doc["nextRetargetHeight"] | 0L;
+            uint32_t pt = (uint32_t)((doc["previousTime"] | 0.0) );
+            if (nrh > 0 && pt > 0 && retEpoch > 0 && nrh / 2016 - 1 == retEpoch)
+              retStartT = pt;
             float ta = doc["timeAvg"] | 0.0f;      // ms, current epoch
             if (ta > 0) avgBlockSec = constrain(ta / 1000.0f, 300.0f, 1200.0f);
             if (!(avgBlockSec > 300.0f && avgBlockSec < 1200.0f))
@@ -1408,6 +1513,14 @@ public:
         }
       }
       curioSeen = blockHeight;
+    }
+
+    // an epoch ended: the dial takes the glass, then waits there for a press
+    if (retPending) {
+      retPending = false;
+      retargetScreen();
+      fireEvent(EV_RETG);
+      evShown = EV_RETG;
     }
 
     forceFetch   = false;   // wallet scanning moved to the post-render hook
@@ -2567,13 +2680,6 @@ public:
   // The little dial spends two weeks filling; when it fills, it takes the
   // glass and says what the network just did to itself. stage 0: the ring
   // nearly full, 1: closed at 100, 2: the recap inside it.
-  struct Retarget {
-    long epoch;            // the epoch that just ended
-    float change;          // difficulty, % (the adjustment that happened)
-    float days;            // how long its 2,016 blocks took; 0 = unknown
-    float mined, fees;     // BTC: subsidy, and fees on top; fees < 0 = unknown
-    long txs;              // transactions in it; 0 = unknown
-  };
 
   // the dial at any size: the face's small EPOC dial, scaled. The arc and
   // ring keep their proportions; the label sits inside when there is room.
@@ -2644,19 +2750,19 @@ public:
     display.drawFastHLine(70, 102, 60, GxEPD_WHITE);
     if (r.days > 0) {
       snprintf(s, 34, "2,016 BLOCKS IN %.1f DAYS", r.days);
-      centerSmall(s, 112);
-    } else centerSmall("2,016 BLOCKS", 112);
-    if (r.fees >= 0) {
-      char g[12]; grouped(g, 12, (long long)(r.mined + 0.5));
-      snprintf(s, 34, "%s MINED + %.1f FEES", g, r.fees);
-    } else {
-      char g[12]; grouped(g, 12, (long long)(r.mined + 0.5));
+      centerSmall(s, 110);
+    } else centerSmall("2,016 BLOCKS", 110);
+    { char g[12]; grouped(g, 12, (long long)(r.mined + 0.5));
       snprintf(s, 34, "%s BTC MINED", g);
+      centerSmall(s, 122); }
+    int y = 134;
+    if (r.fees >= 0) {
+      snprintf(s, 34, "+ %.1f IN FEES", r.fees);
+      centerSmall(s, y); y += 12;
     }
-    centerSmall(s, 125);
     if (r.txs > 0) {
       snprintf(s, 34, "%.1fM TRANSACTIONS", r.txs / 1e6);
-      centerSmall(s, 138);
+      centerSmall(s, y);
     }
   }
 
@@ -4154,6 +4260,8 @@ public:
     curIdx = 0;
     for (int i = 0; i < NUM_CUR; i++) fxRate[i] = 0;
     lastRewardBtc = 0; lastTxCount = 0; netHashEH = 0; lastCurio = 0; curioSeen = 0;
+    retEpoch = 0; retStartT = 0; evRetEpoch = 0; evRetChange = 0; evRetDays = 0;
+    evRetMined = 0; evRetFees = -1; evRetTxs = 0;
     minVoltSeen = 9.9f; minVoltWake = 0; minVoltFlags = 0;
     usbSeenWake = 0;
     mempoolBlocks = 0;
@@ -6591,7 +6699,8 @@ public:
   }
 
   // ---------------- alarms ----------------
-  enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4, EV_PAY = 8, EV_CURIO = 16 };
+  enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4, EV_PAY = 8, EV_CURIO = 16,
+         EV_RETG = 32 };
   enum { TRACK_NONE = 0, TRACK_RESOLVE = 1, TRACK_ON = 2 };
 
   bool alarmsArmed() { return alarmHeight > 0 || feeAlarm > 0; }
@@ -6888,7 +6997,7 @@ public:
     Serial.printf("[alarm] fired %u (queue %u)\n", bit, evQueue);
     // each its own pattern, so the wrist knows which before the eyes do.
     // Through buzz(): an odd vibMotor length leaves the motor running.
-    if (bit == EV_PAY || bit == EV_CURIO) {
+    if (bit == EV_PAY || bit == EV_CURIO || bit == EV_RETG) {
       // silent here (a curiosity buzzes in its own animation): whoever saw it land has already played the payment
       // pattern, the same one the wallet face has always used
     } else if (bit == EV_BLOCK) {
@@ -6943,6 +7052,7 @@ public:
   // filled tag on the watch), what happened, one big number, context, and
   // the one thing to do about it.
   void drawEventScreen(uint8_t ev) {
+    if (ev == EV_RETG) { drawRetarget(heldRetarget(), 4); return; }
     if (ev == EV_CURIO) {
       const char *why = curiosity(evCurioH);
       drawCurioFrame(evCurioH, why ? why : "CURIOUS BLOCK");
@@ -7035,7 +7145,7 @@ public:
     drawEventScreen(ev);
     evShown = ev;
     // the curiosity is black whatever the theme: a flip either way goes full
-    bool dark = (ev == EV_CURIO) ? true : themeDark;
+    bool dark = (ev == EV_CURIO || ev == EV_RETG) ? true : themeDark;
     if (timerWake && !inDocked) {                 // first sight: a full
       displayFull();                     // refresh, then sleep
       paintedDark = dark;
