@@ -3401,9 +3401,12 @@ public:
     const char *build = __DATE__ " " __TIME__;
     bool newFirmware = (p.getString("bootFw", "") != String(build));
     uint8_t pick;
-    if (newFirmware) {
+    uint8_t chosen = p.getUChar("bootPick", 0);    // Settings > Start Screen
+    if (newFirmware) p.putString("bootFw", build);
+    if (chosen >= 1 && chosen <= BOOT_SEQS) {
+      pick = chosen - 1;                           // the wearer's choice
+    } else if (newFirmware) {
       pick = 1;                                    // GENESIS
-      p.putString("bootFw", build);
     } else if (last >= BOOT_SEQS) pick = esp_random() % BOOT_SEQS;
     else {
       pick = esp_random() % (BOOT_SEQS - 1);       // one of the other three
@@ -4713,7 +4716,7 @@ public:
   // set once and left (eleven items in one list had become a scroll).
   static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
                                            // row's descenders run off the panel
-  static const int MAIN_LEN = 6, MY_LEN = 7, SET_LEN = 6;
+  static const int MAIN_LEN = 6, MY_LEN = 7, SET_LEN = 7;
   // most used first; About, a status page, last
   static const int MYWATCH_POS = 2, SETTINGS_POS = 4;
   const char *const MAIN_ITEMS[MAIN_LEN] = {
@@ -4724,7 +4727,7 @@ public:
     "Privacy"};
   const char *const SET_ITEMS[SET_LEN] = {
     "Set Time", "Set Timezone", "Sync NTP", "Setup WiFi", "Networks",
-    "Ship Mode"};
+    "Start Screen", "Ship Mode"};
   int menuLen() { return menuLevel == 1 ? MY_LEN : menuLevel == 2 ? SET_LEN : MAIN_LEN; }
   int levelPos() { return menuLevel == 1 ? MYWATCH_POS : SETTINGS_POS; }
   void menuStep(int d) {
@@ -5229,6 +5232,97 @@ public:
       savePrefs();
       buzz(30, 2);
       Serial.printf("[faces] hidden mask 0x%03x\n", faceHide);
+    }
+    waitAllRelease();
+    myShowMenu(menuIndex, false);
+  }
+
+  // Start Screen: which boot sequence plays when the watch starts (power on,
+  // reflash, a crash). Random, the default, never repeats the last one and
+  // opens a new firmware on Genesis. UP/DOWN move, MENU picks, a held MENU
+  // plays the highlighted one right here, BACK leaves it as it was.
+  void bootSeq(int i) {
+    switch (i) {
+      case 0:  bootSegmentTest(); break;
+      case 1:  bootGenesis();     break;
+      case 2:  bootHalvings();    break;
+      default: bootRing();        break;
+    }
+  }
+  void startScreenScreen() {
+    static const char *const NAMES[BOOT_SEQS + 1] = {
+      "Random", "Segment Test", "Genesis", "Halvings", "Time Ring" };
+    static const char *const ABOUT[BOOT_SEQS + 1] = {
+      "A DIFFERENT ONE EACH START", "EVERY SEGMENT, THEN THE MARK",
+      "MINING BLOCK 0, 03 JAN 2009", "SIX EPOCHS OF THE SUBSIDY",
+      "THE RING: BITCOIN IS TIME" };
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    int sel;
+    { Preferences p; p.begin("btcchrono", true);
+      sel = p.getUChar("bootPick", 0); p.end(); }
+    if (sel > BOOT_SEQS) sel = 0;
+    const int was = sel;
+    bool redraw = true, full = false, save = false;
+    unsigned long last = millis();
+    display.setFullWindow();
+    while (1) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) break;
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        if (heldFor(MENU_BTN_PIN, 600)) {        // held: play it, here
+          buzz(30, 2);
+          waitAllRelease();
+          int seq = sel ? sel - 1 : (int)(esp_random() % BOOT_SEQS);
+          Serial.printf("[boot] preview %d\n", seq);
+          bootSeq(seq);
+          paintedDark = true;                    // it ends on black
+          full = true; redraw = true; last = millis();
+          waitAllRelease();
+          continue;
+        }
+        save = true; break;                       // tapped: this one
+      }
+      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + BOOT_SEQS) % (BOOT_SEQS + 1); redraw = true; last = millis(); delay(150); }
+      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + 1) % (BOOT_SEQS + 1); redraw = true; last = millis(); delay(150); }
+      if (millis() - last > 30000) break;
+      if (redraw) {
+        redraw = false;
+        themeDark = darkNow();
+        display.fillScreen(bg());
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setTextColor(fg());
+        display.setCursor(0, 22); display.println("Start Screen");
+        for (int i = 0; i <= BOOT_SEQS; i++) {
+          int y = 50 + i * 22;
+          char line[22];
+          snprintf(line, 22, "%s %s", i == was ? "(o)" : "( )", NAMES[i]);
+          display.setCursor(8, y);
+          if (i == sel) {
+            display.fillRect(2, y - 15, 196, 21, fg());
+            display.setTextColor(bg());
+          } else display.setTextColor(fg());
+          display.print(line);
+        }
+        display.setTextColor(fg());
+        display.setFont(NULL);
+        centerSmall(ABOUT[sel], 160);
+        centerSmall("MENU: PICK   HOLD MENU: PLAY", 176);
+        centerSmall("BACK: CANCEL", 188);
+        if (full) { displayFull(); full = false; }   // back from black
+        else display.display(themeDark == paintedDark);
+        paintedDark = themeDark;
+      }
+      delay(40);
+    }
+    if (save && sel != was) {
+      Preferences p; p.begin("btcchrono", false);
+      p.putUChar("bootPick", sel); p.end();
+      buzz(30, 2);
+      Serial.printf("[boot] start screen: %s\n", NAMES[sel]);
     }
     waitAllRelease();
     myShowMenu(menuIndex, false);
@@ -5896,6 +5990,7 @@ public:
     p.remove("dFrom"); p.remove("dTo"); p.remove("hBlk"); p.remove("hPrc");
     p.remove("face"); p.remove("batt"); p.remove("wpriv");   // My Watch
     p.remove("cur"); p.remove("curOn");
+    p.remove("bootPick");                           // back to Random
     p.end();
     WiFi.persistent(true);                         // the radio's own stored
     WiFi.mode(WIFI_STA);                           // credentials too: erasing
@@ -6980,7 +7075,8 @@ public:
       case 2: mySyncNTP(); break;                       // keychain-aware
       case 3: mySetupWifi(); break;                     // BACK returns to menu
       case 4: showNetworks(); break;                    // list and forget
-      case 5: shipModeScreen(); break;                  // asleep for the box
+      case 5: startScreenScreen(); break;               // the boot sequence
+      case 6: shipModeScreen(); break;                  // asleep for the box
     }
   }
 
