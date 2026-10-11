@@ -2575,31 +2575,50 @@ public:
     long txs;              // transactions in it; 0 = unknown
   };
 
-  void drawRetarget(const Retarget &r, int stage) {
-    const int cx = 100, cy = 100, R = 95;
-    display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+  // the dial at any size: the face's small EPOC dial, scaled. The arc and
+  // ring keep their proportions; the label sits inside when there is room.
+  void drawEpocRing(int cx, int cy, int R, float pct) {
     display.drawCircle(cx, cy, R, GxEPD_WHITE);
+    int tk = R > 40 ? 4 : 3;
     for (int a = 0; a < 360; a += 90) {            // the quarter ticks
       float rad = a * DEG_TO_RAD;
       display.drawLine(cx + cosf(rad) * (R + 1), cy + sinf(rad) * (R + 1),
-                       cx + cosf(rad) * (R + 4), cy + sinf(rad) * (R + 4),
+                       cx + cosf(rad) * (R + tk), cy + sinf(rad) * (R + tk),
                        GxEPD_WHITE);
     }
+    int outer = R - (R > 40 ? 3 : 2), inner = R - (R > 40 ? 10 : 5);
     // the arc, solid: a filled ring (spokes at this radius leave gaps)
-    display.fillCircle(cx, cy, R - 3, GxEPD_WHITE);
-    display.fillCircle(cx, cy, R - 10, GxEPD_BLACK);
-    if (stage == 0)                               // the last 3% still to go
-      for (float a = -90 - 0.03f * 360.0f; a <= -90; a += 0.25f) {
+    display.fillCircle(cx, cy, outer, GxEPD_WHITE);
+    display.fillCircle(cx, cy, inner, GxEPD_BLACK);
+    if (pct < 1.0f)                               // what is still to go
+      for (float a = -90 + pct * 360.0f; a <= 270; a += 0.25f) {
         float rad = a * DEG_TO_RAD;
-        display.drawLine(cx + cosf(rad) * (R - 11), cy + sinf(rad) * (R - 11),
-                         cx + cosf(rad) * (R - 2), cy + sinf(rad) * (R - 2),
+        display.drawLine(cx + cosf(rad) * (inner - 1), cy + sinf(rad) * (inner - 1),
+                         cx + cosf(rad) * (outer + 1), cy + sinf(rad) * (outer + 1),
                          GxEPD_BLACK);
       }
+    char p[8]; snprintf(p, 8, "%d", (int)(pct * 100 + 0.001f));
     display.setFont(NULL); display.setTextSize(1);
-    centerSmall(stage == 0 ? "EPOC 97" : "EPOC 100", 168);
-    if (stage < 2) return;
+    if (R > 40) {
+      char l[16]; snprintf(l, 16, "EPOC %s", p);
+      display.setCursor(cx - (int)strlen(l) * 3, cy + R - 32);
+      display.print(l);
+    } else {                                       // the face's own layout
+      display.setCursor(cx - (int)strlen(p) * 3, cy - 3); display.print(p);
+      display.setCursor(cx - 12, cy - R - 10);         display.print("EPOC");
+    }
+  }
+
+  // stage 0: the face's small dial, 1: halfway out, 2: full size at 97,
+  // 3: closed at 100, 4: the recap inside it
+  void drawRetarget(const Retarget &r, int stage) {
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    static const int CX[] = {30, 62, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
+    int k = stage < 2 ? stage : 2;
+    drawEpocRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f);
+    if (stage < 4) return;
 
     char s[34];
     snprintf(s, 34, "EPOCH %ld", r.epoch);
