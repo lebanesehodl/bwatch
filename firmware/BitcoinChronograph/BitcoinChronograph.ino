@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C013E
+#define RTC_LAYOUT_MAGIC 0xB17C013F
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -273,6 +273,7 @@ RTC_DATA_ATTR float    minVoltSeen   = 9.9f; // the lowest true reading ever
 RTC_DATA_ATTR uint32_t minVoltWake   = 0;    // and the wake it happened on
 RTC_DATA_ATTR uint8_t  minVoltFlags  = 0;    // bit0 travelling, bit1 docked
 RTC_DATA_ATTR long     lastCurio     = 0;   // height of the last curiosity
+RTC_DATA_ATTR long     curioSeen     = 0;   // every height up to here checked
                                             // marked, so one never repeats
 RTC_DATA_ATTR char     poolName[12]  = {0};  // who mined the last block
 RTC_DATA_ATTR long     rwdHeight     = 0;    // the height the reward/
@@ -1343,9 +1344,20 @@ public:
     if (!sawMillion && blockHeight >= 1000000L) millionScreen();
 
     // and the curiosities, which are only ever marked once each
-    if (blockHeight > 0 && blockHeight != lastCurio) {
-      const char *why = curiosity(blockHeight);
-      if (why) { lastCurio = blockHeight; curiosityScreen(blockHeight, why); }
+    // Every height since the last fetch, not just the tip: fetches come every
+    // block and a half, and none come at night, so the tip alone skipped
+    // whatever landed in between (970,969 -> 970,971 and 970,970 was never
+    // seen). The newest curiosity in the gap shows, once; a restart starts
+    // from the tip rather than replaying old ones.
+    if (blockHeight > 0 && blockHeight > curioSeen) {
+      long from = curioSeen > 0 ? curioSeen + 1 : blockHeight;
+      if (blockHeight - from > 300) from = blockHeight - 300;
+      for (long h = blockHeight; h >= from; h--) {
+        if (h <= lastCurio) break;
+        const char *why = curiosity(h);
+        if (why) { lastCurio = h; curiosityScreen(h, why); break; }
+      }
+      curioSeen = blockHeight;
     }
 
     forceFetch   = false;   // wallet scanning moved to the post-render hook
@@ -3313,8 +3325,12 @@ public:
     bool pal = true, rep = true;
     for (int i = 0; i < n / 2; i++) if (s[i] != s[n-1-i]) { pal = false; break; }
     for (int i = 1; i < n; i++)     if (s[i] != s[0])     { rep = false; break; }
-    if (rep) return "REPDIGIT BLOCK";
-    if (pal) return "PALINDROME BLOCK";
+    // twin: the same digits twice over, 970,970 (or 98,9898... any even
+    // length whose halves match). Not a palindrome: backwards it is 079,079
+    bool twin = (n % 2 == 0) && strncmp(s, s + n / 2, n / 2) == 0;
+    if (rep)  return "REPDIGIT BLOCK";
+    if (pal)  return "PALINDROME BLOCK";
+    if (twin) return "TWIN BLOCK";
     return nullptr;
   }
 
@@ -3749,7 +3765,7 @@ public:
     for (int i = 0; i < NUM_MODES; i++) cellSel[i] = 0;
     curIdx = 0;
     for (int i = 0; i < NUM_CUR; i++) fxRate[i] = 0;
-    lastRewardBtc = 0; lastTxCount = 0; netHashEH = 0; lastCurio = 0;
+    lastRewardBtc = 0; lastTxCount = 0; netHashEH = 0; lastCurio = 0; curioSeen = 0;
     minVoltSeen = 9.9f; minVoltWake = 0; minVoltFlags = 0;
     usbSeenWake = 0;
     mempoolBlocks = 0;
