@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0141
+#define RTC_LAYOUT_MAGIC 0xB17C0142
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -277,6 +277,7 @@ RTC_DATA_ATTR uint32_t retStartT     = 0;   // when that epoch began (its first 
 RTC_DATA_ATTR long     evRetEpoch    = 0;   // the retarget recap waiting to be seen
 RTC_DATA_ATTR float    evRetChange   = 0, evRetDays = 0, evRetMined = 0, evRetFees = -1;
 RTC_DATA_ATTR long     evRetTxs      = 0;
+RTC_DATA_ATTR bool     retPending    = false;  // read, not yet shown
 RTC_DATA_ATTR long     lastCurio     = 0;   // height of the last curiosity
 RTC_DATA_ATTR long     curioSeen     = 0;   // every height up to here checked
                                             // marked, so one never repeats
@@ -863,7 +864,6 @@ public:
   // from the tip, so when the watch is late (offline, asleep) the blocks
   // since the boundary are subtracted out. If the answer still describes
   // the old epoch (an indexer a few seconds behind), the next fetch retries.
-  bool retPending = false;
   struct Retarget {
     long epoch;            // the epoch that just ended
     float change;          // difficulty, % (the adjustment that happened)
@@ -1436,6 +1436,54 @@ public:
     return failCount > 0 && wakeMin < nextTryWake;
   }
 
+  // The moments the chain marks: curiosities, and an epoch's end. Called
+  // after every fetch, on the wrist (maybeFetch) and on the dock, whose own
+  // loop polls the tip every 15 s and never passes through maybeFetch, so
+  // docked, a curiosity waited for the unplug and a recap was lost with the
+  // run. Returns true if anything took the glass.
+  bool markMoments() {
+    bool shown = false;
+    // and the curiosities, which are only ever marked once each
+    // Every height since the last fetch, not just the tip: fetches come every
+    // block and a half, and none come at night, so the tip alone skipped
+    // whatever landed in between (970,969 -> 970,971 and 970,970 was never
+    // seen). The newest curiosity in the gap shows, once; a restart starts
+    // from the tip rather than replaying old ones.
+    if (blockHeight > 0 && blockHeight > curioSeen) {
+      long from = curioSeen > 0 ? curioSeen + 1 : blockHeight;
+      if (blockHeight - from > 300) from = blockHeight - 300;
+      for (long h = blockHeight; h >= from; h--) {
+        if (h <= lastCurio) break;
+        const char *why = curiosity(h);
+        if (why) {
+          lastCurio = h;
+          curiosityScreen(h, why);
+          // It used to hold 2.6 s and give way to the face. A fetch on a
+          // minute wake has nobody watching, so it was seen by luck (970,970
+          // came and went unseen). Now it waits on the glass like an alarm,
+          // until a press. Already up: the hold just sleeps on it.
+          evCurioH = h;
+          fireEvent(EV_CURIO);
+          evShown = EV_CURIO;
+          shown = true;
+          break;
+        }
+      }
+      curioSeen = blockHeight;
+    }
+
+    // an epoch ended: the dial takes the glass, then waits there for a press
+    if (retPending) {
+      retPending = false;
+      retargetScreen();
+      fireEvent(EV_RETG);
+      evShown = EV_RETG;
+      shown = true;
+    }
+
+    return shown;
+  }
+
   void maybeFetch() {
     if (inDocked) return;   // docked loop schedules fetches itself,
                             // ONE TLS session at a time (heap can't
@@ -1487,41 +1535,7 @@ public:
     // the milestone: checked where a new height first becomes known
     if (!sawMillion && blockHeight >= 1000000L) millionScreen();
 
-    // and the curiosities, which are only ever marked once each
-    // Every height since the last fetch, not just the tip: fetches come every
-    // block and a half, and none come at night, so the tip alone skipped
-    // whatever landed in between (970,969 -> 970,971 and 970,970 was never
-    // seen). The newest curiosity in the gap shows, once; a restart starts
-    // from the tip rather than replaying old ones.
-    if (blockHeight > 0 && blockHeight > curioSeen) {
-      long from = curioSeen > 0 ? curioSeen + 1 : blockHeight;
-      if (blockHeight - from > 300) from = blockHeight - 300;
-      for (long h = blockHeight; h >= from; h--) {
-        if (h <= lastCurio) break;
-        const char *why = curiosity(h);
-        if (why) {
-          lastCurio = h;
-          curiosityScreen(h, why);
-          // It used to hold 2.6 s and give way to the face. A fetch on a
-          // minute wake has nobody watching, so it was seen by luck (970,970
-          // came and went unseen). Now it waits on the glass like an alarm,
-          // until a press. Already up: the hold just sleeps on it.
-          evCurioH = h;
-          fireEvent(EV_CURIO);
-          evShown = EV_CURIO;
-          break;
-        }
-      }
-      curioSeen = blockHeight;
-    }
-
-    // an epoch ended: the dial takes the glass, then waits there for a press
-    if (retPending) {
-      retPending = false;
-      retargetScreen();
-      fireEvent(EV_RETG);
-      evShown = EV_RETG;
-    }
+    markMoments();                 // curiosities, a retarget
 
     forceFetch   = false;   // wallet scanning moved to the post-render hook
     fetchPending = false;   // the radio has been out: the corner stops saying
@@ -4261,7 +4275,7 @@ public:
     for (int i = 0; i < NUM_CUR; i++) fxRate[i] = 0;
     lastRewardBtc = 0; lastTxCount = 0; netHashEH = 0; lastCurio = 0; curioSeen = 0;
     retEpoch = 0; retStartT = 0; evRetEpoch = 0; evRetChange = 0; evRetDays = 0;
-    evRetMined = 0; evRetFees = -1; evRetTxs = 0;
+    evRetMined = 0; evRetFees = -1; evRetTxs = 0; retPending = false;
     minVoltSeen = 9.9f; minVoltWake = 0; minVoltFlags = 0;
     usbSeenWake = 0;
     mempoolBlocks = 0;
@@ -7742,6 +7756,7 @@ public:
             blockHeight = h; lastHeightWake = wakeMin;
             if (buzzBlock) vibMotor(75, 4);
             Serial.printf("[dock] block %ld\n", h);
+            if (markMoments()) redraw = true;   // a curiosity, here too
             extrasWant = true;     // fetch reward/miner AFTER the
             lastExtrasTry = 0;     // extras indexer catches up — an
                                    // instant fetch reads block N-1
@@ -7902,6 +7917,7 @@ public:
         forceFetch = false;
         if (fetchAll()) {
           lastFetchMin = wakeMin; failCount = 0; nextTryWake = 0;
+          markMoments();                     // the retarget, read just now
         } else {
           failCount++;
           nextTryWake = wakeMin + (failCount > 3 ? 5 : 1);
