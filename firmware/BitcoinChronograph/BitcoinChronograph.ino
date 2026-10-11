@@ -3391,6 +3391,136 @@ public:
     delay(2600);
   }
 
+  // Bitcoin dates. The block curiosities are found in the chain; these are on
+  // the calendar. Once each, on the first press of the day: a press means
+  // someone is looking, which a timer wake at 4 am does not. The press that
+  // brings the card up does only that, like the press that ends a rest.
+  // Remembered in NVS, not RTC, so a reflash on the day does not replay it.
+  struct BtcDate {
+    uint8_t m, d; uint16_t y;
+    const char *title, *l1, *l2;
+  };
+  // today's date on the wall clock, or nothing when the clock can't be trusted
+  bool localDate(tmElements_t &dt) {
+    time_t lt = makeTime(currentTime);
+    if (tzIndex > 0) {
+      time_t utc = lt - settings.gmtOffset;
+      lt = utc + tzOffsetSec(tzIndex, utc);
+    }
+    breakTime(lt, dt);
+    return tmYearToCalendar(dt.Year) >= 2026;   // an unset RTC reads 1970/2000
+  }
+
+  const BtcDate *dateCardDue(uint32_t &key) {
+    static const BtcDate BTC_DATES[] = {
+      { 1,  3, 2009, "GENESIS",    "BLOCK 0 WAS MINED",     "THE TIMES 03/JAN/2009" },
+      { 1, 12, 2009, "FIRST SEND", "SATOSHI TO HAL FINNEY", "10 BTC IN BLOCK 170" },
+      { 5, 22, 2010, "PIZZA DAY",  "10,000 BTC FOR",        "TWO PIZZAS" },
+      {10, 31, 2008, "WHITEPAPER", "A PEER-TO-PEER",        "ELECTRONIC CASH SYSTEM" },
+    };
+    tmElements_t dt;
+    if (!localDate(dt)) return nullptr;
+    for (const BtcDate &b : BTC_DATES) {
+      if (b.m != dt.Month || b.d != dt.Day) continue;
+      key = tmYearToCalendar(dt.Year) * 10000UL + dt.Month * 100 + dt.Day;
+      Preferences p; p.begin("btcchrono", true);
+      uint32_t seen = p.getULong("dateSeen", 0);
+      p.end();
+      return seen == key ? nullptr : &b;
+    }
+    return nullptr;
+  }
+
+  // a big price in a few characters: 1.24B, 87.3T
+  void fmtWorth(char *o, size_t n, double v) {
+    if      (v >= 1e12) snprintf(o, n, "%.1fT", v / 1e12);
+    else if (v >= 1e9)  snprintf(o, n, "%.2fB", v / 1e9);
+    else if (v >= 1e6)  snprintf(o, n, "%.1fM", v / 1e6);
+    else                snprintf(o, n, "%.0f",  v);
+  }
+
+  void dateCardScreen(const BtcDate &b, uint32_t key) {
+    static const char *MON[] = {"", "JANUARY", "FEBRUARY", "MARCH", "APRIL",
+      "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER",
+      "DECEMBER"};
+    int years = key / 10000 - b.y;
+    char s[34];
+    guiState = APP_STATE;
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.setFont(NULL);
+
+    // 1. the date it happened
+    snprintf(s, 34, "%d %s %d", b.d, MON[b.m], b.y);
+    centerSmall(s, 14);
+    display.display(true);
+    delay(240);
+
+    // 2. what happened
+    display.setTextSize(3);
+    display.setCursor((200 - (int)strlen(b.title) * 18) / 2, 34);
+    display.print(b.title);
+    display.setTextSize(1);
+    display.display(true);
+    delay(240);
+
+    // 3. how long ago
+    snprintf(s, 34, "%d", years);
+    centerText(s, 108, &DSEG7_Classic_Bold_32);
+    display.setFont(NULL);
+    centerSmall(years == 1 ? "YEAR AGO TODAY" : "YEARS AGO TODAY", 118);
+    display.display(true);
+    delay(240);
+
+    // 4. the detail, and the clean frame that stays up
+    display.drawFastHLine(30, 138, 140, GxEPD_WHITE);
+    centerSmall(b.l1, 150);
+    centerSmall(b.l2, 162);
+    if (b.m == 5 && b.d == 22 && btcPrice > 0) {   // the pizzas, priced live
+      char w[16]; fmtWorth(w, 16, 10000.0 * btcPrice);
+      snprintf(s, 34, "NOW %s %s", w, CUR_CODES[curIdx]);
+      centerSmall(s, 178);
+    }
+    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    displayFull();
+    paintedDark = true;            // always black: the face after flips full
+    buzz(35, 2);
+    Serial.printf("[date] %s, %d years\n", b.title, years);
+
+    Preferences p; p.begin("btcchrono", false);
+    p.putULong("dateSeen", key);
+    p.end();
+
+    // holds until a press, or a minute
+    pinMode(BACK_BTN_PIN, INPUT); pinMode(MENU_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    unsigned long t0 = millis();
+    while (millis() - t0 < 60000) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
+          digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
+          digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
+          digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) { waitAllRelease(); break; }
+      delay(50);
+    }
+    guiState = WATCHFACE_STATE;
+  }
+
+  // true when a card went up (and the face after it): the press is spent
+  bool maybeDateCard() {
+    uint32_t key = 0;
+    const BtcDate *b = dateCardDue(key);
+    if (!b) return false;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    dateCardScreen(*b, key);
+    RTC.read(currentTime);
+    showFaceFull();
+    return true;
+  }
+
   // There was a clearPanel() here: a full inverse refresh before the face,
   // to scrub the residue a black menu left on a white panel. It went when the
   // menu started following the theme — with both in the same palette there is
@@ -7565,6 +7695,7 @@ public:
       // runs, and the fresh face is the full refresh that clears the ghost
       // of the rest face. If it isn't, the next minute's wake does the full.
       if (!fetchPending) { restExitFull = false; cleanNext = true; }
+      if (!shook && maybeDateCard()) { cleanNext = false; return; }
       pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
       pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
       if (!shook) waitAllRelease();
@@ -7579,6 +7710,8 @@ public:
     }
     awakeTill = wakeMin + PRESS_GRACE_MIN;   // every press buys a few
     stillRun = 0;                            // minutes of the full face
+    if (guiState == WATCHFACE_STATE && !evQueue && !qrOnGlass() &&
+        maybeDateCard()) return;             // the day's first press: the card
     // ANY BUTTON: OK. The press acknowledges the alarm on the glass and does
     // nothing else; the next one waiting (or the face) takes its place.
     if (evQueue && guiState == WATCHFACE_STATE && !qrOnGlass()) {
