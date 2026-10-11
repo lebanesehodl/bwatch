@@ -408,8 +408,12 @@ RTC_DATA_ATTR float    battFullV    = 4.20f;  // what this board reads at a
 // Charging. The ADC sees the charger, never the cell, so the level while
 // plugged in is estimated: where the cell was when the cable went in, plus
 // minutes on the charger times a rate learned from real charges.
-#define CHG_RATE_DEFAULT 0.70f  // %/min before any charge has been measured
-                                // (~2.4 h from empty); replaced by learning
+#define CHG_RATE_DEFAULT 3.00f  // %/min before any charge has been measured:
+                                // ~33 min from empty. The wearer saw full at
+                                // ~30 min, under a 25 min settle rule that
+                                // could not show it sooner, so this is if
+                                // anything slow. Replaced by learning
+#define CHG_RATE_MAX     5.00f  // fastest rate learning will accept (20 min)
 #define USB_SETTLE_MIN   3      // cable in this long before 'not charging'
                                 // is believed to mean finished
 #define CHG_EST_CAP      95     // an estimate never claims full: only the
@@ -2969,7 +2973,7 @@ public:
       Preferences p; p.begin("btcchrono", true);
       chgRateCache = p.getFloat("chgRate", CHG_RATE_DEFAULT);
       p.end();
-      if (chgRateCache < 0.2f || chgRateCache > 3.0f) chgRateCache = CHG_RATE_DEFAULT;
+      if (chgRateCache < 0.2f || chgRateCache > CHG_RATE_MAX) chgRateCache = CHG_RATE_DEFAULT;
     }
     return chgRateCache;
   }
@@ -3055,9 +3059,9 @@ public:
       // charge moves it half way and no further.
       if (!chgLearned && chgFromPct >= 0 && chgFromPct <= 60 && chgFromT) {
         float mins = (rtcNow() - chgFromT) / 60.0f;
-        if (mins >= 20.0f && mins <= 600.0f) {
+        if (mins >= 10.0f && mins <= 600.0f) {
           float r = (100 - chgFromPct) / mins;
-          if (r >= 0.2f && r <= 3.0f) {
+          if (r >= 0.2f && r <= CHG_RATE_MAX) {
             chgRateCache = 0.5f * chgRate() + 0.5f * r;
             Preferences p; p.begin("btcchrono", false);
             p.putFloat("chgRate", chgRateCache); p.end();
