@@ -3421,6 +3421,15 @@ public:
     display.setTextSize(1);
   }
 
+  // A line along the bottom of whatever boot screen is up, for the wait
+  // that follows it. Every sequence keeps y 186-199 clear for this.
+  void bootStatus(const char *s) {
+    display.fillRect(0, 186, 200, 14, GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    bootCenter(s, 190, 1);
+    display.display(true);
+  }
+
   void bootCenter(const char *s, int y, int size) {     // built-in font
     display.setFont(NULL);
     display.setTextSize(size);
@@ -3522,6 +3531,7 @@ public:
     bootCenter("MINING THE GENESIS HEADER", 46, 1);
     display.drawFastHLine(10, 58, 180, GxEPD_WHITE);
     display.display(true);
+    delay(400);                       // read the title before the hashing
 
     uint8_t hdr[80];
     memcpy(hdr, HDR, 76);
@@ -3546,12 +3556,15 @@ public:
       display.print(line);
       display.setTextColor(GxEPD_WHITE);
       display.display(true);
+      // paced so each try lands: it raced through in ~2 s and then sat on
+      // the last frame through the first fetch, which read as frozen
+      delay(k == 0 ? 700 : 350);
     }
 
     display.drawFastHLine(10, 140, 180, GxEPD_WHITE);
     bootCenter("BLOCK 0 FOUND", 148, 1);
-    bootCenter("THE TIMES 03/JAN/2009", 168, 1);
-    bootCenter("CHANCELLOR ON BRINK...", 180, 1);
+    bootCenter("THE TIMES 03/JAN/2009", 162, 1);   // up a little: y 186+
+    bootCenter("CHANCELLOR ON BRINK...", 173, 1);  // is the status line's
     display.display(true);
 
     displayFull();
@@ -4022,7 +4035,14 @@ public:
     // BITCOIN IS TIME on every true boot (power-on, reflash, crash) —
     // but never on the once-a-minute deep-sleep wake. Reset reason has
     // real semantics; a sticky RTC flag survives too many resets.
-    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) bootAnimation();
+    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {
+      bootAnimation();
+      paintedDark = true;             // every boot sequence ends on black
+      // A restart has no data, so the first fetch (WiFi, then every
+      // source: 10-20 s) runs before the face can draw. Say so on the boot
+      // screen, or the last frame just sits there looking frozen.
+      if (!haveData || forceFetch) bootStatus("SYNCING TO THE TIP...");
+    }
     // wallet scans are slow (10 sequential TLS requests) — never do them
     // before the face is on screen. Render first, scan after (see the
     // hook at the end of this function). SCAN in the tag meanwhile.
