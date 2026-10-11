@@ -3711,6 +3711,7 @@ public:
   bool prePaint = false;      // re-entering the render to show FTCH before
                               // the radio goes out; suppresses the fetch
   bool walletScanArmed = false, inWalletScan = false;
+  bool walletScanAsked = false;  // the wearer asked (long UP): goes regardless
   int  scanCancelled = -1;     // pin of the button that interrupted a scan
 
   void sanitizeState() {
@@ -4072,9 +4073,13 @@ public:
     if (curIdx >= NUM_CUR) curIdx = 0;
     if (walletView > 2) walletView = 0;  // never dereference
 
+    // Due, and not while the radio is backed off: offline, a scan is the
+    // same 12 s WiFi search the fetch backoff exists to stop, and a failed
+    // scan used to stay due, so the wallet face searched on every wake.
+    walletScanAsked = forceFetch;
     walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
-      (forceFetch || !haveWallet ||
-       wakeMin - lastWalletMin >= walletEveryMin());
+      (forceFetch || (!radioBackedOff() &&
+                      (!haveWallet || wakeMin - lastWalletMin >= walletEveryMin())));
 
     // A requested fetch paints FIRST, then goes to the radio. maybeFetch()
     // lives inside this function, so fetching here meant the request was
@@ -4095,6 +4100,13 @@ public:
       prePaint = false;
     }
     if (!prePaint) maybeFetch();
+    // the fetch may just have failed and backed the radio off: then the
+    // wallet sweep waits too (unless the wearer asked), and the corner must
+    // not say SCAN for a sweep that will not happen
+    if (!prePaint && walletScanArmed && !walletScanAsked && radioBackedOff()) {
+      walletScanArmed = false;
+      Serial.println("[wallet] sweep skipped: offline, backing off");
+    }
     // an alarm someone has not seen yet takes the glass until a press
     if (!prePaint && evQueue && !qrOnGlass() && showEvent(timerWake)) return;
     display.fillScreen(bg());
@@ -4655,6 +4667,8 @@ public:
                                            // handlers stay live and fire
                                            // during ordinary button use
       if (ok) lastWalletMin = wakeMin;
+      else if (scanCancelled < 0) backOffRadio();   // failed, not cancelled:
+                                                    // wait like the fetch does
       fetchPending = false;                // the sweep is over either way
       Serial.printf("[wallet] sweep %s\n",
                     ok ? "OK" : (scanCancelled >= 0 ? "CANCELLED" : "FAIL"));
