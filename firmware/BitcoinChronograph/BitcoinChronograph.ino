@@ -221,7 +221,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0142
+#define RTC_LAYOUT_MAGIC 0xB17C0143
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -278,6 +278,10 @@ RTC_DATA_ATTR long     evRetEpoch    = 0;   // the retarget recap waiting to be 
 RTC_DATA_ATTR float    evRetChange   = 0, evRetDays = 0, evRetMined = 0, evRetFees = -1;
 RTC_DATA_ATTR long     evRetTxs      = 0;
 RTC_DATA_ATTR bool     retPending    = false;  // read, not yet shown
+RTC_DATA_ATTR long     halvEra       = 0;      // the era the watch last knew (0 = unseen)
+RTC_DATA_ATTR int      evHalvN       = 0;      // the halving recap waiting to be seen
+RTC_DATA_ATTR float    evHalvYears   = 0, evHalvFees = -1;
+RTC_DATA_ATTR bool     halvPending   = false;
 RTC_DATA_ATTR long     lastCurio     = 0;   // height of the last curiosity
 RTC_DATA_ATTR long     curioSeen     = 0;   // every height up to here checked
                                             // marked, so one never repeats
@@ -928,6 +932,69 @@ public:
                   evRetEpoch, evRetChange, evRetDays, evRetMined, evRetFees, evRetTxs);
   }
 
+  // The halving: the same, every 210,000 blocks. The era's span comes from
+  // its first block and the new era's first; fees from reward-stats over the
+  // era (it takes a count that large); the rest is the supply arithmetic the
+  // watch already does.
+  struct Halving {
+    int n;                 // which halving (1,050,000 is the fifth)
+    float subsidy;         // the new block subsidy, BTC
+    float years;           // the era's span; 0 = unknown
+    double mined, fees;    // BTC over the era; fees < 0 = unknown
+    double supply;         // BTC in existence after it
+  };
+
+  uint32_t blockTime(HTTPClient &mp, WiFiClientSecure &client, long h) {
+    char url[72]; String body;
+    snprintf(url, 72, "https://mempool.space/api/block-height/%ld", h);
+    if (!mpGet(mp, client, url, body) || body.length() < 64) return 0;
+    String u = String("https://mempool.space/api/block/") + body.substring(0, 64);
+    if (!mpGet(mp, client, u.c_str(), body)) return 0;
+    JsonDocument filter; filter["timestamp"] = true;
+    JsonDocument doc;
+    if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) return 0;
+    return doc["timestamp"] | 0UL;
+  }
+
+  void halvingCheck(HTTPClient &mp, WiFiClientSecure &client) {
+    if (blockHeight <= 0) return;
+    long era = blockHeight / 210000L;
+    if (halvEra == 0) { halvEra = era; return; }   // first sight: no card
+    if (era <= halvEra) return;
+    long boundary = era * 210000L;
+    uint32_t t0 = blockTime(mp, client, boundary - 210000L);
+    uint32_t t1 = blockTime(mp, client, boundary);
+    evHalvYears = (t0 > 0 && t1 > t0) ? (t1 - t0) / (365.25f * 86400.0f) : 0;
+    long late = blockHeight - boundary + 1;
+    double fA, tA, fB, tB;
+    evHalvFees = (late < 300 && rewardStats(mp, client, late + 210000L, fA, tA) &&
+                  rewardStats(mp, client, late, fB, tB)) ? (float)(fA - fB) : -1;
+    evHalvN = (int)era;
+    halvEra = era;
+    halvPending = true;
+    Serial.printf("[halving] %d: %.2f years, fees %.1f\n", evHalvN, evHalvYears, evHalvFees);
+  }
+
+  Halving heldHalving() {
+    long b = (long)evHalvN * 210000L;
+    return Halving{evHalvN, (float)(50.0 / pow(2, evHalvN)), evHalvYears,
+                   supplyBTC(b) - supplyBTC(b - 210000L), evHalvFees, supplyBTC(b)};
+  }
+
+  void halvingScreen() {
+    Halving v = heldHalving();
+    static const int HOLD[] = {420, 260, 380, 420};
+    for (int st = 0; st < 4; st++) {
+      drawHalving(v, st);
+      display.display(true);
+      delay(HOLD[st]);
+    }
+    drawHalving(v, 4);
+    displayFull();
+    paintedDark = true;
+    for (int i = 0; i < 4; i++) { buzz(35, 2); delay(140); }
+  }
+
   Retarget heldRetarget() {
     return Retarget{evRetEpoch, evRetChange, evRetDays, evRetMined, evRetFees, evRetTxs};
   }
@@ -1032,6 +1099,7 @@ public:
         }
       }
       retargetCheck(mp, client);                  // an epoch ended?
+      halvingCheck(mp, client);                   // an era?
       if (syncOn) {                               // the height itself
         char t[16] = "NO ANSWER";
         if (lastHeightWake == wakeMin && blockHeight > 0)
@@ -1472,6 +1540,14 @@ public:
       curioSeen = blockHeight;
     }
 
+    // an era ended: the rarer goes first; both queue, both wait
+    if (halvPending) {
+      halvPending = false;
+      halvingScreen();
+      fireEvent(EV_HALV);
+      evShown = EV_HALV;
+      shown = true;
+    }
     // an epoch ended: the dial takes the glass, then waits there for a press
     if (retPending) {
       retPending = false;
@@ -2697,7 +2773,7 @@ public:
 
   // the dial at any size: the face's small EPOC dial, scaled. The arc and
   // ring keep their proportions; the label sits inside when there is room.
-  void drawEpocRing(int cx, int cy, int R, float pct) {
+  void drawDialRing(int cx, int cy, int R, float pct, const char *name) {
     display.drawCircle(cx, cy, R, GxEPD_WHITE);
     int tk = R > 40 ? 4 : 3;
     for (int a = 0; a < 360; a += 90) {            // the quarter ticks
@@ -2720,12 +2796,13 @@ public:
     char p[8]; snprintf(p, 8, "%d", (int)(pct * 100 + 0.001f));
     display.setFont(NULL); display.setTextSize(1);
     if (R > 40) {
-      char l[16]; snprintf(l, 16, "EPOC %s", p);
+      char l[16]; snprintf(l, 16, "%s %s", name, p);
       display.setCursor(cx - (int)strlen(l) * 3, cy + R - 32);
       display.print(l);
     } else {                                       // the face's own layout
       display.setCursor(cx - (int)strlen(p) * 3, cy - 3); display.print(p);
-      display.setCursor(cx - 12, cy - R - 10);         display.print("EPOC");
+      display.setCursor(cx - (int)strlen(name) * 3, cy - R - 10);
+      display.print(name);
     }
   }
 
@@ -2737,7 +2814,7 @@ public:
     display.setTextColor(GxEPD_WHITE);
     static const int CX[] = {30, 62, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
     int k = stage < 2 ? stage : 2;
-    drawEpocRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f);
+    drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "EPOC");
     if (stage < 4) return;
 
     char s[34];
@@ -2778,6 +2855,49 @@ public:
       snprintf(s, 34, "%.1fM TRANSACTIONS", r.txs / 1e6);
       centerSmall(s, y);
     }
+  }
+
+  // ---- HALVING: the HALV dial, the same way, once every four years ----
+  // stage 0: the face's dial (right side), 1: halfway out, 2: full at 97,
+  // 3: closed at 100, 4: the recap of the era that just ended
+  void drawHalving(const Halving &v, int stage) {
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    static const int CX[] = {170, 138, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
+    int k = stage < 2 ? stage : 2;
+    drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "HALV");
+    if (stage < 4) return;
+
+    char s[34];
+    snprintf(s, 34, "HALVING %d", v.n);
+    centerSmall(s, 32);
+
+    // the new subsidy, big; what it was, small, under it
+    char b[12]; snprintf(b, 12, "%.8g", v.subsidy);
+    centerText(b, 78, &DSEG7_Classic_Bold_32);
+    display.setFont(NULL); display.setTextSize(1);
+    char was[12]; snprintf(was, 12, "%.8g", v.subsidy * 2);
+    snprintf(s, 34, "BTC A BLOCK, WAS %s", was);
+    centerSmall(s, 86);
+
+    display.drawFastHLine(70, 99, 60, GxEPD_WHITE);
+    if (v.years > 0) {
+      snprintf(s, 34, "210,000 BLOCKS, %.1f YEARS", v.years);
+      centerSmall(s, 106);
+    } else centerSmall("210,000 BLOCKS", 106);
+    { char g[16]; grouped(g, 16, (long long)(v.mined + 0.5));
+      snprintf(s, 34, "%s BTC MINED", g);
+      centerSmall(s, 118); }
+    int y = 130;
+    if (v.fees >= 0) {
+      char g[16]; grouped(g, 16, (long long)(v.fees + 0.5));
+      snprintf(s, 34, "+ %s IN FEES", g);
+      centerSmall(s, y); y += 12;
+    }
+    { char g[16]; grouped(g, 16, (long long)(v.supply + 0.5));
+      snprintf(s, 34, "%s OF 21M", g);
+      centerSmall(s, y); }
   }
 
   // round ticker: ring dial with quarter ticks + progress arc + % in center
@@ -4276,6 +4396,7 @@ public:
     lastRewardBtc = 0; lastTxCount = 0; netHashEH = 0; lastCurio = 0; curioSeen = 0;
     retEpoch = 0; retStartT = 0; evRetEpoch = 0; evRetChange = 0; evRetDays = 0;
     evRetMined = 0; evRetFees = -1; evRetTxs = 0; retPending = false;
+    halvEra = 0; evHalvN = 0; evHalvYears = 0; evHalvFees = -1; halvPending = false;
     minVoltSeen = 9.9f; minVoltWake = 0; minVoltFlags = 0;
     usbSeenWake = 0;
     mempoolBlocks = 0;
@@ -6714,7 +6835,7 @@ public:
 
   // ---------------- alarms ----------------
   enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4, EV_PAY = 8, EV_CURIO = 16,
-         EV_RETG = 32 };
+         EV_RETG = 32, EV_HALV = 64 };
   enum { TRACK_NONE = 0, TRACK_RESOLVE = 1, TRACK_ON = 2 };
 
   bool alarmsArmed() { return alarmHeight > 0 || feeAlarm > 0; }
@@ -7011,7 +7132,7 @@ public:
     Serial.printf("[alarm] fired %u (queue %u)\n", bit, evQueue);
     // each its own pattern, so the wrist knows which before the eyes do.
     // Through buzz(): an odd vibMotor length leaves the motor running.
-    if (bit == EV_PAY || bit == EV_CURIO || bit == EV_RETG) {
+    if (bit == EV_PAY || bit == EV_CURIO || bit == EV_RETG || bit == EV_HALV) {
       // silent here (a curiosity buzzes in its own animation): whoever saw it land has already played the payment
       // pattern, the same one the wallet face has always used
     } else if (bit == EV_BLOCK) {
@@ -7067,6 +7188,7 @@ public:
   // the one thing to do about it.
   void drawEventScreen(uint8_t ev) {
     if (ev == EV_RETG) { drawRetarget(heldRetarget(), 4); return; }
+    if (ev == EV_HALV) { drawHalving(heldHalving(), 4); return; }
     if (ev == EV_CURIO) {
       const char *why = curiosity(evCurioH);
       drawCurioFrame(evCurioH, why ? why : "CURIOUS BLOCK");
@@ -7159,7 +7281,7 @@ public:
     drawEventScreen(ev);
     evShown = ev;
     // the curiosity is black whatever the theme: a flip either way goes full
-    bool dark = (ev == EV_CURIO || ev == EV_RETG) ? true : themeDark;
+    bool dark = (ev == EV_CURIO || ev == EV_RETG || ev == EV_HALV) ? true : themeDark;
     if (timerWake && !inDocked) {                 // first sight: a full
       displayFull();                     // refresh, then sleep
       paintedDark = dark;
