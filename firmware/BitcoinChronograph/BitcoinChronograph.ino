@@ -3715,6 +3715,8 @@ public:
                               // the radio goes out; suppresses the fetch
   bool walletScanArmed = false, inWalletScan = false;
   bool walletScanAsked = false;  // the wearer asked (long UP): goes regardless
+  bool walletDwell = false;      // stopped on WAL for a few seconds: sweep
+#define WAL_DWELL_MS 3000        // how long on WAL, untouched, before a sweep
   int  scanCancelled = -1;     // pin of the button that interrupted a scan
 
   void sanitizeState() {
@@ -4085,7 +4087,7 @@ public:
     // minute wake, that wake sweeps. A long UP (forceFetch) still goes now.
     walletScanAsked = forceFetch;
     walletScanArmed = !inWalletScan && !inVigil && (dispMode == M_WALT) &&
-      (forceFetch || ((timerWake || inDocked) && !radioBackedOff() &&
+      (forceFetch || ((timerWake || inDocked || walletDwell) && !radioBackedOff() &&
                       (!haveWallet || wakeMin - lastWalletMin >= walletEveryMin())));
 
     // A requested fetch paints FIRST, then goes to the radio. maybeFetch()
@@ -7631,8 +7633,23 @@ public:
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
     pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
     waitAllRelease();   // the waking press may still be held
+    bool dwellDone = false;
     while (!timeout) {
       if (millis() - lastTimeout > 5000) { timeout = true; }
+      else if (!dwellDone && guiState == WATCHFACE_STATE && dispMode == M_WALT &&
+               walletView == 0 && millis() - lastTimeout >= WAL_DWELL_MS &&
+               !radioBackedOff() &&
+               (!haveWallet || wakeMin - lastWalletMin >= walletEveryMin())) {
+        // The wearer stopped on WAL: they want the balance, not passing
+        // through. Sweep now, while awake anyway, instead of at the next
+        // minute wake. Any press during it cancels and does its job.
+        dwellDone = true;
+        Serial.println("[wallet] dwell: sweeping");
+        walletDwell = true;
+        RTC.read(currentTime); showWatchFace(true);
+        walletDwell = false;
+        lastTimeout = millis();          // and stay awake for what comes next
+      }
       else {
         if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
           lastTimeout = millis();
