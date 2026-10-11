@@ -850,7 +850,12 @@ public:
   }
 
   bool fetchAll() {
-    if (!myConnectWiFi()) return false;
+    if (!myConnectWiFi()) {
+      syncStep(SY_WIFI, "NOT FOUND", 2);
+      return false;
+    }
+    syncStep(SY_WIFI, WiFi.SSID().substring(0, 18).c_str(), 1);
+    syncStep(SY_TIME, "NTP", 0);
     // the radio is already on: re-anchor the clock every ~6 h. costs one
     // udp round trip and removes RTC drift permanently
     if (lastNtpWake == 0 || wakeMin - lastNtpWake > 360) {
@@ -860,6 +865,14 @@ public:
         Serial.printf("[ntp] re-anchored: %02d:%02d utc\n",
                       currentTime.Hour, currentTime.Minute);
       }
+    }
+    if (syncOn) {                     // the wall clock, synced or kept
+      RTC.read(currentTime);
+      int m = localMinuteOfDay();
+      char t[24]; snprintf(t, 24, "%02d:%02d %s", m / 60, m % 60,
+                           lastNtpWake == wakeMin ? "NTP" : "KEPT");
+      syncStep(SY_TIME, t, 1);
+      syncStep(SY_PRICE, "COINBASE", 0);
     }
     bool ok = false;
     long heightBefore = blockHeight;
@@ -871,6 +884,13 @@ public:
       candleWake = tierStamp();                    // chart + the day-ago close
     if (fetchRates(false, tierDue(goldWake, GOLD_EVERY_MIN, all)))
       haveData = ok = true;                        // all six (+ gold when due)
+    if (syncOn) {
+      char t[24];
+      if (ok) { char g[20]; grouped(g, 20, (long long)(btcPrice + 0.5));
+                snprintf(t, 24, "%s %s", CUR_CODES[curIdx], g); }
+      syncStep(SY_PRICE, ok ? t : "NO ANSWER", ok ? 1 : 2);
+      syncStep(SY_TIP, "MEMPOOL", 0);
+    }
     // the 24h change follows the live price between chart fetches: today's
     // price against the cached close from a day ago
     if (dayAgoUsd > 0 && fxRate[0] > 0)
@@ -912,6 +932,12 @@ public:
           lastHeightWake = wakeMin;               // height-specific stamp
           break;
         }
+      }
+      if (syncOn) {                               // the height itself
+        char t[16] = "NO ANSWER";
+        if (lastHeightWake == wakeMin && blockHeight > 0)
+          grouped(t, 16, blockHeight);
+        syncStep(SY_TIP, t, lastHeightWake == wakeMin ? 1 : 2);
       }
       // mempool backlog, denominated in blocks (unconfirmed vMB)
       if (mpGet(mp, client, "https://mempool.space/api/mempool", body)) {
@@ -1315,7 +1341,9 @@ public:
     bool due = forceFetch || !haveData ||
                (wakeMin - lastFetchMin >= every);
     if (due && (forceFetch || wakeMin >= nextTryWake)) {
-      if (fetchAll()) {
+      bool fok = fetchAll();
+      syncEnd(fok && blockHeight > 0);
+      if (fok) {
         lastFetchMin = wakeMin;
         failCount = 0; nextTryWake = 0;
         captivePortal = false;
@@ -3597,6 +3625,82 @@ public:
     display.display(true);
   }
 
+  // SYNCING TO THE TIP: the first fetch after a boot, step by step. A
+  // restart has no data, and that fetch (WiFi, then every source: 10-20 s)
+  // used to be one line under the boot frame that sat there looking frozen.
+  // Here each step ticks as it lands, and the last is the height itself:
+  // the moment the watch knows where it is. A step that fails says so, and
+  // where, instead of a face of dashes. Black like every boot sequence, so
+  // it is all partial refreshes; the face after it is the full one. Only
+  // ever up for a boot sync: ordinary fetches never call it (syncOn).
+  bool syncOn = false;
+  enum { SY_WIFI, SY_TIME, SY_PRICE, SY_TIP, SY_ROWS };
+  static const int SY_Y0 = 64, SY_DY = 26;
+
+  void syncBegin() {
+    static const char *L[SY_ROWS] = {"WIFI", "TIME", "PRICE", "TIP"};
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    bootCenter("SYNCING", 12, 2);
+    bootCenter("TO THE TIP", 32, 1);
+    display.drawFastHLine(12, 48, 176, GxEPD_WHITE);
+    for (int i = 0; i < SY_ROWS; i++) {
+      display.setTextSize(1);
+      display.setCursor(12, SY_Y0 + i * SY_DY);
+      display.print(L[i]);
+    }
+    display.drawFastHLine(12, SY_Y0 + SY_ROWS * SY_DY - 6, 176, GxEPD_WHITE);
+    display.display(true);
+    syncOn = true;
+    syncStep(SY_WIFI, "SEARCHING", 0);
+  }
+
+  // state: 0 working on it, 1 done, 2 failed
+  void syncStep(int row, const char *val, int state) {
+    if (!syncOn) return;
+    int y = SY_Y0 + row * SY_DY;
+    display.fillRect(52, y - 4, 140, 16, GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.setFont(NULL); display.setTextSize(1);
+    display.setCursor(56, y);
+    display.print(val);
+    if (state == 0) {                                  // three dots: working
+      for (int k = 0; k < 3; k++) display.fillRect(172 + k * 5, y + 5, 2, 2, GxEPD_WHITE);
+    } else if (state == 1) {                           // a tick
+      for (int t = 0; t < 2; t++) {
+        display.drawLine(174, y + 3 + t, 177, y + 6 + t, GxEPD_WHITE);
+        display.drawLine(177, y + 6 + t, 184, y - 1 + t, GxEPD_WHITE);
+      }
+    } else {                                           // a cross
+      for (int t = 0; t < 2; t++) {
+        display.drawLine(175 + t, y - 1, 183 + t, y + 7, GxEPD_WHITE);
+        display.drawLine(183 + t, y - 1, 175 + t, y + 7, GxEPD_WHITE);
+      }
+    }
+    display.display(true);
+  }
+
+  // 970962 -> "970,962"
+  void grouped(char *o, size_t n, long long v) {
+    char d[24]; snprintf(d, 24, "%lld", v);
+    int len = strlen(d), j = 0;
+    for (int i = 0; i < len && j < (int)n - 1; i++) {
+      if (i > 0 && (len - i) % 3 == 0 && j < (int)n - 2) o[j++] = ',';
+      o[j++] = d[i];
+    }
+    o[j] = 0;
+  }
+
+  // the steps the fetch did not reach, and a moment to read it
+  void syncEnd(bool ok) {
+    if (!syncOn) return;
+    bootCenter(ok ? "TICK TOCK NEXT BLOCK" : "WILL TRY AGAIN SHORTLY", 176, 1);
+    display.display(true);
+    delay(ok ? 900 : 2500);
+    syncOn = false;
+  }
+
   void bootCenter(const char *s, int y, int size) {     // built-in font
     display.setFont(NULL);
     display.setTextSize(size);
@@ -4218,7 +4322,7 @@ public:
       // A restart has no data, so the first fetch (WiFi, then every
       // source: 10-20 s) runs before the face can draw. Say so on the boot
       // screen, or the last frame just sits there looking frozen.
-      if (!haveData || forceFetch) bootStatus("SYNCING TO THE TIP...");
+      if (!haveData || forceFetch) syncBegin();
     }
     // wallet scans are slow (10 sequential TLS requests) — never do them
     // before the face is on screen. Render first, scan after (see the
@@ -4253,7 +4357,7 @@ public:
     // a fast partial wake from rest left a faint ghost: clean it now, on a
     // minute wake nobody is waiting on
     if (timerWake && cleanNext) { cleanNext = false; restExitFull = true; }
-    if (fetchPending && !prePaint) {
+    if (fetchPending && !prePaint && !syncOn) {   // the sync screen says it
       prePaint = true;
       drawWatchFace();                // corner reads FTCH; no fetch inside
       // partial: fast, the full comes after. Unless it flips the panel:
@@ -4263,6 +4367,7 @@ public:
       prePaint = false;
     }
     if (!prePaint) maybeFetch();
+    syncOn = false;                   // a boot that did not fetch: no screen
     // the fetch may just have failed and backed the radio off: then the
     // wallet sweep waits too (unless the wearer asked), and the corner must
     // not say SCAN for a sweep that will not happen
