@@ -1213,7 +1213,7 @@ public:
         }
         if (night) {                          // dozed into the night
           restState = REST_NIGHT;
-          drawRestFace(); display.display(false);
+          drawRestFace(); displayFull();
           longSleep(restSleepMinutes());
           return true;
         }
@@ -1242,7 +1242,7 @@ public:
     restState = want;
     restPose  = accPose;
     drawRestFace();
-    display.display(false);     // full refresh: this image may hold for hours,
+    displayFull();     // full refresh: this image may hold for hours,
                                 // so it starts clean of any ghosting
     longSleep(restSleepMinutes());
     return true;                // other boards: the library re-sends it
@@ -2634,7 +2634,7 @@ public:
       display.getTextBounds("(NOT IN THE CHAIN BALANCE)",0,0,&x1,&y1,&w,&h);
       display.setCursor((200-w)/2, 136);
       display.print("(NOT IN THE CHAIN BALANCE)"); }
-    display.display(false);   // full refresh: a celebration deserves
+    displayFull();   // full refresh: a celebration deserves
   }                           // a clean frame, not ghost soup
 
   // ---------------- LIGHTNING: invoice / address / offer QR ----------
@@ -2741,7 +2741,7 @@ public:
     drawModeStrip();
     // FULL refresh: partials leave the LN... fetch frame ghosting
     // under the QR. One clean flash beats a haunted invoice.
-    display.display(false);
+    displayFull();
   }
 
   // ---------------- RECV: QR screen (v1 chrome: status row + strip) ----
@@ -3150,7 +3150,7 @@ public:
       display.print("LAST BLOCK SEEN");
     }
     display.setCursor((200 - 16 * 6) / 2, 176); display.print("CHARGE TO RESUME");
-    display.display(false);            // full refresh: this one has to last
+    displayFull();            // full refresh: this one has to last
     Serial.println("[batt] resting");
   }
 
@@ -3164,7 +3164,7 @@ public:
     display.setFullWindow();
     display.fillScreen(GxEPD_BLACK);
     display.setTextColor(GxEPD_WHITE);
-    display.display(false);                     // clean slate
+    displayFull();                     // clean slate
 
     // the ring, ten marks at a time
     for (int step = 20; step <= 60; step += 20) {
@@ -3198,7 +3198,7 @@ public:
     // there is nothing to show yet — the line was always skipped and the
     // final refresh redrew the same frame, which read as the animation
     // stalling. It ends on the words instead.
-    display.display(false);                     // full refresh: no ghosts
+    displayFull();                     // full refresh: no ghosts
     delay(600);
   }
 
@@ -3271,7 +3271,7 @@ public:
     // 4. and the clean frame that stays up
     display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
     display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
-    display.display(false);
+    displayFull();
     buzz(35, 2);
     Serial.printf("[curio] %ld — %s\n", h, why);
     delay(2600);
@@ -3355,7 +3355,7 @@ public:
   // every segment so you can see none is dead, then show who they are.
   void bootSegmentTest() {
     bootClear();
-    display.display(false);                       // clean slate
+    displayFull();                       // clean slate
 
     // everything on: the clock, every indicator, every cell, every digit
     display.setFont(&DSEG7_Classic_Bold_14);
@@ -3399,7 +3399,7 @@ public:
     bootCenter("BITCOIN IS TIME", 176, 1);
     display.display(true);
 
-    display.display(false);                       // full refresh: no ghosts
+    displayFull();                       // full refresh: no ghosts
     delay(600);
   }
 
@@ -3409,7 +3409,7 @@ public:
   // because it does. Nothing here is a picture of a hash.
   void bootGenesis() {
     bootClear();
-    display.display(false);
+    displayFull();
 
     // version 1 | previous block: none | merkle root | time | bits | nonce
     static const uint8_t HDR[76] = {
@@ -3468,7 +3468,7 @@ public:
     bootCenter("CHANCELLOR ON BRINK...", 180, 1);
     display.display(true);
 
-    display.display(false);
+    displayFull();
     delay(600);
   }
 
@@ -3481,7 +3481,7 @@ public:
     bool savedTheme = themeDark;
     themeDark = true;
     bootClear();
-    display.display(false);
+    displayFull();
 
     static const char *YEAR[6]    = { "2009", "2012", "2016", "2020", "2024", "~2028" };
     static const char *SUBSIDY[6] = { "50", "25", "12.5", "6.25", "3.125", "1.5625" };
@@ -3517,7 +3517,7 @@ public:
     bootCenter("IS TIME", 94, 2);
     display.display(true);
 
-    display.display(false);
+    displayFull();
     delay(600);
     themeDark = savedTheme;
   }
@@ -3780,6 +3780,17 @@ public:
     centerSmall("ANY BUTTON WAKES", 189);
   }
 
+  // A full refresh, then the panel's high voltage OFF. The Watchy driver
+  // ends a full refresh with 0x22/0xF4, which leaves the analog supply on
+  // (the stock GxEPD2 driver for this panel ends with 0xF7, which turns it
+  // off), and its hibernate() skips the power-off. Harmless when deep sleep
+  // follows within milliseconds; but awake after it (the menu's 5 s, the
+  // payment vigil, the dock) the freshly driven image faded to almost
+  // nothing within a couple of seconds. Off costs one re-power on the next
+  // refresh, ~0.1 s.
+  void displayFull() { display.display(false); display.powerOff(); }
+  void showFaceFull() { showWatchFace(false); display.powerOff(); }
+
   void centerSmall(const char *s, int y) {          // built-in 6x8 font
     display.setCursor((200 - (int)strlen(s) * 6) / 2, y);
     display.print(s);
@@ -4004,7 +4015,7 @@ public:
     if (dispMode == M_WALT && walletView > 0) {
       if (walletView == 2) drawLightning();
       else drawReceive();
-      display.display(false);   // FULL refresh: partial updates smear
+      displayFull();   // FULL refresh: partial updates smear
                                 // large black<->white flips (ghost
                                 // "LN..." fragments over the QR in dark
                                 // mode) and a QR must scan crisply
@@ -4499,7 +4510,7 @@ public:
       restExitFull = false;          // so the old image leaves no ghost (not
                                      // the FTCH frame: that one is the fast
                                      // answer, the full comes with the data)
-      display.display(false);
+      displayFull();
     }
     if (!prePaint) paintedDark = themeDark;   // what the panel now shows
 
@@ -5394,7 +5405,7 @@ public:
     centerText("EVERY TEN MINUTES", 156, NULL);
     centerText("SINCE JANUARY 2009", 168, NULL);
     centerText("TICK TOCK NEXT BLOCK", 190, NULL);
-    display.display(false);            // full refresh: this one is worth it
+    displayFull();            // full refresh: this one is worth it
 
     for (int i = 0; i < 10; i++) { buzz(60, 4); delay(140); }
 
@@ -5541,7 +5552,7 @@ public:
         Serial.println("[travel] picker idle - back to the face");
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
-        showWatchFace(false);
+        showFaceFull();
         return -1;
       }
 
@@ -5624,7 +5635,7 @@ public:
           Serial.printf("[travel] to %ld (%s)\n", target,
                         travelActive ? "engaged" : "back to now");
           RTC.read(currentTime);
-          showWatchFace(false);
+          showFaceFull();
           return 1;
         }
         step = (step + 1) % NSTEP;
@@ -5680,7 +5691,7 @@ public:
       drawTinyB(97, 150);
     }
     themeDark = t;
-    display.display(false);                        // full: it has to last
+    displayFull();                        // full: it has to last
   }
 
   // The block it is sealed at: asked for now, not remembered, so the card
@@ -5820,7 +5831,7 @@ public:
     centerSmall("TIMES AN HOUR.", 90);
     centerSmall("UP    SET UP NOW", 132);
     centerSmall("BACK  LATER (MENU > WIFI)", 148);
-    display.display(false);
+    displayFull();
     int p = waitForPress(120000);
     waitAllRelease();
     if (p != UP_BTN_PIN) return;                   // later, or nobody there
@@ -5892,7 +5903,7 @@ public:
       if (p < 0) {
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
-        showWatchFace(false);
+        showFaceFull();
         return;
       }
       if (p == BACK_BTN_PIN) { waitAllRelease(); myShowMenu(menuIndex, false); return; }
@@ -6120,7 +6131,7 @@ public:
       if (p < 0) {                                  // nobody: home
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
-        showWatchFace(false);
+        showFaceFull();
         return;
       }
       if (p == BACK_BTN_PIN) { waitAllRelease(); myShowMenu(menuIndex, false); return; }
@@ -6173,7 +6184,7 @@ public:
       if (p < 0) {
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
-        showWatchFace(false);
+        showFaceFull();
         return false;
       }
       if (p == BACK_BTN_PIN) { waitAllRelease(); return true; }
@@ -6356,7 +6367,7 @@ public:
     drawEventScreen(ev);
     evShown = ev;
     if (timerWake && !inDocked) {                 // first sight: a full
-      display.display(false);                     // refresh, then sleep
+      displayFull();                     // refresh, then sleep
       longSleep(1);                               // without a second one
     }
     return true;                                  // otherwise the caller
@@ -6618,7 +6629,7 @@ public:
         Serial.println("[about] idle - back to the face");
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
-        showWatchFace(false);
+        showFaceFull();
         return;
       }
       if (p == BACK_BTN_PIN || p == MENU_BTN_PIN) { waitAllRelease(); break; }
@@ -7257,7 +7268,7 @@ public:
       firstStartWifi();
       guiState = WATCHFACE_STATE;
       RTC.read(currentTime);
-      showWatchFace(false);
+      showFaceFull();
       return;
     }
     wakeMin += catchUpWakeClock();     // a press can cut a long sleep short
@@ -7301,7 +7312,7 @@ public:
       pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
       waitAllRelease();
       RTC.read(currentTime);
-      showWatchFace(false);
+      showFaceFull();
       return;
     }
     if (guiState == WATCHFACE_STATE) {
@@ -7346,7 +7357,7 @@ public:
         dispatchMenu();
       } else if (wake & BACK_BTN_MASK) {
         if (!menuBack()) {               // Settings -> main; main -> face
-          RTC.read(currentTime); showWatchFace(false);
+          RTC.read(currentTime); showFaceFull();
           return;
         }
       } else if (wake & UP_BTN_MASK) {
@@ -7381,7 +7392,7 @@ public:
         } else if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {
           lastTimeout = millis();
           if (guiState == MAIN_MENU_STATE) {
-            if (!menuBack()) { RTC.read(currentTime); showWatchFace(false); }
+            if (!menuBack()) { RTC.read(currentTime); showFaceFull(); }
             waitRelease(BACK_BTN_PIN);
           } else if (guiState == APP_STATE) {
             myShowMenu(menuIndex, false);
