@@ -5463,9 +5463,16 @@ public:
   #else
     uint32_t mv = 0;
   #endif
-    Serial.printf("[chg] stat=%d state=%d lib=%.3fV cal=%.3fV (adc %lumV) pct=%d%%\n",
-                  digitalRead(CHG_STAT_PIN), chargeState(), lib, batteryVolts(),
-                  (unsigned long)mv, (int)(batteryPct() * 100.0f + 0.5f));
+    // One line a minute while plugged in, readable as a timeline: minutes
+    // on the cable, the chip's status pin (0 = charging, 1 = not), the
+    // watch's verdict (1 charging, 2 full), and the estimate on the face.
+    // The voltages are the charger's rail, not the cell, while plugged in.
+    int shown = batteryPctShown();
+    long onMin = chgFromT ? (long)(rtcNow() - chgFromT) / 60 : -1;
+    Serial.printf("[chg] t+%ldmin stat=%d state=%d est=%d%% (from %d%% at %.2f%%/min) "
+                  "rail=%.3fV lib=%.3fV adc=%lumV\n",
+                  onMin, digitalRead(CHG_STAT_PIN), chargeState(), shown,
+                  chgFromPct, chgRate(), batteryVolts(), lib, (unsigned long)mv);
   }
 
   // Block 1,000,000. Fires once, on the first face draw that sees it, and
