@@ -3481,6 +3481,116 @@ public:
     lowRight("BTC/BLOCK", base - 38);
   }
 
+  // digits grouped in threes, in a 7-segment face, commas as pixels; returns
+  // the width (measure only when draw is false)
+  int segGrouped(const char *d, int x, int y, const GFXfont *f, int cw, bool draw = true) {
+    display.setFont(f);
+    int n = strlen(d), cx = x;
+    for (int i = 0; i < n; i++) {
+      GFXglyph *g = f->glyph + (d[i] - f->first);
+      if (draw) { char c[2] = {d[i], 0}; display.setCursor(cx, y); display.print(c); }
+      cx += g->xAdvance;
+      if ((n - 1 - i) % 3 == 0 && i < n - 1) {
+        if (draw) display.fillRect(cx + cw / 2 - 1, y - 1, 2, cw > 3 ? 4 : 3, fg());
+        cx += cw;
+      }
+    }
+    display.setFont(NULL);
+    return cx - x;
+  }
+
+  // SAT: what a dollar used to buy, at each halving, in sats. The halving
+  // prices are the Time Travel anchors (USD, rough levels), so the table is
+  // in dollars whatever the face's currency; TODAY is live.
+  void drawSatLower() {
+    display.setFont(NULL); display.setTextColor(fg());
+    lowAt("WHAT $1 USED TO BUY", 8, 103); lowRight("IN SATS", 103);
+    const long HH[4] = {210000L, 420000L, 630000L, 840000L};
+    const char *YY[5] = {"2012", "2016", "2020", "2024", "TODAY"};
+    double sats[5];
+    for (int i = 0; i < 4; i++) { double p = pastPrice(HH[i]); sats[i] = p > 0 ? 1e8 / p : 0; }
+    sats[4] = fxRate[0] > 0 ? 1e8 / fxRate[0] : 0;
+    double top = sats[0] > 1 ? sats[0] : 1;
+    for (int i = 0; i < 5; i++) {
+      int y = 113 + i * 9;
+      lowAt(YY[i], 8, y);
+      char g[16];
+      if (sats[i] > 0) grouped(g, 16, (long long)(sats[i] + 0.5)); else strcpy(g, "----");
+      lowRight(g, y);
+      if (sats[i] >= 1) {                    // log scale: 8 million to 800
+        int w = (int)(70.0 * log10(sats[i]) / log10(top) + 0.5);
+        if (w < 2) w = 2;
+        if (i == 4) display.fillRect(44, y, w, 7, fg());
+        else display.drawRect(44, y, w, 7, fg());
+      }
+    }
+    display.drawFastHLine(6, 160, 188, fg());
+    if (sats[0] > 0 && sats[4] > 0) {
+      char t[34];
+      snprintf(t, 34, "THE DOLLAR, IN BITCOIN: -%.2f%%", (1.0 - sats[4] / sats[0]) * 100.0);
+      centerSmall(t, 164);
+    }
+  }
+
+  // CAP: the two monies on one scale, and the price at which they meet.
+  // Gold is fetched in USD (spot x ~6.95B oz, the same constant as % GOLD)
+  // and carried into the face's currency by the cross rate.
+  void fmtTB(char *o, size_t n, double b) {        // billions in, short out
+    // B, T, Q: a weak unit (LBP) puts gold in the thousands of quadrillions
+    const char *U[3] = {"B", "T", "Q"};
+    int u = 0;
+    while (b >= 1000 && u < 2) { b /= 1000; u++; }
+    if (b >= 100 || u == 0) snprintf(o, n, "%.0f%s", b, U[u]);
+    else if (b >= 10)       snprintf(o, n, "%.1f%s", b, U[u]);
+    else                    snprintf(o, n, "%.2f%s", b, U[u]);
+  }
+  void drawCapLower() {
+    display.setFont(NULL); display.setTextColor(fg());
+    double cross = (fxRate[0] > 0 && fxRate[curIdx] > 0) ? fxRate[curIdx] / fxRate[0] : 0;
+    double goldB = (goldMcapB > 0 && cross > 0) ? goldMcapB * cross : 0;
+    double btcB  = btcMcapB;
+    double big   = goldB > btcB ? goldB : btcB;
+    char t[24];
+    lowAt("GOLD", 8, 105); lowAt("BTC", 8, 119);
+    if (big > 0 && goldB > 0) {                 // no gold yet: no scale either
+      int gw = goldB > 0 ? (int)(120 * goldB / big + 0.5) : 0;
+      int bw = btcB > 0 ? (int)(120 * btcB / big + 0.5) : 0;
+      display.drawRect(40, 105, 120, 8, fg()); if (gw) display.fillRect(40, 105, gw, 8, fg());
+      display.drawRect(40, 119, 120, 8, fg()); if (bw) display.fillRect(40, 119, bw > 1 ? bw : 2, 8, fg());
+    }
+    if (goldB > 0) { fmtTB(t, 24, goldB); lowRight(t, 105); } else lowRight("----", 105);
+    if (btcB > 0)  { fmtTB(t, 24, btcB);  lowRight(t, 119); } else lowRight("----", 119);
+    display.drawFastHLine(6, 134, 188, fg());
+    long h = blockHeight > 0 ? blockHeight : estHeight();
+    double supply = supplyBTC(h);
+    if (goldB <= 0 || supply <= 0 || btcPrice <= 0) {
+      lowAt("PRICE AT GOLD PARITY", 8, 140);
+      lowAt("WAITING FOR GOLD'S PRICE", 8, 156);
+      return;
+    }
+    double parity = goldB * 1e9 / supply;
+    if (btcB >= goldB) {                         // the day it happens
+      lowAt("BITCOIN HAS PASSED GOLD", 8, 140);
+      snprintf(t, 24, "%.2fX GOLD", btcB / goldB);
+      lowAt(t, 8, 156);
+      return;
+    }
+    lowAt("PRICE AT GOLD PARITY", 8, 140);
+    if (parity < 1e7) {                          // spelled out: 1,249,000
+      char d[16]; snprintf(d, 16, "%.0f", parity);
+      int w = segGrouped(d, 8, 170, &DSEG7_Classic_Bold_18, 3);
+      lowAt(CUR_CODES[curIdx], 14 + w, 162);
+    } else {                                     // a weak unit: 110.83 T LBP
+      char m[20];
+      if (parity >= 1e12) snprintf(m, 20, "%.2f T", parity / 1e12);
+      else                fmtMoney(m, 20, parity);
+      snprintf(t, 24, "%s %s", m, CUR_CODES[curIdx]);
+      lowAt(t, 8, 158);
+    }
+    snprintf(t, 24, parity / btcPrice < 100 ? "%.1fX" : "%.0fX", parity / btcPrice);
+    lowRight(t, 151); lowRight("AWAY", 162);
+  }
+
   // MEM: a block as a small cube (front, top, shaded side); fill = how full
   void memCube(int x, int y, int w, int h, int dp, int fillPct, bool solid,
                const char *lab) {
@@ -5723,16 +5833,20 @@ public:
       cellLabel = HL[t];
       snprintf(cell, 18, sub >= 1 ? "%.3f" : "%.4f", sub);
     } else if (dispMode == M_SATS) {
-      // MOSCOW TIME: sats-per-unit as a clock — the oldest meme in
-      // the book, native to a 7-segment display (":" included)
-      cellLabel = "MOSCOW";
+      // ONE SAT, in the face's currency: the other side of the big number,
+      // and the useful one for small payments (a 2,000-sat zap is about
+      // 2.40 USD). Moscow time used to sit here; it was the big number
+      // again, set as a clock. The currency is named just above.
+      cellLabel = "/SAT";
       double pr = !travelActive ? btcPrice
                 : (estHeight() < blockHeight ? pastPrice(estHeight())
                                              : modelPrice(estHeight()));
-      long s = pr > 0 ? (long)(1e8 / pr) : 0;
-      if (s >= 0 && s <= 9999)          // a cheap coin means few sats: 8
-        snprintf(cell, 18, "%02ld:%02ld", s / 100, s % 100);   // reads 00:08
-      else snprintf(cell, 18, "%ld", s);  // beyond a clock: raw
+      double v = pr > 0 ? pr / 1e8 : 0;
+      if (v <= 0)        strcpy(cell, "----");
+      else if (v >= 100) snprintf(cell, 18, "%.0f", v);
+      else if (v >= 1)   snprintf(cell, 18, "%.2f", v);
+      else if (v >= 0.1) snprintf(cell, 18, "%.3f", v);
+      else               snprintf(cell, 18, "%.4f", v);
     } else if (dispMode == M_MCAP) {
       cellLabel = "% GOLD";                // the thesis meter: BTC's
       float usdMcapB = fxRate[0] > 0 && blockHeight > 0
@@ -5849,6 +5963,8 @@ public:
     else if (dispMode == M_HALV) drawHalvLower();
     else if (dispMode == M_FEES && !travelActive) drawFeeLower();
     else if (dispMode == M_MEMP && !travelActive) drawMemLower();
+    else if (dispMode == M_SATS && !travelActive) drawSatLower();
+    else if (dispMode == M_MCAP && !travelActive) drawCapLower();
     else if (travelActive) {
       // Sentiment and the 24h chart are facts about now — neither survives
       // the trip. What does: how much of 21 million exists at this height,
