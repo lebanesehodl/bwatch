@@ -3422,16 +3422,35 @@ public:
     display.setFont(NULL); display.setTextColor(fg());
     long h = estHeight();
     double cap = supplyCapBTC(), issued = supplyBTC(h);
-    lowAt("0", 8, 103); lowRight("21M", 103);
+    // The last million: 0-21M showed a bar that was simply full. From 20M
+    // the remaining wait is visible, and so is each halving adding half
+    // what the one before did. The break mark says it does not start at 0.
+    // Before 20M (time travel) it falls back to the whole road.
+    const double lo = issued >= 20e6 ? 20e6 : 0;
+    lowAt(lo > 0 ? "20M" : "0", 8, 103); lowRight("21M", 103);
     int x0 = 8, W = 184, y = 113;
     display.drawRect(x0, y, W, 10, fg());
-    display.fillRect(x0, y, (int)(W * issued / cap + 0.5), 10, fg());
-    for (int k = 1; k <= 10; k++) {                 // where each halving lands
-      int x = x0 + (int)(W * supplyBTC(210000L * k) / cap + 0.5);
+    display.fillRect(x0, y, (int)(W * (issued - lo) / (cap - lo) + 0.5), 10, fg());
+    if (lo > 0) {
+      display.fillRect(x0 - 2, y - 1, 5, 12, bg());
+      display.drawLine(x0 - 2, y + 11, x0 + 1, y - 1, fg());
+      display.drawLine(x0 + 1, y + 11, x0 + 4, y - 1, fg());
+    }
+    int labelled = 0;
+    for (int k = 1; k <= 12; k++) {                 // where each halving lands
+      double sk = supplyBTC(210000L * k);
+      if (sk < lo) continue;
+      int x = x0 + (int)(W * (sk - lo) / (cap - lo) + 0.5);
       if (x > x0 + W - 1) x = x0 + W - 1;
       display.drawFastVLine(x, y + 11, 4, fg());
+      // the next three halvings by year (they get closer: 4 years apart)
+      if (lo > 0 && labelled < 3 && 210000L * k > h) {
+        char yr[6]; snprintf(yr, 6, "%d", 2008 + 4 * k);   // 2012, 2016 ...
+        lowAt(yr, x - 12, y + 17);
+        labelled++;
+      }
     }
-    lowAt("EACH TICK A HALVING", 8, 131);
+    if (lo == 0) lowAt("EACH TICK A HALVING", 8, 131);
     display.drawFastHLine(6, 142, 188, fg());
     int era = (int)(h / 210000L);
     double sub = era < 33 ? 50.0 / (double)(1LL << era) : 0;
@@ -3439,8 +3458,10 @@ public:
     snprintf(a, 24, sub * 144 >= 10 ? "%.0f BTC A DAY" : "%.2f BTC A DAY", sub * 144);
     snprintf(b, 24, "%.2f%% A YEAR", issued > 0 ? sub * 144 * 365.25 / issued * 100 : 0);
     lowAt(a, 8, 148); lowRight(b, 148);
-    // the last sat: block 6,930,000, at ten minutes a block from here
-    long left = 6930000L - h; if (left < 0) left = 0;
+    // the last sat: block 6,930,000, at ten minutes a block from the real
+    // tip (a fact about now, wherever Time Travel has gone)
+    long now_h = blockHeight > 0 ? blockHeight : h;
+    long left = 6930000L - now_h; if (left < 0) left = 0;
     double years = left * 600.0 / (365.25 * 86400.0);
     tmElements_t now; RTC.read(now);
     int yr = tmYearToCalendar(now.Year);
@@ -3510,16 +3531,23 @@ public:
     double sats[5];
     for (int i = 0; i < 4; i++) { double p = pastPrice(HH[i]); sats[i] = p > 0 ? 1e8 / p : 0; }
     sats[4] = fxRate[0] > 0 ? 1e8 / fxRate[0] : 0;
+    // Log scale from just below today's value rather than from 1 sat: from
+    // 1, 8.3M sats got 70 px and today's 820 still 29, a gentle slope for
+    // a 99.99% fall. From half of today, 2012 is the full width and today
+    // a stub. Still log underneath, so 2016 and 2020 stay readable.
     double top = sats[0] > 1 ? sats[0] : 1;
+    double floorS = sats[4] > 2 ? sats[4] / 2 : 1;
+    const int BW = 86;                               // 44 .. 130, numbers right
     for (int i = 0; i < 5; i++) {
       int y = 113 + i * 9;
       lowAt(YY[i], 8, y);
       char g[16];
       if (sats[i] > 0) grouped(g, 16, (long long)(sats[i] + 0.5)); else strcpy(g, "----");
       lowRight(g, y);
-      if (sats[i] >= 1) {                    // log scale: 8 million to 800
-        int w = (int)(70.0 * log10(sats[i]) / log10(top) + 0.5);
-        if (w < 2) w = 2;
+      if (sats[i] >= 1 && top > floorS) {
+        int w = (int)(BW * (log10(sats[i]) - log10(floorS)) /
+                           (log10(top) - log10(floorS)) + 0.5);
+        if (w < 3) w = 3;
         if (i == 4) display.fillRect(44, y, w, 7, fg());
         else display.drawRect(44, y, w, 7, fg());
       }
