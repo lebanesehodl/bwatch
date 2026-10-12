@@ -757,6 +757,129 @@ volatile int g_isrPin = -1;   // -1 = none: on v3 the UP button IS GPIO 0
 // succeed without a WiFi connection — someone pasting only a zpub — so
 // "connected" is not the only way out.
 bool g_portalSaved = false;
+
+// The setup pages' look: the library's own pages, restyled in the BTC
+// TECHNOLOGIES manner and given their words by a small script (it renames,
+// replaces the wallet field with a box big enough for a descriptor, reads
+// what is pasted live, and on save sends the phone to /exit, which ends the
+// portal from inside the library's own loop: never stopped from outside).
+// No web fonts: the phone on the watch's network has no internet.
+// Source and phone-size screenshots: the session's scratchpad/portal.
+const char SETUP_HEAD[] =
+"<style>\n"
+"body{background:#f4f2ec;color:#12110d;font-family:-apple-system,BlinkMacSystemFont,\"Helvetica Neue\",Arial,sans-serif;font-size:15px;margin:0;text-align:left}\n"
+".wrap{display:block;max-width:440px;min-width:0;margin:0 auto;padding:22px 18px 36px;text-align:left}\n"
+".wrap div,.wrap input{margin:0}\n"
+"h1,h3{text-align:left}\n"
+".bw-k{font:600 12px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:3px;text-transform:uppercase;color:#57554e}\n"
+".bw-top{padding:0}\n"
+".bw-top h1{font-size:27px;line-height:1.15;margin:10px 0 6px;font-family:inherit}\n"
+".bw-top p{margin:0;color:#3b3a35;line-height:1.45}\n"
+"label{display:block;font-weight:700;margin:22px 0 6px}\n"
+"label span{font-weight:400;color:#57554e}\n"
+"input:not([type=checkbox]),textarea{display:block;width:100%;box-sizing:border-box;border:2px solid #12110d;border-radius:8px;padding:11px;font:14px/1.4 ui-monospace,Menlo,Consolas,monospace;background:#fff;color:#12110d}\n"
+"textarea{min-height:140px;resize:vertical}\n"
+"input:focus,textarea:focus{outline:0;border-color:#e5002b}\n"
+"input[type=checkbox]{width:auto;margin:12px 6px 0 0;accent-color:#12110d}\n"
+"label[for=showpass]{display:inline;font-weight:400;margin:0;color:#3b3a35}\n"
+"button{display:block;width:100%;background:#e5002b;color:#fff;border:0;border-radius:10px;font:700 16px/1 -apple-system,BlinkMacSystemFont,\"Helvetica Neue\",Arial,sans-serif;padding:16px;margin-top:22px;opacity:1!important}\n"
+"button[name=refresh]{background:transparent;color:#12110d;border:2px solid #12110d;margin-top:12px}\n"
+"hr,.wrap br,.msg,form[action='/']{display:none}\n"
+".wrap .bw-read br{display:inline}\n"
+".bw-hint{font-size:13px;color:#57554e;margin-top:6px!important;line-height:1.4}\n"
+".bw-read{border:2px dashed #12110d;border-radius:8px;padding:10px 12px!important;margin-top:10px!important;font-size:13px;line-height:1.55}\n"
+".bw-read.bad{border-color:#e5002b;color:#b8001f}\n"
+".bw-read code{font:12px ui-monospace,Menlo,Consolas,monospace}\n"
+".bw-warn{background:#12110d;color:#f4f2ec;border-radius:8px;padding:12px!important;margin-top:20px!important;font-size:14px;line-height:1.45}\n"
+".bw-warn b{color:#ff4d5e}\n"
+".bw-cancel{display:block;text-align:center;margin-top:16px;color:#57554e;font-weight:400;text-decoration:none}\n"
+".bw-foot{margin-top:34px!important;padding:0!important;font:600 11px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:3px;color:#9a978d}\n"
+".bw-nets{margin-top:18px!important;padding:0!important;border-top:1px solid #d5d1c5}\n"
+".bw-net{display:flex;align-items:center;justify-content:space-between;padding:13px 2px!important;border-bottom:1px solid #d5d1c5}\n"
+".bw-net a{color:#12110d;font-weight:600;font-size:16px;text-decoration:none;flex:1}\n"
+".bw-net .q{float:none;padding:0!important;min-width:0}\n"
+".bw-big{font-size:15px;line-height:1.5;margin-top:22px!important;padding:14px!important;border-left:4px solid #e5002b;background:#fff;border-radius:4px}\n"
+"</style>\n"
+"<script>\n"
+"(function(){\n"
+"var IN=\"0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\\\"\\\\ \";\n"
+"var CS=\"qpzry9x8gf2tvdw0s3jn54khce6mua7l\";\n"
+"function sum(s){try{\n"
+"var G=[0xf5dee51989n,0xa9fdca3312n,0x1bab10e32dn,0x3706b1677an,0x644d626ffdn];\n"
+"function pm(c,v){var t=c>>35n;c=((c&0x7ffffffffn)<<5n)^BigInt(v);for(var i=0;i<5;i++)if((t>>BigInt(i))&1n)c^=G[i];return c}\n"
+"var c=1n,k=0,n=0;\n"
+"for(var i=0;i<s.length;i++){var p=IN.indexOf(s[i]);if(p<0)return null;c=pm(c,p&31);k=k*3+(p>>5);if(++n==3){c=pm(c,k);k=0;n=0}}\n"
+"if(n)c=pm(c,k);for(var j=0;j<8;j++)c=pm(c,0);c^=1n;\n"
+"var o=\"\";for(j=0;j<8;j++)o+=CS[Number((c>>BigInt(5*(7-j)))&31n)];return o}catch(e){return null}}\n"
+"function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e}\n"
+"function top(w,t,p){var d=el('div','bw-top','<div class=\"bw-k\">BWATCH &middot; SETUP</div><h1>'+t+'</h1>'+(p?'<p>'+p+'</p>':''));w.insertBefore(d,w.firstChild)}\n"
+"function esc(s){return s.replace(/[&<>\"']/g,function(c){return'&#'+c.charCodeAt(0)+';'})}\n"
+"function read(v){\n"
+"v=v.trim();if(!v)return['','Leave it empty to keep the wallet the watch has now.'];\n"
+"if(/(^|[(,\\]\\s])[xyzuvtYZUV]prv/.test(v)||/^[a-zA-Z]+(\\s+[a-zA-Z]+){11,}$/.test(v))\n"
+"return['bad','<b>That looks like seed words or a private key.</b> The watch never needs them and will refuse this. Delete it, and if it was real, treat it as exposed.'];\n"
+"if(v.indexOf('(')>=0){\n"
+"if(/^tr\\(/.test(v))return['bad','Taproot descriptors are not supported yet.'];\n"
+"var h=v.indexOf('#'),body=h<0?v:v.slice(0,h),given=h<0?'':v.slice(h+1),cs=sum(body);\n"
+"var m=/(sorted)?multi\\((\\d+),/.exec(v),keys=v.match(/xpub[1-9A-HJ-NP-Za-km-z]{100,}/g)||[];\n"
+"var fps=[],re=/\\[([0-9a-fA-F]{8})/g,f;while((f=re.exec(v)))fps.push(f[1].toLowerCase());\n"
+"if(!m||!keys.length)return['bad','Not a multisig descriptor the watch can read. It wants <code>wsh(sortedmulti(&hellip;))</code>.'];\n"
+"var o='Reads as: <b>multisig '+m[2]+' of '+keys.length+'</b>, '+(/^sh\\(wsh\\(/.test(v)?'wrapped':'native')+' SegWit<br>';\n"
+"if(!cs)return['bad','It contains a character a descriptor cannot have. Check the copy.'];\n"
+"if(given&&given!==cs)return['bad','Checksum <code>'+esc(given)+'</code> does not match. Something changed in the copy.'];\n"
+"o+='Checksum <code>'+cs+'</code> '+(given?'&#10003;':'(computed: none was pasted)')+'<br>';\n"
+"if(fps.length)o+='Keys <code>'+fps.join(' &middot; ')+'</code><br>';\n"
+"return['',o+'You&rsquo;ll confirm these on the watch.'];\n"
+"}\n"
+"if(/^zpub/.test(v)&&v.length>100)return['','Reads as: <b>one key</b>, native SegWit. The watch shows address #0 for you to check.'];\n"
+"if(/^[xy]pub/.test(v))return['bad','An '+v.slice(0,4)+': for a single-key native SegWit wallet the watch needs the <b>zpub</b>.'];\n"
+"return['bad','Not something the watch can read: paste a zpub or a descriptor.'];\n"
+"}\n"
+"document.addEventListener('DOMContentLoaded',function(){\n"
+"var b=document.body,w=document.querySelector('.wrap'),p=location.pathname,wal=/\\bbw-wal\\b/.test(b.className);\n"
+"if(!w)return;\n"
+"if(p=='/'||p==''){location.replace(wal?'/param':'/wifi');return}\n"
+"if(p=='/param'){\n"
+"top(w,'Your wallet','The watch shows your balance and receive addresses. It only ever needs public keys.');\n"
+"var z=document.getElementById('zpub');\n"
+"if(z){var t=el('textarea');t.id='zpub';t.name='zpub';t.rows=6;t.setAttribute('autocapitalize','off');t.setAttribute('autocorrect','off');t.spellcheck=false;\n"
+"t.placeholder=\"zpub6r…  or  wsh(sortedmulti(2,[…]xpub…/<0;1>/*,…))#checksum\";\n"
+"z.parentNode.replaceChild(t,z);\n"
+"var lz=document.querySelector('label[for=zpub]');if(lz)lz.textContent='Wallet';\n"
+"var hint=el('div','bw-hint','A zpub for a single-key wallet, or a descriptor for multisig (Sparrow: Settings &rsaquo; Export; Nunchuk: Wallet config).');\n"
+"var rd=el('div','bw-read');rd.style.display='none';\n"
+"t.parentNode.insertBefore(hint,t.nextSibling);hint.parentNode.insertBefore(rd,hint.nextSibling);\n"
+"var up=function(){var r=read(t.value);if(!r[1]){rd.style.display='none';return}rd.className='bw-read'+(r[0]?' '+r[0]:'');rd.innerHTML=r[1];rd.style.display='block'};\n"
+"t.addEventListener('input',up);up()}\n"
+"var ll=document.querySelector('label[for=lnaddr]');if(ll)ll.innerHTML='Lightning address <span>(optional)</span>';\n"
+"var ln=document.getElementById('lnaddr');if(ln){ln.setAttribute('autocapitalize','off');ln.setAttribute('autocorrect','off');ln.placeholder='you@example.com'}\n"
+"var btn=document.querySelector('button[type=submit]');\n"
+"if(btn){btn.textContent='Save to watch';\n"
+"btn.parentNode.insertBefore(el('div','bw-warn','<b>Never</b> paste seed words or a private key (xprv, zprv). The watch only needs public keys and refuses anything else.'),btn)}\n"
+"w.appendChild(el('a','bw-cancel','Cancel &mdash; keep the watch as it is')).href='/exit';\n"
+"} else if(p=='/wifi'||p=='/0wifi'){\n"
+"top(w,'Join your WiFi','Pick the network the watch should use. It remembers up to three and moves between them.');\n"
+"var nets=el('div','bw-nets'),first=null;\n"
+"Array.prototype.forEach.call(document.querySelectorAll('.wrap > div'),function(d){if(d.querySelector('a[onclick]')){d.className='bw-net';if(!first)first=d;nets.appendChild(d)}});\n"
+"var form=document.querySelector('form[action=wifisave]');\n"
+"if(nets.children.length&&form)form.parentNode.insertBefore(nets,form);\n"
+"var ls=document.querySelector('label[for=s]');if(ls)ls.textContent='Network';\n"
+"var b2=document.querySelector('form[action=wifisave] button[type=submit]');if(b2)b2.textContent='Connect';\n"
+"var r=document.querySelector('button[name=refresh]');if(r)r.textContent='Scan again';\n"
+"w.appendChild(el('a','bw-cancel','Cancel')).href='/exit';\n"
+"} else if(p=='/paramsave'){\n"
+"top(w,'Saved.','Back to the watch: it shows what it read, and asks you to check it.');\n"
+"setTimeout(function(){location.href='/exit'},1200);\n"
+"} else if(p=='/wifisave'){\n"
+"top(w,'Connecting&hellip;','Watch the watch: it says whether it joined. If it did not, join BWATCH-SETUP again and re-enter the password.');\n"
+"} else if(p=='/exit'){\n"
+"top(w,'Done.','The watch has closed its setup network. You can close this page.');\n"
+"Array.prototype.forEach.call(w.childNodes,function(n){if(n.nodeType==3)n.textContent=''});\n"
+"} else top(w,'Setup','');\n"
+"w.appendChild(el('div','bw-foot','BTC TECHNOLOGIES / DIV-001'));\n"
+"});\n"
+"})();\n"
+"</script>\n";
 void IRAM_ATTR btnISR0() { g_isrPin = BACK_BTN_PIN; }
 void IRAM_ATTR btnISR1() { g_isrPin = MENU_BTN_PIN; }
 void IRAM_ATTR btnISR2() { g_isrPin = UP_BTN_PIN;   }
@@ -6369,8 +6492,19 @@ public:
   // clientWait: the timeout only counts while no phone is joined to the
   // setup network, so it can be short for someone who never joins and still
   // never cut off someone halfway through pasting.
-  bool runPortal(WiFiManager &wm, uint16_t secs, bool clientWait = false) {
+  bool runPortal(WiFiManager &wm, uint16_t secs, bool clientWait = false,
+                 bool wallet = false) {
     g_portalSaved = false;
+    wm.setCustomHeadElement(SETUP_HEAD);
+    wm.setTitle("BWATCH");
+    wm.setClass(wallet ? "bw-wal" : "bw-net-setup");   // which page '/' opens
+    wm.setShowInfoUpdate(false);
+    wm.setShowInfoErase(false);
+    {                                    // without the script: a short menu
+      static std::vector<const char *> mWal = {"param", "exit"};
+      static std::vector<const char *> mNet = {"wifi", "exit"};
+      wm.setMenu(wallet ? mWal : mNet);
+    }
     wm.setSaveParamsCallback([]() { g_portalSaved = true; });
     wm.setConfigPortalBlocking(true);
     wm.setAPClientCheck(clientWait);
@@ -6534,13 +6668,11 @@ public:
     } else if (walletConfigured()) strncpy(cur, zpubBuf, DESC_TEXT_MAX);
     cur[DESC_TEXT_MAX] = 0;
     WiFiManagerParameter pZpub(
-      "zpub", "Wallet: a zpub, or a multisig descriptor. Public keys only, "
-              "NEVER seed words or a private key. Leave empty to keep the "
-              "current wallet",
+      "zpub", "Wallet",                  // the page's script adds the rest
       "", DESC_TEXT_MAX);
     wm.addParameter(&pZpub);
     WiFiManagerParameter pLn(
-      "lnaddr", "Lightning address (optional, user@domain)",
+      "lnaddr", "Lightning address (optional)",
       lnAddrBuf, 63);
     wm.addParameter(&pLn);
 
@@ -6575,7 +6707,7 @@ public:
     wsAt("1 MIN TO JOIN FROM YOUR PHONE", 10, 166);
     wsFooter("SAVE ON THE PAGE TO FINISH");
     display.display(true);
-    runPortal(wm, 60, true);
+    runPortal(wm, 60, true, true);
     WiFi.mode(WIFI_OFF); btStop();
     display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
 
