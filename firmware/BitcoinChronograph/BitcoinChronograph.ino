@@ -3619,6 +3619,335 @@ public:
     lowRight(t, 151); lowRight("AWAY", 162);
   }
 
+  // ---------------- Time Travel lower halves (PRC, SAT, CAP, FEE, WAL) -------
+  // Each answers "what was it like then, against now?". The past uses the
+  // Time Travel anchors (USD, rough levels: RECORDED); the future the power
+  // law model in the face's currency, always named as a model. What cannot
+  // be known (past fees, past gold, the mempool) says so.
+  bool travelPast() { return estHeight() < blockHeight; }
+  // When a height happened (or would): the past from the blocks' recorded
+  // dates, interpolated, since early blocks came far faster than today's
+  // pace (counting back at today's pace put block 100,000 in June 2010,
+  // not December); the future at the measured pace, as the title does.
+  time_t heightUtc(long h) {
+    time_t now = time(nullptr);
+    if (now < 1700000000) { tmElements_t tn; RTC.read(tn); now = makeTime(tn); }
+    if (h >= blockHeight || blockHeight <= 0)
+      return now + (time_t)((h - blockHeight) * (double)avgBlockSec);
+    static const struct { long h; uint32_t t; } R[] = {
+      {      0L, 1231006505UL },   // 3 Jan 2009
+      { 100000L, 1293623863UL },   // 29 Dec 2010
+      { 210000L, 1354116278UL },   // 28 Nov 2012
+      { 300000L, 1399703554UL },   // 10 May 2014
+      { 420000L, 1468082773UL },   // 9 Jul 2016
+      { 500000L, 1513622125UL },   // 18 Dec 2017
+      { 630000L, 1589225023UL },   // 11 May 2020
+      { 700000L, 1631333672UL },   // 11 Sep 2021
+      { 840000L, 1713571767UL },   // 20 Apr 2024
+    };
+    const int NR = sizeof(R) / sizeof(R[0]);
+    long loH = R[0].h; double loT = R[0].t, hiT = now; long hiH = blockHeight;
+    for (int i = 0; i < NR; i++) {
+      if (R[i].h > blockHeight) break;
+      if (R[i].h <= h) { loH = R[i].h; loT = R[i].t; }
+      else { hiH = R[i].h; hiT = R[i].t; break; }
+    }
+    if (hiH <= loH) return (time_t)loT;
+    return (time_t)(loT + (hiT - loT) * (double)(h - loH) / (double)(hiH - loH));
+  }
+  void travelMonYear(char *o, size_t n) {
+    static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
+                                  "JUL","AUG","SEP","OCT","NOV","DEC"};
+    tmElements_t t; breakTime(heightUtc(travelHeight), t);
+    int mo = (t.Month >= 1 && t.Month <= 12) ? t.Month - 1 : 0;
+    snprintf(o, n, "%s %d", MON[mo], tmYearToCalendar(t.Year));
+  }
+  void priceTxt(char *o, size_t n, double v, const char *code) {
+    if (v <= 0) { snprintf(o, n, "----"); return; }
+    char m[20];
+    if (v < 100) snprintf(m, 20, "%.2f", v); else fmtMoney(m, 20, v);
+    snprintf(o, n, "%s %s", m, code);
+  }
+  void ratioTxt(char *o, size_t n, double r) {      // 188X, 4.7X
+    snprintf(o, n, r < 100 ? "%.1fX" : "%.0fX", r);
+  }
+  double usdPerCur() {                              // face currency -> USD
+    return (btcPrice > 0 && fxRate[0] > 0) ? fxRate[0] / btcPrice : 0;
+  }
+
+  // PRC: the price history on a log scale, the trip marked
+  void drawPrcTravel() {
+    display.setFont(NULL); display.setTextColor(fg());
+    bool past = travelPast();
+    long th = estHeight(), nowH = blockHeight;
+    double nowUsd = fxRate[0] > 0 ? fxRate[0] : 0;
+    double thenUsd = past ? pastPrice(th) : modelPrice(th) * usdPerCur();
+    static const long AH[10] = {100000L, 210000L, 300000L, 420000L, 500000L,
+                                550000L, 630000L, 700000L, 750000L, 840000L};
+    long rightH = past ? nowH : th;
+    double hiP = (past ? nowUsd : (thenUsd > nowUsd ? thenUsd : nowUsd));
+    if (hiP <= 0.2 || rightH <= 100000L) return;
+    const int x0 = 8, y0 = 104, W = 184, h = 40;
+    display.drawRect(x0 - 2, y0 - 2, W + 4, h + 4, fg());
+    auto X = [&](long hh) { return x0 + 2 + (int)((double)(hh - 100000L) / (rightH - 100000L) * (W - 5)); };
+    auto Y = [&](double pr) {
+      if (pr < 0.2) pr = 0.2;
+      return y0 + h - (int)((log10(pr) - log10(0.2)) / (log10(hiP) - log10(0.2)) * h);
+    };
+    int px = -1, py = -1;
+    for (int i = 0; i < 10; i++) {                 // the record, then today
+      if (AH[i] > nowH) break;
+      int x = X(AH[i]), y = Y(pastPrice(AH[i]));
+      if (px >= 0) display.drawLine(px, py, x, y, fg());
+      px = x; py = y;
+    }
+    int nx = X(nowH), ny = Y(nowUsd);
+    if (px >= 0) display.drawLine(px, py, nx, ny, fg());
+    display.fillCircle(nx, ny, 2, fg());
+    int mx = X(th), my = Y(thenUsd);
+    if (past) {
+      for (int yy = y0; yy < y0 + h; yy += 2) display.drawPixel(mx, yy, fg());
+      display.fillCircle(mx, my, 2, fg());
+    } else {                                      // the model: dotted, open
+      for (int t = 0; t <= 20; t += 2) {
+        int x = nx + (mx - nx) * t / 20, y = ny + (my - ny) * t / 20;
+        display.drawPixel(x, y, fg()); display.drawPixel(x, y + 1, fg());
+      }
+      for (int yy = y0; yy < y0 + h; yy += 2) display.drawPixel(mx, yy, fg());
+      display.drawCircle(mx, my, 2, fg());
+    }
+    char a[24], b[24];
+    const char *code = past ? "USD" : CUR_CODES[curIdx];
+    double nowShown  = past ? nowUsd : btcPrice;
+    double thenShown = past ? thenUsd : modelPrice(th);
+    if (past) {
+      priceTxt(a, 24, thenShown, code); lowAt("THEN", 8, 152); lowAt(a, 44, 152);
+      priceTxt(b, 24, nowShown, code);  lowAt("NOW", 8, 163);  lowAt(b, 44, 163);
+      if (thenShown > 0) { ratioTxt(a, 24, nowShown / thenShown); lowRight(a, 152); lowRight("SINCE", 163); }
+    } else {
+      priceTxt(a, 24, nowShown, code);  lowAt("NOW", 8, 152);   lowAt(a, 44, 152);
+      priceTxt(b, 24, thenShown, code); lowAt("MODEL", 8, 163); lowAt(b, 44, 163);
+      if (nowShown > 0) { ratioTxt(a, 24, thenShown / nowShown); lowRight(a, 152); lowRight("IF IT HOLDS", 163); }
+    }
+  }
+
+  // two log bars against each other, measured from half the smaller
+  void twoBars(double a, double b, int y1, int y2, bool solidSecond, int textW) {
+    double lo = (a < b ? a : b) / 2, hi = a > b ? a : b;
+    if (lo <= 0 || hi <= lo) return;
+    int bw = 194 - textW - 8 - 64; if (bw > 70) bw = 70; if (bw < 20) bw = 20;
+    int wa = (int)(bw * (log10(a) - log10(lo)) / (log10(hi) - log10(lo)) + 0.5);
+    int wb = (int)(bw * (log10(b) - log10(lo)) / (log10(hi) - log10(lo)) + 0.5);
+    if (wa < 3) wa = 3; if (wb < 3) wb = 3;
+    display.drawRect(64, y1, wa, 7, fg());
+    if (solidSecond) display.fillRect(64, y2, wb, 7, fg());
+    else display.drawRect(64, y2, wb, 7, fg());
+  }
+
+  // SAT: what a dollar bought then (or would buy), against today
+  void drawSatTravel() {
+    display.setFont(NULL); display.setTextColor(fg());
+    bool past = travelPast();
+    long th = estHeight();
+    char when[12]; travelMonYear(when, 12);
+    char a[34], g[16] = "";
+    if (past) {
+      double thenS = pastPrice(th) > 0 ? 1e8 / pastPrice(th) : 0;
+      double nowS  = fxRate[0] > 0 ? 1e8 / fxRate[0] : 0;
+      lowAt("WHAT $1 BOUGHT", 8, 104); lowRight("IN SATS", 104);
+      lowAt(when, 8, 117);  grouped(g, 16, (long long)(thenS + 0.5)); lowRight(thenS > 0 ? g : "----", 117);
+      int tw = strlen(g) * 6;
+      lowAt("TODAY", 8, 129); grouped(g, 16, (long long)(nowS + 0.5)); lowRight(nowS > 0 ? g : "----", 129);
+      if ((int)strlen(g) * 6 > tw) tw = strlen(g) * 6;
+      if (thenS > 0 && nowS > 0) {
+        twoBars(thenS, nowS, 117, 129, true, tw);
+        display.drawFastHLine(6, 142, 188, fg());
+        centerSmall("SINCE THEN THE DOLLAR", 148);
+        double lost = (1 - nowS / thenS) * 100;
+        if (nowS < thenS) snprintf(a, 34, lost >= 99.99 ? "LOST %.4f%% IN BITCOIN"
+                                                        : "LOST %.2f%% IN BITCOIN", lost);
+        else              snprintf(a, 34, "BUYS %.0f%% MORE SATS", (nowS / thenS - 1) * 100);
+        centerSmall(a, 160);
+      }
+    } else {
+      double k = 1;                                  // 1, 10, ... 100,000
+      while (btcPrice > 0 && k < 1e7 && k * 1e8 / btcPrice < 100) k *= 10;
+      double nowS  = btcPrice > 0 ? k * 1e8 / btcPrice : 0;
+      double m = modelPrice(th);
+      double thenS = m > 0 ? k * 1e8 / m : 0;
+      char unit[20], kg[16]; grouped(kg, 16, (long long)k);
+      if (curIdx == 0 && k == 1) strcpy(unit, "$1");
+      else snprintf(unit, 20, "%s %s", kg, CUR_CODES[curIdx]);
+      snprintf(a, 34, "WHAT %s WOULD BUY", unit);
+      lowAt(a, 8, 104);
+      if (strlen(a) <= 22) lowRight("IN SATS", 104);   // room for both
+      lowAt("TODAY", 8, 117); grouped(g, 16, (long long)(nowS + 0.5)); lowRight(nowS > 0 ? g : "----", 117);
+      lowAt(when, 8, 129);
+      if (thenS >= 1) { grouped(g, 16, (long long)(thenS + 0.5)); snprintf(a, 34, "~%s", g); }
+      else if (thenS > 0) snprintf(a, 34, "~%.2f", thenS);
+      else strcpy(a, "----");
+      lowRight(a, 129);
+      int tw = strlen(a) * 6; if ((int)strlen(g) * 6 > tw) tw = strlen(g) * 6;
+      if (thenS > 0 && nowS > 0) {
+        twoBars(nowS, thenS, 117, 129, true, tw);
+        display.drawFastHLine(6, 142, 188, fg());
+        if (curIdx == 0 && k == 1) snprintf(a, 34, "IF THE MODEL HOLDS, A DOLLAR");
+        else snprintf(a, 34, "IF THE MODEL HOLDS, %s", unit);
+        centerSmall(a, 148);
+        snprintf(a, 34, "BUYS ~%.0f%% FEWER SATS", (1 - thenS / nowS) * 100);
+        centerSmall(a, 160);
+      }
+    }
+  }
+
+  // CAP: the network then (or modelled) against now, and gold where known
+  void drawCapTravel() {
+    display.setFont(NULL); display.setTextColor(fg());
+    bool past = travelPast();
+    long th = estHeight();
+    char t[34];
+    if (past) {
+      double thenB = supplyBTC(th) * pastPrice(th) / 1e9;
+      double nowB  = fxRate[0] > 0 ? supplyBTC(blockHeight) * fxRate[0] / 1e9 : 0;
+      double big = thenB > nowB ? thenB : nowB;
+      lowAt("THEN", 8, 105); lowAt("NOW", 8, 119);
+      display.drawRect(40, 105, 110, 8, fg()); display.drawRect(40, 119, 110, 8, fg());
+      if (big > 0) {
+        int a = (int)(110 * thenB / big + 0.5), b = (int)(110 * nowB / big + 0.5);
+        display.fillRect(40, 105, a > 2 ? a : 3, 8, fg());
+        display.fillRect(40, 119, b > 2 ? b : 3, 8, fg());
+      }
+      fmtTB(t, 34, thenB); lowRight(thenB > 0 ? t : "----", 105);
+      fmtTB(t, 34, nowB);  lowRight(nowB > 0 ? t : "----", 119);
+      display.drawFastHLine(6, 134, 188, fg());
+      if (thenB > 0 && nowB > 0) {
+        centerSmall("THE WHOLE NETWORK WAS", 141);
+        if (thenB < nowB) snprintf(t, 34, "WORTH %.2f%% OF TODAY", thenB / nowB * 100);
+        else              snprintf(t, 34, "WORTH %.1fX TODAY", thenB / nowB);
+        centerSmall(t, 153);
+      }
+      centerSmall("GOLD THEN: NOT ON THE WATCH", 165);
+    } else {
+      double m = modelPrice(th);
+      double thenB = m > 0 ? supplyBTC(th) * m / 1e9 : 0;
+      double nowB  = btcMcapB;
+      double cross = (fxRate[0] > 0 && fxRate[curIdx] > 0) ? fxRate[curIdx] / fxRate[0] : 0;
+      double goldB = (goldMcapB > 0 && cross > 0) ? goldMcapB * cross : 0;
+      double big = thenB; if (nowB > big) big = nowB; if (goldB > big) big = goldB;
+      char yr[8]; { char w[12]; travelMonYear(w, 12); snprintf(yr, 8, "%s", w + 4); }
+      lowAt("NOW", 8, 105); lowAt(yr, 8, 119); lowAt("GOLD", 8, 133);
+      display.drawRect(40, 105, 110, 8, fg()); display.drawRect(40, 119, 110, 8, fg());
+      display.drawRect(40, 133, 110, 8, fg());
+      if (big > 0) {
+        int a = (int)(110 * nowB / big + 0.5), b = (int)(110 * thenB / big + 0.5);
+        display.fillRect(40, 105, a > 2 ? a : 3, 8, fg());
+        for (int x = 40; x < 40 + b; x += 2) display.drawFastVLine(x, 119, 8, fg());   // modelled
+        if (goldB > 0) display.fillRect(40, 133, (int)(110 * goldB / big + 0.5), 8, fg());
+      }
+      fmtTB(t, 34, nowB); lowRight(nowB > 0 ? t : "----", 105);
+      if (thenB > 0) { char u[20]; fmtTB(u, 20, thenB); snprintf(t, 34, "~%s", u); lowRight(t, 119); }
+      else lowRight("----", 119);
+      if (goldB > 0) { fmtTB(t, 34, goldB); lowRight(t, 133); } else lowRight("----", 133);
+      display.drawFastHLine(6, 147, 188, fg());
+      if (thenB > 0 && goldB > 0) {
+        if (thenB < goldB) snprintf(t, 34, "%.0f%% OF GOLD'S VALUE TODAY", thenB / goldB * 100);
+        else               snprintf(t, 34, "%.1fX GOLD'S VALUE TODAY", thenB / goldB);
+        centerSmall(t, 153);
+      } else if (thenB > 0) centerSmall("GOLD: NO PRICE YET", 153);
+      centerSmall("STAY HUMBLE, STACK SATS", 165);
+    }
+  }
+
+  // sats as BTC, every digit that is there and none that is not: 3.125 BTC
+  void btcExact(char *o, size_t n, long long sats) {
+    if (sats <= 0) { snprintf(o, n, "0 BTC"); return; }
+    char f[12]; snprintf(f, 12, "%08lld", sats % 100000000LL);
+    int e = 7; while (e >= 0 && f[e] == '0') f[e--] = 0;
+    char w[16]; grouped(w, 16, sats / 100000000LL);
+    if (f[0]) snprintf(o, n, "%s.%s BTC", w, f); else snprintf(o, n, "%s BTC", w);
+  }
+
+  // FEE: fees cannot be known, then or ahead; the subsidy always can
+  void drawFeeTravel() {
+    display.setFont(NULL); display.setTextColor(fg());
+    bool past = travelPast();
+    long th = estHeight();
+    int eraT = (int)(th / 210000L), eraN = (int)(blockHeight / 210000L);
+    long long subSats = eraT < 64 ? (5000000000LL >> eraT) : 0;   // exact, as consensus has it
+    char a[34], b[24];
+    btcExact(a, 34, subSats);
+    btcExact(b, 24, subSats * 144);
+    if (past) {
+      lowAt("FEES THEN", 8, 105); lowRight("UNKNOWN", 105);
+      lowAt("THE WATCH KEEPS NO FEE HISTORY,", 8, 116);
+      lowAt("SO IT DOES NOT PRETEND.", 8, 126);
+      display.drawFastHLine(6, 137, 188, fg());
+      lowAt("WHAT MINERS EARNED FOR SURE", 8, 142);
+      lowAt("A BLOCK", 8, 153); lowRight(a, 153);
+      lowAt("A DAY", 8, 163);   lowRight(b, 163);
+    } else {
+      lowAt("FEES THEN", 8, 105); lowRight("UNKNOWABLE", 105);
+      lowAt("WHAT MINERS WILL EARN FOR SURE", 8, 116);
+      lowAt("A BLOCK", 8, 127); lowRight(a, 127);
+      lowAt("A DAY", 8, 137);   lowRight(b, 137);
+      display.drawFastHLine(6, 148, 188, fg());
+      int k = eraT - eraN;
+      if (k <= 0) centerSmall("THE SAME SUBSIDY AS TODAY", 154);
+      else {
+        if (k == 1) snprintf(a, 34, "HALF OF TODAY: FEES MUST");
+        else        snprintf(a, 34, "1/%lld OF TODAY: FEES MUST", 1LL << (k > 40 ? 40 : k));
+        centerSmall(a, 154);
+        centerSmall("CARRY MORE OF THE WORK", 164);
+      }
+    }
+  }
+
+  // WAL: today's sats at the trip's price (never "what you had": the watch
+  // cannot know a past balance), in the open only when the balance is
+  void drawWalTravel() {
+    display.setFont(NULL); display.setTextColor(fg());
+    if (isDemoWallet() || !haveWallet) {
+      centerSmall("SET UP A WALLET TO SEE", 120);
+      centerSmall("WHAT YOUR SATS WERE WORTH", 132);
+      return;
+    }
+    bool hidden = walletPrivate && !walletPeek;
+    bool past = travelPast();
+    long th = estHeight();
+    double btc = walletSats / 1e8;
+    char when[12]; travelMonYear(when, 12);
+    char a[34];
+    if (past) {
+      double thenV = btc * pastPrice(th), nowV = fxRate[0] > 0 ? btc * fxRate[0] : 0;
+      lowAt("YOUR SATS, WORTH", 8, 104);
+      lowAt(when, 8, 116);  priceTxt(a, 34, thenV, "USD"); lowRight(hidden ? "-----" : a, 116);
+      lowAt("TODAY", 8, 128); priceTxt(a, 34, nowV, "USD"); lowRight(hidden ? "-----" : a, 128);
+      display.drawFastHLine(6, 141, 188, fg());
+      if (thenV > 0 && nowV > 0) {
+        centerSmall("THE SAME SATS,", 147);
+        if (nowV >= thenV) { char r[12]; ratioTxt(r, 12, nowV / thenV); snprintf(a, 34, "%s THE DOLLARS", r); }
+        else snprintf(a, 34, "%.0f%% OF THE DOLLARS", nowV / thenV * 100);
+        centerSmall(a, 159);
+      }
+    } else {
+      double m = modelPrice(th);
+      double thenV = btc * m, nowV = btc * btcPrice;
+      lowAt("YOUR SATS, IF THE MODEL HOLDS", 8, 104);
+      lowAt("TODAY", 8, 116); priceTxt(a, 34, nowV, CUR_CODES[curIdx]); lowRight(hidden ? "-----" : a, 116);
+      lowAt(when, 8, 128);
+      if (thenV > 0) { char v[30]; priceTxt(v, 30, thenV, CUR_CODES[curIdx]); snprintf(a, 34, "~%s", v); }
+      else strcpy(a, "----");
+      lowRight(hidden ? "-----" : a, 128);
+      display.drawFastHLine(6, 141, 188, fg());
+      if (thenV > 0 && nowV > 0) {
+        char r[12]; ratioTxt(r, 12, thenV / nowV);
+        snprintf(a, 34, "THE SAME SATS, ~%s", r);
+        centerSmall(a, 147);
+      }
+      centerSmall("STAY HUMBLE, STACK SATS", 159);
+    }
+  }
+
   // MEM: a block as a small cube (front, top, shaded side); fill = how full
   void memCube(int x, int y, int w, int h, int dp, int fillPct, bool solid,
                const char *lab) {
@@ -5587,6 +5916,7 @@ public:
     // before the face is on screen. Render first, scan after (see the
     // hook at the end of this function). SCAN in the tag meanwhile.
     if (dispMode < 0 || dispMode >= NUM_MODES) dispMode = 0;
+    if (dispMode == M_MEMP && travelActive) dispMode = M_HGHT;
     if (!faceShown(dispMode)) dispMode = nextFace(dispMode);
     if (tzIndex < 0 || tzIndex > 4) tzIndex = 0;
     if (themeMode < 0 || themeMode > 2) themeMode = 0;
@@ -5993,6 +6323,11 @@ public:
     else if (dispMode == M_MEMP && !travelActive) drawMemLower();
     else if (dispMode == M_SATS && !travelActive) drawSatLower();
     else if (dispMode == M_MCAP && !travelActive) drawCapLower();
+    else if (travelActive && dispMode == M_PRICE) drawPrcTravel();
+    else if (travelActive && dispMode == M_SATS)  drawSatTravel();
+    else if (travelActive && dispMode == M_MCAP)  drawCapTravel();
+    else if (travelActive && dispMode == M_FEES)  drawFeeTravel();
+    else if (travelActive && dispMode == M_WALT)  drawWalTravel();
     else if (travelActive) {
       // Sentiment and the 24h chart are facts about now — neither survives
       // the trip. What does: how much of 21 million exists at this height,
@@ -6176,9 +6511,7 @@ public:
     static char destLine[26];
     if (travelActive) {
       long dB = travelHeight - blockHeight;
-      time_t now = time(nullptr);
-      if (now < 1700000000) { tmElements_t tn; RTC.read(tn); now = makeTime(tn); }
-      time_t then = now + (time_t)(dB * (double)avgBlockSec);
+      time_t then = heightUtc(travelHeight);
       static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
                                     "JUL","AUG","SEP","OCT","NOV","DEC"};
       tmElements_t td; breakTime(then, td);
@@ -9315,7 +9648,10 @@ public:
 
   // Faces the wearer left out are skipped by BACK and missing from the strip.
   // There is always at least one: the Faces screen will not hide the last.
-  bool faceShown(int m) { return !((faceHide >> m) & 1); }
+  bool faceShown(int m) {
+    if (m == M_MEMP && travelActive) return false;   // no mempool then, or yet
+    return !((faceHide >> m) & 1);
+  }
   int nextFace(int from) {
     for (int k = 1; k <= NUM_MODES; k++) {
       int m = (from + k) % NUM_MODES;
