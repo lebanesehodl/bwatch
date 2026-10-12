@@ -6787,7 +6787,7 @@ public:
   // VERIFY: the receive address, worked out on the wrist from public keys
   // alone, set out to be compared by eye with what the phone shows. UP and
   // DOWN step through the neighbours (a wallet app is often a few ahead);
-  // MENU goes back to the next one; BACK, or a minute, leaves.
+  // MENU goes back to the current receiving one; BACK, or a minute, leaves.
   void verifyScreen() {
     guiState = APP_STATE;
     qrDrawnIdx = -1;                    // the QR after it starts clean
@@ -6800,7 +6800,7 @@ public:
       wsTitle(t);
       int y = wsGrouped(a.length() ? a.c_str() : "----", 36);
       y += 2;
-      if (idx == recvIndex)     wsAt("NEXT TO RECEIVE", 10, y);
+      if (idx == recvIndex)     wsAt("CURRENT RECEIVING", 10, y);
       else if (idx > recvIndex) wsAt("AHEAD: NOT YET USED", 10, y);
       else                      wsAt("EARLIER: MAY BE USED", 10, y);
       if (haveWallet) {
@@ -6812,7 +6812,7 @@ public:
       if (d) snprintf(t, 34, "MULTISIG %d OF %d  %s", d->m, d->n, d->checksum);
       else   snprintf(t, 34, "ONE KEY, NATIVE SEGWIT");
       wsAt(t, 10, y + 12);
-      wsFooter("UP/DOWN: STEP  MENU: NEXT");
+      wsFooter("UP/DOWN: STEP  MENU: CURRENT");
       display.display(true);
       int b = waitForPress(60000);
       waitAllRelease();
