@@ -6553,8 +6553,8 @@ public:
     // open: closes after a minute if no phone joins; while one is joined it
     // waits, and a minute after it leaves
     display.fillRect(0, 150, 200, 50, bg());
-    wsAt("OPEN. CLOSES IN 1 MIN IF", 10, 154);
-    wsAt("NO PHONE JOINS", 10, 166);
+    wsAt("CONNECTION OPEN", 10, 154);
+    wsAt("1 MIN TO JOIN FROM YOUR PHONE", 10, 166);
     wsFooter("SAVE ON THE PAGE TO FINISH");
     display.display(true);
     runPortal(wm, 60, true);
