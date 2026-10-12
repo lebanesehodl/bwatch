@@ -3436,7 +3436,7 @@ public:
       display.drawLine(x0 - 2, y + 11, x0 + 1, y - 1, fg());
       display.drawLine(x0 + 1, y + 11, x0 + 4, y - 1, fg());
     }
-    int labelled = 0;
+    int labelled = 0, lastLx = -100;
     for (int k = 1; k <= 12; k++) {                 // where each halving lands
       double sk = supplyBTC(210000L * k);
       if (sk < lo) continue;
@@ -3444,10 +3444,13 @@ public:
       if (x > x0 + W - 1) x = x0 + W - 1;
       display.drawFastVLine(x, y + 11, 4, fg());
       // the next three halvings by year (they get closer: 4 years apart)
-      if (lo > 0 && labelled < 3 && 210000L * k > h) {
+      // Each halving adds half the last, so far ahead they crowd into the
+      // bar's last few pixels: a year is only written where it has room.
+      int lx = x - 12; if (lx > 194 - 24) lx = 194 - 24;
+      if (lo > 0 && labelled < 3 && 210000L * k > h && lx >= lastLx + 28) {
         char yr[6]; snprintf(yr, 6, "%d", 2008 + 4 * k);   // 2012, 2016 ...
-        lowAt(yr, x - 12, y + 17);
-        labelled++;
+        lowAt(yr, lx, y + 17);
+        labelled++; lastLx = lx;
       }
     }
     if (lo == 0) lowAt("EACH TICK A HALVING", 8, 131);
@@ -3460,13 +3463,11 @@ public:
     lowAt(a, 8, 148); lowRight(b, 148);
     // the last sat: block 6,930,000, at ten minutes a block from the real
     // tip (a fact about now, wherever Time Travel has gone)
-    long now_h = blockHeight > 0 ? blockHeight : h;
-    long left = 6930000L - now_h; if (left < 0) left = 0;
-    double years = left * 600.0 / (365.25 * 86400.0);
-    tmElements_t now; RTC.read(now);
-    int yr = tmYearToCalendar(now.Year);
-    if (yr < 2024) yr = 2026;                       // an unset clock
-    snprintf(a, 24, "LAST SAT ~%d", yr + (int)(years + 0.5));
+    // (the same clock as HGT and the travel title, so they agree on 2140)
+    time_t tEnd = heightUtc(6930000L), tNow = heightUtc(blockHeight);
+    double years = tEnd > tNow ? (tEnd - tNow) / (365.25 * 86400.0) : 0;
+    tmElements_t te; breakTime(tEnd, te);
+    snprintf(a, 24, "LAST SAT ~%d", tmYearToCalendar(te.Year));
     snprintf(b, 24, "IN %d YEARS", (int)(years + 0.5));
     lowAt(a, 8, 160); lowRight(b, 160);
   }
@@ -3632,17 +3633,26 @@ public:
   time_t heightUtc(long h) {
     time_t now = time(nullptr);
     if (now < 1700000000) { tmElements_t tn; RTC.read(tn); now = makeTime(tn); }
-    if (h >= blockHeight || blockHeight <= 0)
-      return now + (time_t)((h - blockHeight) * (double)avgBlockSec);
+    if (blockHeight <= 0) return now + (time_t)((h - blockHeight) * 600.0);
+    if (h >= blockHeight) {        // this epoch at its pace, then ten minutes
+      long dh = h - blockHeight, toRet = 2016L - (blockHeight % 2016L);
+      long atPace = dh < toRet ? dh : toRet;
+      return now + (time_t)(atPace * (double)avgBlockSec + (dh - atPace) * 600.0);
+    }
     static const struct { long h; uint32_t t; } R[] = {
       {      0L, 1231006505UL },   // 3 Jan 2009
+      {     170L, 1231731025UL },   // 12 Jan 2009 (the landmarks' own dates,
+      {  57043L, 1274552191UL },   // 22 May 2010  so the picker names them
+      {  74638L, 1281891957UL },   // 15 Aug 2010  in the right month)
       { 100000L, 1293623863UL },   // 29 Dec 2010
       { 210000L, 1354116278UL },   // 28 Nov 2012
       { 300000L, 1399703554UL },   // 10 May 2014
       { 420000L, 1468082773UL },   // 9 Jul 2016
+      { 481824L, 1503539857UL },   // 24 Aug 2017
       { 500000L, 1513622125UL },   // 18 Dec 2017
       { 630000L, 1589225023UL },   // 11 May 2020
       { 700000L, 1631333672UL },   // 11 Sep 2021
+      { 709632L, 1636866927UL },   // 14 Nov 2021
       { 840000L, 1713571767UL },   // 20 Apr 2024
     };
     const int NR = sizeof(R) / sizeof(R[0]);
@@ -3673,6 +3683,121 @@ public:
   }
   double usdPerCur() {                              // face currency -> USD
     return (btcPrice > 0 && fxRate[0] > 0) ? fxRate[0] / btcPrice : 0;
+  }
+
+  // Landmarks: blocks worth travelling to. A few moments from the record,
+  // every halving (computed), and the end of the subsidy. They mark HGT's
+  // travel line and are a step in the Time Travel picker.
+  struct Landmark { long h; const char *name; };
+  // (a function's static: the core's C++ needs a class constexpr array
+  // defined out of line, and this keeps it all in one place)
+  static const Landmark *landmarks() {
+    static const Landmark L[] = {
+      {       0L, "GENESIS"          },
+      {     170L, "THE FIRST SEND"   },   // Satoshi to Hal Finney, Jan 2009
+      {   57043L, "PIZZA DAY"        },   // 10,000 BTC for two pizzas
+      {   74638L, "THE OVERFLOW BUG" },   // 184 billion BTC, Aug 2010
+      {  481824L, "SEGWIT"           },
+      {  709632L, "TAPROOT"          },
+      { 6930000L, "THE SUBSIDY ENDS" },   // reward 0 from here on
+    };
+    return L;
+  }
+  static const int N_LANDMARKS = 7;
+  static const int LAST_HALVING = 32;   // 6,720,000: the reward becomes 1 sat
+  // the name of a landmark at exactly h, into o; false if h is none
+  bool landmarkName(long h, char *o, size_t n) {
+    for (int i = 0; i < N_LANDMARKS; i++)
+      if (landmarks()[i].h == h) { snprintf(o, n, "%s", landmarks()[i].name); return true; }
+    if (h > 0 && h % 210000L == 0 && h / 210000L <= LAST_HALVING) {
+      int k = (int)(h / 210000L);
+      const char *suf = (k % 100 >= 11 && k % 100 <= 13) ? "TH"
+                      : k % 10 == 1 ? "ST" : k % 10 == 2 ? "ND" : k % 10 == 3 ? "RD" : "TH";
+      snprintf(o, n, "THE %d%s HALVING", k, suf);
+      return true;
+    }
+    return false;
+  }
+  // the nearest landmark strictly after (dir > 0) or before h; -1 if none
+  long landmarkNext(long h, int dir) {
+    long best = -1;
+    for (int i = 0; i < N_LANDMARKS; i++) {
+      long c = landmarks()[i].h;
+      if (dir > 0 && c > h && (best < 0 || c < best)) best = c;
+      if (dir < 0 && c < h && (best < 0 || c > best)) best = c;
+    }
+    long k = dir > 0 ? h / 210000L + 1 : (h - 1) / 210000L;
+    if (h <= 0 && dir < 0) k = 0;
+    if (k >= 1 && k <= LAST_HALVING) {
+      long c = k * 210000L;
+      if (dir > 0 && (best < 0 || c < best)) best = c;
+      if (dir < 0 && (best < 0 || c > best)) best = c;
+    }
+    return best;
+  }
+
+  // HGT: where on the chain you are. Distance in blocks and years, the chain
+  // from 2009 with you on it, and the landmarks either side of you.
+  void drawHgtTravel() {
+    display.setFont(NULL); display.setTextColor(fg());
+    long th = estHeight(), now = blockHeight > 0 ? blockHeight : th;
+    bool past = th < now;
+    char a[40], g[16];
+    grouped(g, 16, past ? now - th : th - now);
+    snprintf(a, 40, "%s BLOCKS %s", g, past ? "AGO" : "AHEAD");
+    lowAt(a, 8, 102);
+    double yrs = fabs((double)(heightUtc(th) - heightUtc(now))) / (365.25 * 86400.0);
+    snprintf(a, 40, yrs < 10 ? "~%.1f YRS" : "~%.0f YRS", yrs);
+    lowRight(a, 102);
+
+    long R = past ? now : th;                         // the line's far end
+    if (R <= 0) R = 1;
+    const int x0 = 10, x1 = 190, y = 131;
+    auto X = [&](long hh) { return x0 + (int)((double)hh / R * (x1 - x0)); };
+    int nx = X(now), tx = X(th);
+    int solidTo = past ? tx : nx;                     // lived: solid
+    display.drawFastHLine(x0, y, solidTo - x0, fg());
+    display.drawFastHLine(x0, y + 1, solidTo - x0, fg());
+    for (int x = solidTo; x <= x1; x += 3) display.drawPixel(x, y, fg());   // to come
+    for (int i = 0; i < N_LANDMARKS; i++) {           // landmarks: short ticks
+      if (landmarks()[i].h > R) break;
+      int x = X(landmarks()[i].h);
+      display.drawFastVLine(x, y - 2, 2, fg()); display.drawFastVLine(x, y + 2, 1, fg());
+    }
+    for (int k = 1; k <= LAST_HALVING && k * 210000L <= R; k++) {   // halvings: tall
+      int x = X(k * 210000L);
+      display.drawFastVLine(x, y - 4, 4, fg()); display.drawFastVLine(x, y + 2, 3, fg());
+    }
+    display.drawFastVLine(x0, y - 5, 12, fg());
+    int yx = tx - 9; if (yx < 2) yx = 2; if (yx > 176) yx = 176;
+    display.fillTriangle(tx - 4, y - 9, tx + 4, y - 9, tx, y - 4, fg());
+    lowAt("YOU", yx, y - 18);
+    lowAt("2009", x0 - 2, y + 7);
+    if (past) {
+      display.drawFastVLine(x1, y - 5, 12, fg());
+      lowAt("NOW", x1 + 2 - 18, y + 7);
+    } else {
+      display.fillRect(nx - 1, y - 3, 3, 8, fg());
+      int lx = nx - 9; if (lx > yx - 22) lx = yx - 22;
+      lowAt("NOW", lx, y - 18);
+      char w[12]; travelMonYear(w, 12);
+      lowAt(w + 4, x1 + 2 - 24, y + 7);              // the arrival year
+    }
+    display.drawFastHLine(6, 148, 188, fg());
+
+    if (landmarkName(th, a, 40)) {
+      centerSmall("YOU ARE AT", 153);
+      centerSmall(a, 164);
+    } else {
+      char nm[24];
+      long pv = landmarkNext(th, -1), nxl = landmarkNext(th, 1);
+      if (pv >= 0 && landmarkName(pv, nm, 24)) {
+        grouped(g, 16, th - pv); snprintf(a, 40, "%s AFTER %s", g, nm); centerSmall(a, 153);
+      }
+      if (nxl >= 0 && landmarkName(nxl, nm, 24)) {
+        grouped(g, 16, nxl - th); snprintf(a, 40, "%s BEFORE %s", g, nm); centerSmall(a, 164);
+      }
+    }
   }
 
   // PRC: the price history on a log scale, the trip marked
@@ -6329,42 +6454,10 @@ public:
     else if (travelActive && dispMode == M_FEES)  drawFeeTravel();
     else if (travelActive && dispMode == M_WALT)  drawWalTravel();
     else if (travelActive) {
-      // Sentiment and the 24h chart are facts about now — neither survives
-      // the trip. What does: how much of 21 million exists at this height,
-      // and where that sits on the whole emission curve. Pure arithmetic.
-      long th = estHeight();
-      double issued = supplyBTC(th);
-      float mined = (float)(issued / supplyCapBTC());
-
-      int by = 112;                                    // supply bar
-      display.drawRect(8, by, 184, 9, fg());
-      int fillw = (int)(180.0f * mined + 0.5f);
-      if (fillw > 0) display.fillRect(10, by + 2, fillw, 5, fg());
-      display.setFont(NULL);
-      display.setCursor(8, by + 13);   display.print("0");
-      display.setCursor(174, by + 13); display.print("21M");
-      { char m[20]; snprintf(m, 20, "%.4f%% MINED", mined * 100.0);
-        int16_t x1,y1; uint16_t w,h;
-        display.getTextBounds(m,0,0,&x1,&y1,&w,&h);
-        display.setCursor((200-(int)w)/2, by + 13); display.print(m); }
-
-      int cy2 = 140, ch2 = 34;                         // emission curve
-      display.drawRect(6, cy2, 188, ch2, fg());
-      // no label: the curve leaves the bottom-left corner immediately, and
-      // anything written there gets crossed out by it
-      int px2 = -1, py2 = -1;
-      for (int i = 0; i <= 182; i += 2) {
-        long h2 = (long)((double)i / 182.0 * 6930000.0);
-        int x = 9 + i;
-        int y = cy2 + ch2 - 4 - (int)(supplyBTC(h2) / supplyCapBTC() * (ch2 - 10));
-        if (px2 >= 0) display.drawLine(px2, py2, x, y, fg());
-        px2 = x; py2 = y;
-      }
-      int mx = 9 + (int)((double)th / 6930000.0 * 182.0);
-      int my = cy2 + ch2 - 4 - (int)(mined * (ch2 - 10));
-      display.drawFastVLine(mx, cy2 + 2, ch2 - 4, fg());
-      display.fillCircle(mx, my, 2, fg());
-      display.setCursor(160, cy2 + ch2 - 9); display.print("2140");
+      // Sentiment and the 24h chart are facts about now; the supply bar and
+      // emission curve that stood here live on SUP and HLV. HGT says where
+      // on the chain you are.
+      drawHgtTravel();
     } else {
 
     // --- fear/greed gauge ---
@@ -7885,10 +7978,11 @@ public:
       target = (alarmHeight > here) ? alarmHeight
                                     : (here / 210000L + 1) * 210000L;
 
-    const int   NSTEP = 6;
-    const long  STEPS[NSTEP] = { 1, 144, 4320, 52560, 210000, 525600 };
+    const int   NSTEP = 7;
+    const int   S_LANDMARK = 5;                    // jumps, not a distance
+    const long  STEPS[NSTEP] = { 1, 144, 4320, 52560, 210000, 0, 525600 };
     const char *SNAME[NSTEP] = { "BLOCK", "DAY", "MONTH", "YEAR",
-                                 "HALVING", "DECADE" };
+                                 "HALVING", "LANDMARK", "DECADE" };
     int step = 3;
     const uint32_t IDLE_MS = 60000;
     const long MAX_H = 6930000L;                 // the last subsidy era
@@ -7900,6 +7994,16 @@ public:
     waitAllRelease();                   // the press that opened us
 
     auto clampT = [&](long t) { return t < 0 ? 0 : (t > MAX_H ? MAX_H : t); };
+    // one move of the current step; landmarks jump to the next one along
+    auto moveT = [&](long t, int dir, long mult) {
+      if (step != S_LANDMARK) return clampT(t + dir * STEPS[step] * mult);
+      for (long i = 0; i < mult; i++) {
+        long nx = landmarkNext(t, dir);
+        if (nx < 0 || nx > MAX_H) break;
+        t = nx;
+      }
+      return t;
+    };
 
     auto drawPicker = [&]() {
       display.setFullWindow();
@@ -7911,24 +8015,36 @@ public:
       char big[16]; snprintf(big, 16, "%ld", target);
       drawGrouped(big, 52, fitFont(big));
       display.setFont(NULL);
+      char lmName[24];
+      bool isLm = landmarkName(target, lmName, 24);
       centerText(forAlarm ? (target <= here ? "ALREADY MINED"
                                             : "ALARM AT HEIGHT")
+                 : isLm ? lmName
                  : travelActive ? "BLOCK HEIGHT - TRAVELLING"
                  : (target == here ? "BLOCK HEIGHT - NOW"
                                    : "BLOCK HEIGHT"), 66, NULL);
 
-      // when: blocks from now at the chain's measured pace
+      // when: the past from the record, the future at the measured pace
       long dBlocks = target - here;
-      char line[34];
-      long mins = (long)(dBlocks * (avgBlockSec / 60.0f));
+      char line[34], span[20];
+      double secs = (double)(heightUtc(target) - heightUtc(here));
+      long mins = (long)(secs / 60.0);
       long days = mins / 1440;
-      if (dBlocks == 0)      snprintf(line, 34, "TODAY");
-      else if (labs(days) < 2)
-        snprintf(line, 34, "%s %ld HOURS", dBlocks > 0 ? "IN" : "AGO", labs(mins) / 60);
-      else if (labs(days) < 800)
-        snprintf(line, 34, "%s %ld DAYS", dBlocks > 0 ? "IN" : "AGO", labs(days));
-      else
-        snprintf(line, 34, "%s %ld YEARS", dBlocks > 0 ? "IN" : "AGO", labs(days) / 365);
+      if (dBlocks == 0)      snprintf(span, 20, "TODAY");
+      else if (labs(days) < 2)   snprintf(span, 20, "%ld HOURS", labs(mins) / 60);
+      else if (labs(days) < 800) snprintf(span, 20, "%ld DAYS", labs(days));
+      else                       snprintf(span, 20, "%ld YEARS", labs(days) / 365);
+      if (dBlocks == 0) snprintf(line, 34, "TODAY");
+      else if (isLm && !forAlarm) {               // a landmark carries its date
+        static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
+                                      "JUL","AUG","SEP","OCT","NOV","DEC"};
+        tmElements_t t; breakTime(heightUtc(target), t);
+        int mo = (t.Month >= 1 && t.Month <= 12) ? t.Month - 1 : 0;
+        if (dBlocks < 0) snprintf(line, 34, "%s %d - %s AGO", MON[mo], tmYearToCalendar(t.Year), span);
+        else             snprintf(line, 34, "~%s %d - IN %s", MON[mo], tmYearToCalendar(t.Year), span);
+      }
+      else if (dBlocks > 0) snprintf(line, 34, "IN %s", span);
+      else                  snprintf(line, 34, "%s AGO", span);
       centerText(line, 84, NULL);
 
       // what the chain guarantees at that height
@@ -7975,14 +8091,15 @@ public:
         // Each redraw is a partial refresh of about a third of a second, so
         // the panel paces the scroll by itself.
         int dir = (p == UP_BTN_PIN) ? 1 : -1;
-        target = clampT(target + dir * STEPS[step]);
+        target = moveT(target, dir, 1);
         drawPicker();
         unsigned long held0 = millis();
         while (digitalRead(p) == BTN_ACTIVE) {
           unsigned long h = millis() - held0;
           if (h < 450) { delay(10); continue; }
           long mult = (h < 1450) ? 1 : (h < 2950 ? 5 : 10);
-          long next = clampT(target + dir * STEPS[step] * mult);
+          if (step == S_LANDMARK) { mult = 1; delay(250); }   // read each name
+          long next = moveT(target, dir, mult);
           if (next == target) { delay(20); continue; }   // at an end
           target = next;
           drawPicker();
