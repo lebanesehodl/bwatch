@@ -6539,7 +6539,7 @@ public:
       if (++g % 3 == 0 || i + 4 >= n) {
         row[rl] = 0;
         display.setCursor(12, y); display.print(row);
-        y += 19; rl = 0;
+        y += 18; rl = 0;
       }
     }
     display.setTextSize(1);
@@ -6799,19 +6799,20 @@ public:
       snprintf(t, 34, "VERIFY #%d", idx);
       wsTitle(t);
       int y = wsGrouped(a.length() ? a.c_str() : "----", 36);
-      y += 2;
-      if (idx == recvIndex)     wsAt("CURRENT RECEIVING", 10, y);
-      else if (idx > recvIndex) wsAt("AHEAD: NOT YET USED", 10, y);
+      y += 1;                           // three lines under six rows of a
+      if (idx == recvIndex)     wsAt("CURRENT RECEIVING", 10, y);   // multisig
+      else if (idx > recvIndex) wsAt("AHEAD: NOT YET USED", 10, y); // address
       else                      wsAt("EARLIER: MAY BE USED", 10, y);
       if (haveWallet) {
         uint32_t ago = wakeMin >= lastWalletMin ? wakeMin - lastWalletMin : 0;
-        if (ago < 600) snprintf(t, 34, "SCAN %luM", (unsigned long)ago);
-        else snprintf(t, 34, "SCAN %luH", (unsigned long)(ago / 60));
-        wsAt(t, 190 - (int)strlen(t) * 6, y);
-      }
+        if (ago < 120) snprintf(t, 34, "SCAN %lu MIN AGO", (unsigned long)ago);
+        else if (ago < 2880) snprintf(t, 34, "SCAN %lu H AGO", (unsigned long)(ago / 60));
+        else snprintf(t, 34, "SCAN %lu DAYS AGO", (unsigned long)(ago / 1440));
+      } else snprintf(t, 34, "NOT SCANNED YET");
+      wsAt(t, 10, y + 11);
       if (d) snprintf(t, 34, "MULTISIG %d OF %d  %s", d->m, d->n, d->checksum);
       else   snprintf(t, 34, "ONE KEY, NATIVE SEGWIT");
-      wsAt(t, 10, y + 12);
+      wsAt(t, 10, y + 22);
       wsFooter("UP/DOWN: STEP  MENU: CURRENT");
       display.display(true);
       int b = waitForPress(60000);
