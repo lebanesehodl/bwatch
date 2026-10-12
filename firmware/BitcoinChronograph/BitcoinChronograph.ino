@@ -2052,11 +2052,11 @@ public:
   bool lnConfigured() { return lnAddrBuf[0] != 0 || LN_BOLT12[0] != 0; }
 
   // UP cycles: balance -> chain QR -> lightning QR (if configured) ->
-  // balance. Landing back on balance re-arms a scan.
+  // balance. Landing back on balance re-arms a scan. UP only ever moves the
+  // view: the peek at a hidden balance is DOWN's (see downPressed), because
+  // a first UP that sometimes showed the balance and sometimes the QR read
+  // as the watch doing two different things.
   void walletToggleView() {
-    // Private: the first UP shows the balance for this glance; the next
-    // moves on to the QR as usual. Back on the balance view, hidden again.
-    if (walletPrivate && !walletPeek && walletView == 0) { walletPeek = true; return; }
     walletView = (walletView + 1) % (lnConfigured() ? 3 : 2);
     if (walletView == 0) walletPeek = false;
     if (walletView == 0) {
@@ -4578,10 +4578,28 @@ public:
   // How many stops each instrument's box dial has. The increment used to be
   // a flat %6 for every mode while each renderer applied its own modulo, so
   // a 5-stop dial took six presses with the first repeating.
-  // DOWN cycles the theme; on the receive QR it opens VERIFY. Holding DOWN
-  // on WAL used to toggle privacy: it is in My Watch > Privacy now, and the
-  // shortcut tangled with UP on the same face (a hidden balance, a QR).
+  // DOWN cycles the theme. On WAL it is the wallet's own extra action:
+  //   receive QR      VERIFY
+  //   hidden balance  tap: peek for this look
+  //   shown balance   hold: hide it (and keep it hidden: the privacy setting)
+  // Hiding is quick, for the moment someone looks over a shoulder; showing
+  // it for good again is deliberate, in My Watch > Privacy.
   void downPressed() {
+    if (dispMode == M_WALT && walletView == 0) {
+      bool hidden = walletPrivate && !walletPeek;
+      bool held = heldFor(DOWN_BTN_PIN, 700);
+      if (held) {
+        if (!hidden) {
+          walletPrivate = true; walletPeek = false;
+          savePrefs();
+          buzz(40, 2);
+          Serial.println("[wal] balance hidden");
+        }
+        return;                        // held on a hidden balance: nothing
+      }
+      if (hidden) { walletPeek = true; return; }
+      // a tap on a shown balance: the theme, as everywhere
+    }
     if (dispMode == M_WALT && walletView == 1 && !isDemoWallet()) {
       verifyScreen();                  // the receive QR: check it, by eye
       return;
@@ -5575,7 +5593,7 @@ public:
     const char *title = travelActive     ? destLine
                       : showThemeName    ? THEME_NAMES[themeMode]
                       : (dispMode == M_WALT && walletPrivate && !walletPeek &&
-                         walletView == 0) ? "UP = PEEK"
+                         walletView == 0) ? "DOWN = PEEK"
                       : (dispMode == M_WALT) ? "UP = RECEIVE QR"
                                              : "TICK TOCK NEXT BLOCK";
     showThemeName = false;
@@ -5988,11 +6006,11 @@ public:
           }
         } else {
           if (val[0] == 1) {
-            snprintf(a, 34, "BALANCE HIDDEN: UP PEEKS");
+            snprintf(a, 34, "BALANCE HIDDEN: DOWN PEEKS");
             snprintf(b, 34, "QR VIEWS STAY USABLE");
           } else {
             snprintf(a, 34, "BALANCE ON THE WAL FACE");
-            snprintf(b, 34, "MENU: HIDE IT");
+            snprintf(b, 34, "HOLD DOWN ON WAL: HIDE");
           }
         }
         int iy = rows == 2 ? 118 : 96;
