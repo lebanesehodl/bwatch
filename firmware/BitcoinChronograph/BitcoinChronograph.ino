@@ -2180,7 +2180,7 @@ public:
       waitRelease(UP_BTN_PIN);
       upShortPress();
     } else {
-      downPressed();                 // measures its own hold (privacy)
+      downPressed();
       waitRelease(DOWN_BTN_PIN);
     }
     buttonWake = true;
@@ -4578,16 +4578,10 @@ public:
   // How many stops each instrument's box dial has. The increment used to be
   // a flat %6 for every mode while each renderer applied its own modulo, so
   // a 5-stop dial took six presses with the first repeating.
-  // DOWN cycles the theme; held in WAL it toggles privacy instead, which is
-  // the one spare gesture left on a four-button watch.
+  // DOWN cycles the theme; on the receive QR it opens VERIFY. Holding DOWN
+  // on WAL used to toggle privacy: it is in My Watch > Privacy now, and the
+  // shortcut tangled with UP on the same face (a hidden balance, a QR).
   void downPressed() {
-    if (dispMode == M_WALT && heldFor(DOWN_BTN_PIN, 700)) {
-      walletPrivate = !walletPrivate;
-      savePrefs();
-      buzz(40, 2);
-      Serial.printf("[wal] privacy %s\n", walletPrivate ? "ON" : "OFF");
-      return;
-    }
     if (dispMode == M_WALT && walletView == 1 && !isDemoWallet()) {
       verifyScreen();                  // the receive QR: check it, by eye
       return;
@@ -5998,7 +5992,7 @@ public:
             snprintf(b, 34, "QR VIEWS STAY USABLE");
           } else {
             snprintf(a, 34, "BALANCE ON THE WAL FACE");
-            snprintf(b, 34, "HOLD DOWN ON WAL: HIDE");
+            snprintf(b, 34, "MENU: HIDE IT");
           }
         }
         int iy = rows == 2 ? 118 : 96;
