@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0145
+#define RTC_LAYOUT_MAGIC 0xB17C0146
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -681,7 +681,15 @@ RTC_DATA_ATTR uint32_t lastNtpWake  = 0;    // wake minute of the last NTP
                                            // while the radio is already up
 RTC_DATA_ATTR float    goldMcapB     = 0;    // gold's mcap, billions,
                                              // in the selected currency
-RTC_DATA_ATTR float    mempoolBlocks = 0;   // unconfirmed vMB ~ blocks
+RTC_DATA_ATTR float    mempoolBlocks = 0;
+// MEM: the newest mined blocks (0 = newest) and the next projected ones
+RTC_DATA_ATTR long     recH[6]       = {0};
+RTC_DATA_ATTR uint32_t recT[6]       = {0};
+RTC_DATA_ATTR uint8_t  recFill[6]    = {0};    // % of the 4 MWU limit
+RTC_DATA_ATTR char     recPool[6][4] = {{0}};
+RTC_DATA_ATTR float    projFee[3]    = {0};    // median sat/vB, next first
+RTC_DATA_ATTR uint8_t  projFill[3]   = {0};    // % of a block's 1 MvB
+RTC_DATA_ATTR uint8_t  projN         = 0;   // unconfirmed vMB ~ blocks
 // monotonic wake clock: +1 per RTC minute-wake. Immune to NTP resyncs,
 // day/month arithmetic, and anything else wall-clock time does while
 // we're not looking. All staleness math uses THIS, never the RTC.
@@ -704,17 +712,22 @@ RTC_DATA_ATTR float    avgBlockSec   = 600;    // measured epoch pace
 const char *TZ_NAMES[5] = {"LOC","EST","PST","UTC","GMT"};
 const long  TZ_OFF  [5] = {0, -18000, -28800, 0, 0};  // fixed, no DST
 
-enum { M_HGHT, M_PRICE, M_SATS, M_MCAP, M_FEES, M_SUPL, M_HALV, M_WALT,
-       M_JOE, NUM_MODES };
-// 3-char labels: 9 cells across 190px
+// MEM sits after HLV. The saved hidden-faces mask is migrated once (NVS
+// "faceV"): the bits for WAL and JOE move up one place.
+enum { M_HGHT, M_PRICE, M_SATS, M_MCAP, M_FEES, M_SUPL, M_HALV, M_MEMP,
+       M_WALT, M_JOE, NUM_MODES };
+// 3-char labels while nine or fewer faces are on; all ten across 190 px
+// leaves ~18 px a cell, where three letters clip, so two
 const char *MODE_LABELS[NUM_MODES] =
-  {"HGT","PRC","SAT","CAP","FEE","SUP","HLV","WAL","JOE"};
+  {"HGT","PRC","SAT","CAP","FEE","SUP","HLV","MEM","WAL","JOE"};
+const char *MODE_LABELS2[NUM_MODES] =
+  {"HG","PR","SA","CA","FE","SU","HL","ME","WA","JO"};
 const char *MODE_NAMES [NUM_MODES] =
   {"BLOCK HEIGHT","PRICE","SATS/FIAT","MCAP","FEE SAT/VB",
-   "SUPPLY","HALVING","WALLET BTC","TIME"};
+   "SUPPLY","HALVING","MEMPOOL","WALLET BTC","TIME"};
 const char *MODE_UNITS [NUM_MODES] =
   {"TIMECHAIN TIP","USD / BTC","SAT / USD","BILLION USD","SAT/VB FAST",
-   "MILLION BTC","NEXT HALVING","BTC BALANCE",""};
+   "MILLION BTC","NEXT HALVING","TIMECHAIN TIP","BTC BALANCE",""};
 
 // the currency dial: UP in PRC/SAT/CAP cycles it; SATS and MCAP
 // inherit whatever PRICE speaks. Chart shape stays USD (Coinbase only
@@ -1011,12 +1024,25 @@ public:
     filter[0]["timestamp"] = true;      // when the tip was mined: lets the
                                         // watch age it locally, no polling
     filter[0]["tx_count"] = true;       // what the block actually carried
+    filter[0]["weight"] = true;         // how full (MEM's cubes)
     filter[0]["extras"]["reward"] = true;
     filter[0]["extras"]["pool"]["name"] = true;
     JsonDocument doc;
     if (deserializeJson(doc, s, DeserializationOption::Filter(filter)))
       return -1;
     long h = doc[0]["height"] | 0L;
+    // MEM: the newest six, whatever the indexer's extras say (height and
+    // time come with every block; the pool only with extras)
+    for (int i = 0; i < 6; i++) {
+      JsonVariant b = doc[i];
+      long bh = b["height"] | 0L;
+      if (bh <= 0) { recH[i] = 0; continue; }
+      recH[i] = bh;
+      recT[i] = b["timestamp"] | 0UL;
+      long wt = b["weight"] | 0L;
+      recFill[i] = wt > 0 ? (uint8_t)constrain(wt / 40000L, 0L, 100L) : 0;
+      poolShort(b["extras"]["pool"]["name"] | "", recPool[i]);
+    }
     if (h > rwdHeight) {
       rwdHeight = h;
       long long r = doc[0]["extras"]["reward"] | 0LL;
@@ -1028,6 +1054,24 @@ public:
       storePool(doc[0]["extras"]["pool"]["name"] | "");
     }
     return h;
+  }
+
+  // three letters for a pool, for MEM's cubes: the big ones by name, the
+  // rest by their first three letters
+  static void poolShort(const char *raw, char out[4]) {
+    static const char *const MAP[][2] = {
+      {"FOUNDRY","FDR"}, {"ANTPOOL","ANT"}, {"VIABTC","VIA"}, {"MARA","MAR"},
+      {"SPIDER","SPD"}, {"F2POOL","F2P"}, {"BINANCE","BIN"}, {"BRAIINS","BRA"},
+      {"SECPOOL","SEC"}, {"LUXOR","LUX"}, {"OCEAN","OCN"}, {"SBI","SBI"},
+      {"ULTIMUS","ULT"}, {"POOLIN","PLN"}, {"BTC.COM","BTC"}, {"WHITE","WHT"}};
+    char up[16]; int j = 0;
+    for (int i = 0; raw && raw[i] && j < 15; i++)
+      if (raw[i] != ' ') up[j++] = toupper(raw[i]);
+    up[j] = 0;
+    if (!j) { strcpy(out, "?"); return; }
+    for (auto &m : MAP)
+      if (!strncmp(up, m[0], strlen(m[0]))) { strcpy(out, m[1]); return; }
+    strncpy(out, up, 3); out[3] = 0;
   }
 
   void storePool(const char *raw) {
@@ -1464,6 +1508,25 @@ public:
         if (!deserializeJson(doc, body)) {
           long vs = doc["vsize"] | 0L;
           if (vs > 0) mempoolBlocks = vs / 1e6;
+        }
+      }
+      // MEM's waiting side: the next three projected blocks. Only fetched
+      // when the face is in the cycle; nobody else uses them
+      if (faceShown(M_MEMP) &&
+          mpGet(mp, client, "https://mempool.space/api/v1/fees/mempool-blocks", body)) {
+        JsonDocument filter;
+        filter[0]["medianFee"] = true;
+        filter[0]["blockVSize"] = true;
+        JsonDocument doc;
+        if (!deserializeJson(doc, body, DeserializationOption::Filter(filter))) {
+          projN = 0;
+          for (int i = 0; i < 3; i++) {
+            float vs = doc[i]["blockVSize"] | 0.0f;
+            if (vs <= 0) break;
+            projFee[i]  = doc[i]["medianFee"] | 0.0f;
+            projFill[i] = (uint8_t)constrain((long)(vs / 10000.0f), 0L, 100L);
+            projN++;
+          }
         }
       }
       if (tierDue(slowWake, SLOW_EVERY_MIN, all)) {
@@ -2009,7 +2072,11 @@ public:
       darkTo   = (dt >= 0 && dt < 24) ? dt : 7; }
     buzzBlock = p.getBool("hBlk", BUZZ_ON_BLOCK);
     priceStep = p.getUShort("hPrc", BUZZ_PRICE_STEP);
-    faceHide  = p.getUShort("face", 0) & ((1 << NUM_MODES) - 1);
+    faceHide  = p.getUShort("face", 0);
+    if (p.getUChar("faceV", 1) < 2) {       // saved before MEM existed: WAL
+      faceHide = (faceHide & 0x7F) | ((faceHide & 0x180) << 1);  // and JOE
+    }                                       // move up one; MEM starts shown
+    faceHide &= (1 << NUM_MODES) - 1;
     if (faceHide == (1 << NUM_MODES) - 1) faceHide = 0;  // never all hidden
     battProfile = p.getUChar("batt", 0);
     if (battProfile > 2) battProfile = 0;
@@ -2068,6 +2135,7 @@ public:
     p.putBool("hBlk", buzzBlock);
     p.putUShort("hPrc", priceStep);
     p.putUShort("face", faceHide);
+    p.putUChar("faceV", 2);
     p.putUChar("batt", battProfile);
     p.putBool("wpriv", walletPrivate);
     p.putUChar("cur", curIdx);
@@ -3288,6 +3356,238 @@ public:
       centerSmall(s, y); }
   }
 
+  // ---------------- the faces' lower halves (FEE, SUP, HLV, MEM) --------------
+  // Built-in font throughout; y 100-173, between the dials and the divider.
+  void lowAt(const char *t, int x, int y) { display.setCursor(x, y); display.print(t); }
+  void lowRight(const char *t, int y) { lowAt(t, 194 - (int)strlen(t) * 6, y); }
+
+  // a price in the chosen currency, with cents when it is small
+  void fiatSmall(char *o, size_t n, double v) {
+    if (v <= 0) { snprintf(o, n, "----"); return; }
+    char m[20];
+    if (v < 100) snprintf(m, 20, "%.2f", v); else fmtMoney(m, 20, v);
+    snprintf(o, n, "%s %s", m, CUR_CODES[curIdx]);
+  }
+
+  // FEE: what a payment costs now, and how much is waiting
+  void drawFeeLower() {
+    display.setFont(NULL); display.setTextColor(fg());
+    lowAt("A TYPICAL SEND, 141 VB", 8, 104);   // 1 input, 2 outputs, segwit
+    const char *T[3] = {"FAST", "30 MIN", "1 HOUR"};
+    float r[3] = {fastFee, medFee, lowFee};
+    for (int i = 0; i < 3; i++) {
+      int y = 115 + i * 10;
+      char a[16], f[24];
+      lowAt(T[i], 8, y);
+      if (r[i] > 0) {
+        long sats = (long)(r[i] * 141.0f + 0.5f);
+        snprintf(a, 16, "%ld SAT", sats);
+        fiatSmall(f, 24, btcPrice > 0 ? sats / 1e8 * btcPrice : 0);
+      } else { strcpy(a, "----"); strcpy(f, "----"); }
+      lowAt(a, 64, y);
+      lowRight(f, y);
+    }
+    display.drawFastHLine(6, 147, 188, fg());
+    lowAt("MEMPOOL", 8, 153);
+    int full = mempoolBlocks > 0 ? (int)ceilf(mempoolBlocks) : 0;
+    for (int i = 0; i < 10; i++) {
+      int x = 56 + i * 9;
+      if (i < full) display.fillRect(x, 152, 7, 9, fg());
+      else display.drawRect(x, 152, 7, 9, fg());
+    }
+    char t[34];
+    if (full > 10) snprintf(t, 34, "%d+", full); else snprintf(t, 34, "%d BLK", full);
+    lowRight(full > 0 ? t : "----", 153);
+    if (full > 0) {
+      long mins = (long)(mempoolBlocks * avgBlockSec / 60.0f + 0.5f);
+      if (mins >= 60) snprintf(t, 34, "~%ldH %02ldM OF BLOCKS WAITING", mins / 60, mins % 60);
+      else snprintf(t, 34, "~%ld MIN OF BLOCKS WAITING", mins);
+      lowAt(t, 8, 164);
+    }
+  }
+
+  // SUP: the road to 21M, and the pace along it
+  void drawSupLower() {
+    display.setFont(NULL); display.setTextColor(fg());
+    long h = estHeight();
+    double cap = supplyCapBTC(), issued = supplyBTC(h);
+    lowAt("0", 8, 103); lowRight("21M", 103);
+    int x0 = 8, W = 184, y = 113;
+    display.drawRect(x0, y, W, 10, fg());
+    display.fillRect(x0, y, (int)(W * issued / cap + 0.5), 10, fg());
+    for (int k = 1; k <= 10; k++) {                 // where each halving lands
+      int x = x0 + (int)(W * supplyBTC(210000L * k) / cap + 0.5);
+      if (x > x0 + W - 1) x = x0 + W - 1;
+      display.drawFastVLine(x, y + 11, 4, fg());
+    }
+    lowAt("EACH TICK A HALVING", 8, 131);
+    display.drawFastHLine(6, 142, 188, fg());
+    int era = (int)(h / 210000L);
+    double sub = era < 33 ? 50.0 / (double)(1LL << era) : 0;
+    char a[24], b[24];
+    snprintf(a, 24, sub * 144 >= 10 ? "%.0f BTC A DAY" : "%.2f BTC A DAY", sub * 144);
+    snprintf(b, 24, "%.2f%% A YEAR", issued > 0 ? sub * 144 * 365.25 / issued * 100 : 0);
+    lowAt(a, 8, 148); lowRight(b, 148);
+    // the last sat: block 6,930,000, at ten minutes a block from here
+    long left = 6930000L - h; if (left < 0) left = 0;
+    double years = left * 600.0 / (365.25 * 86400.0);
+    tmElements_t now; RTC.read(now);
+    int yr = tmYearToCalendar(now.Year);
+    if (yr < 2024) yr = 2026;                       // an unset clock
+    snprintf(a, 24, "LAST SAT ~%d", yr + (int)(years + 0.5));
+    snprintf(b, 24, "IN %d YEARS", (int)(years + 0.5));
+    lowAt(a, 8, 160); lowRight(b, 160);
+  }
+
+  // HLV: the subsidy, era by era, and where we are on it
+  void drawHalvLower() {
+    display.setFont(NULL); display.setTextColor(fg());
+    long h = estHeight();
+    int era = (int)(h / 210000L);
+    char a[24], g[16];
+    snprintf(a, 24, "ERA %d OF 33", era + 1);
+    lowAt(a, 8, 103);
+    grouped(g, 16, (long long)((era + 1) * 210000L - h));
+    snprintf(a, 24, "%s TO GO", g);
+    lowRight(a, 103);
+    int first = era < 4 ? 0 : era - 4;              // NOW stays in the window
+    const int base = 152, bw = 24, gap = 4, x = 4;
+    for (int i = 0; i < 7; i++) {
+      int k = first + i;
+      int hgt = 5 + (6 - i) * 5;                    // log scale: each halves
+      int xx = x + i * (bw + gap);
+      if (k <= era) display.fillRect(xx, base - hgt, bw, hgt, fg());
+      else display.drawRect(xx, base - hgt, bw, hgt, fg());
+      if (k == era) lowAt("NOW", xx + 3, base - hgt - 10);
+      double v = 50.0 / (double)(1LL << k);
+      char t[8];
+      if (v >= 10 && v == (long)v) snprintf(t, 8, "%.0f", v);
+      else if (v >= 10)            snprintf(t, 8, "%.1f", v);
+      else if (v >= 1)             snprintf(t, 8, "%.2f", v + 1e-9);  // 3.13, not 3.12
+      else                         snprintf(t, 8, ".%02d", (int)(v * 100 + 0.5));
+      lowAt(t, xx + (bw - (int)strlen(t) * 6) / 2, base + 3);
+    }
+    lowRight("BTC/BLOCK", base - 38);
+  }
+
+  // MEM: a block as a small cube (front, top, shaded side); fill = how full
+  void memCube(int x, int y, int w, int h, int dp, int fillPct, bool solid,
+               const char *lab) {
+    uint16_t F = fg(), Bg = bg();
+    if (solid) {
+      for (int i = 0; i <= dp; i++) {
+        display.drawFastHLine(x + i, y - i, w + 1, F);
+        display.drawFastVLine(x + w + i, y - i, h + 1, F);
+      }
+      display.fillRect(x, y, w + 1, h + 1, F);
+      display.setTextColor(Bg);
+      int lw = strlen(lab) * 6;
+      lowAt(lab, x + (w + 1 - lw) / 2, y + 3);
+      display.setTextColor(F);
+      return;
+    }
+    display.drawLine(x, y, x + dp, y - dp, F);
+    display.drawLine(x + w, y, x + w + dp, y - dp, F);
+    display.drawFastHLine(x + dp, y - dp, w, F);
+    display.drawLine(x + w, y + h, x + w + dp, y + h - dp, F);
+    display.drawFastVLine(x + w + dp, y - dp, h, F);
+    for (int i = 2; i < dp; i += 2) display.drawFastVLine(x + w + i, y - i + 2, h - 3, F);
+    display.fillRect(x, y, w + 1, h + 1, Bg);
+    display.drawRect(x, y, w + 1, h + 1, F);
+    int fh = (h - 2) * fillPct / 100;
+    for (int yy = y + h - 1; yy > y + h - 1 - fh; yy--)
+      for (int xx = x + 1 + (yy & 1); xx < x + w; xx += 2) display.drawPixel(xx, yy, F);
+    int lw = strlen(lab) * 6, lx = x + (w + 1 - lw) / 2, ly = y + 3;
+    display.fillRect(lx - 1, ly - 1, lw + 1, 9, Bg);
+    lowAt(lab, lx, ly);
+  }
+  // a block that does not exist yet: the same cube, dotted
+  void memGhost(int x, int y, int w, int h, int dp, int fillPct, const char *lab) {
+    uint16_t F = fg();
+    for (int i = 0; i <= w; i += 2) {
+      display.drawPixel(x + i, y, F); display.drawPixel(x + i, y + h, F);
+      display.drawPixel(x + i + dp, y - dp, F);
+    }
+    for (int j = 0; j <= h; j += 2) {
+      display.drawPixel(x, y + j, F); display.drawPixel(x + w, y + j, F);
+      display.drawPixel(x + w + dp, y - dp + j, F);
+    }
+    for (int i = 0; i <= dp; i += 2) {
+      display.drawPixel(x + i, y - i, F); display.drawPixel(x + w + i, y - i, F);
+      display.drawPixel(x + w + i, y + h - i, F);
+    }
+    int fh = (h - 2) * fillPct / 100;
+    for (int yy = y + h - 1; yy > y + h - 1 - fh; yy--)
+      if (yy % 2 == 0)
+        for (int xx = x + 2 + ((yy >> 1) & 1) * 2; xx < x + w - 1; xx += 4)
+          display.drawPixel(xx, yy, F);
+    int lw = strlen(lab) * 6, lx = x + (w + 1 - lw) / 2, ly = y + 3;
+    display.fillRect(lx - 1, ly - 1, lw + 1, 9, bg());
+    lowAt(lab, lx, ly);
+  }
+
+  // MEM: waiting on the left, NOW at x = 100, mined on the right, newest
+  // beside the line: the mempool emptying into the chain, left to right
+  void drawMemLower() {
+    display.setFont(NULL); display.setTextColor(fg());
+    // how long since the tip, against the ten minutes (bar: 0-20 min)
+    lowAt("LAST BLOCK", 8, 103);
+    long ago = -1;
+    if (tipBlockTime > 0) {
+      // the RTC keeps UTC plus the fixed gmtOffset (the zone is applied on
+      // top only for display), the same conversion the halving date uses
+      time_t nowUtc = makeTime(currentTime) - settings.gmtOffset;
+      ago = ((long)nowUtc - (long)tipBlockTime) / 60;
+      if (ago < 0) ago = 0;
+    }
+    char t[24];
+    if (ago < 0) strcpy(t, "----");
+    else if (ago < 120) snprintf(t, 24, "%ld MIN AGO", ago);
+    else snprintf(t, 24, "%ldH AGO", ago / 60);
+    lowRight(t, 103);
+    int x0 = 8, W = 184, y = 113;
+    display.drawRect(x0, y, W, 8, fg());
+    if (ago > 0) display.fillRect(x0, y, (int)(W * (ago > 20 ? 20 : ago) / 20), 8, fg());
+    display.drawFastVLine(x0 + W / 2, y - 3, 14, fg());
+
+    const int w = 21, h = 19, dp = 4, gap = 6, cy = 142;
+    int x = 100 - 7 - (3 * (w + dp) + 2 * gap);
+    // waiting: furthest left, the next block nearest the line
+    for (int i = 0; i < 3; i++) {
+      int k = 2 - i;                               // projection index
+      const char *top = k == 0 ? "NEXT" : k == 1 ? "+2" : "+3";
+      lowAt(top, x + (w + dp - (int)strlen(top) * 6) / 2, cy - dp - 10);
+      if (k < projN) {
+        char f[6]; snprintf(f, 6, "%d", (int)(projFee[k] + 0.5f) < 1 ? 1 : (int)(projFee[k] + 0.5f));
+        memGhost(x, cy, w, h, dp, projFill[k], f);
+        char m[8]; snprintf(m, 8, "~%dM", (int)((k + 1) * avgBlockSec / 60 + 0.5f));
+        lowAt(m, x + (w - (int)strlen(m) * 6) / 2 + 1, cy + h + 4);
+      } else memGhost(x, cy, w, h, dp, 0, "-");
+      x += w + dp + gap;
+    }
+    x -= gap; x += 7;
+    for (int j = cy - dp - 12; j < 174; j += 2) display.drawPixel(x, j, fg());   // NOW
+    x += 7;
+    // mined: the newest beside the line
+    for (int i = 0; i < 3; i++) {
+      if (recH[i] > 0) {
+        char hs[8]; snprintf(hs, 8, "%03ld", recH[i] % 1000);
+        lowAt(hs, x + (w + dp - 18) / 2, cy - dp - 10);
+        memCube(x, cy, w, h, dp, recFill[i], i == 0, recPool[i][0] ? recPool[i] : "?");
+        if (recT[i] > 0 && recT[i + 1] > 0 && recT[i] >= recT[i + 1]) {
+          char m[8]; snprintf(m, 8, "%luM", (unsigned long)((recT[i] - recT[i + 1] + 30) / 60));
+          lowAt(m, x + (w - (int)strlen(m) * 6) / 2 + 1, cy + h + 4);
+        }
+      } else memGhost(x, cy, w, h, dp, 0, "-");
+      if (i < 2) {
+        int lx = x + w + dp + 1, ly = cy + h / 2;
+        display.drawFastHLine(lx, ly, gap - 1, fg());
+        display.drawFastHLine(lx, ly - 1, gap - 1, fg());
+      }
+      x += w + dp + gap;
+    }
+  }
+
   // round ticker: ring dial with quarter ticks + progress arc + % in center
   void drawSubdial(int cx, int cy, int r, float pct, const char *label) {
     display.drawCircle(cx, cy, r, fg());
@@ -3369,7 +3669,8 @@ public:
     switch (dispMode) {
     }
     switch (dispMode) {
-      case M_HGHT:  snprintf(big, 12, "%ld", estHeight()); break;
+      case M_HGHT:
+      case M_MEMP:  snprintf(big, 12, "%ld", estHeight()); break;
       case M_PRICE:
         // spelled out, whatever the currency: 12,760,000 rather than 12.76.
         // The comment this replaces said eight digits would not fit — true
@@ -3976,9 +4277,10 @@ public:
         display.drawRect(a, sy, w, 13, fg());
         display.setTextColor(fg());
       }
-      int tw = strlen(MODE_LABELS[i]) * 6;     // built-in font: 6 px per char
+      const char *lab = (shown >= 10) ? MODE_LABELS2[i] : MODE_LABELS[i];
+      int tw = strlen(lab) * 6;                // built-in font: 6 px per char
       display.setCursor(a + (w - tw) / 2, sy + 3);
-      display.print(MODE_LABELS[i]);
+      display.print(lab);
     }
     display.setTextColor(fg());
   }
@@ -4760,6 +5062,7 @@ public:
     }
     if (m == M_FEES) return 3;      // high, medium, low
     if (m == M_SUPL) return 2;      // issued, remaining
+    if (m == M_MEMP) return 1;      // blocks waiting
     return 6;                       // halving almanac, currency dials
   }
 
@@ -4805,6 +5108,9 @@ public:
     minVoltSeen = 9.9f; minVoltWake = 0; minVoltFlags = 0;
     usbSeenWake = 0;
     mempoolBlocks = 0;
+    for (int i = 0; i < 6; i++) { recH[i] = 0; recT[i] = 0; recFill[i] = 0; recPool[i][0] = 0; }
+    for (int i = 0; i < 3; i++) { projFee[i] = 0; projFill[i] = 0; }
+    projN = 0;
     poolName[0] = 0; rwdHeight = 0;
     goldMcapB = 0; lastNtpWake = 0; tipBlockTime = 0; fetchPending = false;
     travelActive = false; travelHeight = 0; travelWake = 0;
@@ -5216,7 +5522,8 @@ public:
     else {
       // the fetch cadence is 15 min, so 20 means a cycle was actually
       // missed. an hour of "LIVE" would cover three failures in a row.
-      long e = (dispMode == M_HGHT) ? heightStaleMinutes() : staleMinutes();
+      long e = (dispMode == M_HGHT || dispMode == M_MEMP) ? heightStaleMinutes()
+                                                          : staleMinutes();
       if (e < staleAfter()) strcpy(tag, "LIVE");
       else if (e < 60) snprintf(tag, 8, "OLD %ldM", e);
       else             snprintf(tag, 8, "OLD %ldH", e / 60 > 48 ? 48 : e / 60);
@@ -5384,6 +5691,10 @@ public:
       cellIsText = true;                 // separators need the text font
       if (mp <= 0 || !haveWallet) strcpy(cell, "----");
       else fmtMoney(cell, 18, (double)walletSats / 1e8 * mp);
+    } else if (dispMode == M_MEMP) {   // the queue, in blocks
+      cellLabel = "BLK WAITING";
+      if (mempoolBlocks > 0) snprintf(cell, 18, "%d", (int)ceilf(mempoolBlocks));
+      else strcpy(cell, "-");          // "----" would run into the label
     } else if (dispMode == M_FEES) {   // fee tiers, same fetch
       int t = cellSel[dispMode] % 3;
       cellLabel = t == 0 ? "HIGH PRI" : t == 1 ? "MED PRI" : "LOW PRI";
@@ -5519,7 +5830,15 @@ public:
     display.setCursor(146 - (int)strlen(cellLabel) * 6, 77);
     display.print(cellLabel);
 
-    if (travelActive) {
+    // The lower half belongs to the face where the gauge and the 24H chart
+    // say nothing about it. SUP and HLV are arithmetic on the height, so
+    // they travel; FEE and MEM are about now, so travelling they fall
+    // through to the travel view below. HGT, PRC, SAT, CAP, WAL unchanged.
+    if (dispMode == M_SUPL) drawSupLower();
+    else if (dispMode == M_HALV) drawHalvLower();
+    else if (dispMode == M_FEES && !travelActive) drawFeeLower();
+    else if (dispMode == M_MEMP && !travelActive) drawMemLower();
+    else if (travelActive) {
       // Sentiment and the 24h chart are facts about now — neither survives
       // the trip. What does: how much of 21 million exists at this height,
       // and where that sits on the whole emission curve. Pure arithmetic.
@@ -5718,6 +6037,7 @@ public:
                       : (dispMode == M_WALT && walletPrivate && !walletPeek &&
                          walletView == 0) ? "DOWN = PEEK"
                       : (dispMode == M_WALT) ? "UP = RECEIVE QR"
+                      : (dispMode == M_MEMP) ? "NOW"
                                              : "TICK TOCK NEXT BLOCK";
     showThemeName = false;
     { int16_t x1,y1; uint16_t w,h;
@@ -6293,12 +6613,12 @@ public:
         centerSmall("FACES IN THE CYCLE", 5);
         display.setFont(&FreeMonoBold9pt7b);
         for (int i = 0; i < NUM_MODES; i++) {
-          int y = 31 + i * 17;
+          int y = 30 + i * 15;                // ten rows clear the footer
           char line[24];
           snprintf(line, 24, "%s %s", ((hide >> i) & 1) ? "[ ]" : "[x]", MODE_NAMES[i]);
           display.setCursor(6, y);
           if (i == sel) {
-            display.fillRect(2, y - 13, 196, 17, fg());
+            display.fillRect(2, y - 12, 196, 15, fg());
             display.setTextColor(bg());
           } else display.setTextColor(fg());
           display.print(line);
@@ -7344,7 +7664,7 @@ public:
     p.remove("alH"); p.remove("alF");
     p.remove("nFrom"); p.remove("nTo");            // back to the default night
     p.remove("dFrom"); p.remove("dTo"); p.remove("hBlk"); p.remove("hPrc");
-    p.remove("face"); p.remove("batt"); p.remove("wpriv");   // My Watch
+    p.remove("face"); p.remove("faceV"); p.remove("batt"); p.remove("wpriv");   // My Watch
     p.remove("cur"); p.remove("curOn");
     p.remove("bootPick");                           // back to Random
     p.end();
