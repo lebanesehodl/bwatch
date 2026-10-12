@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0146
+#define RTC_LAYOUT_MAGIC 0xB17C0147
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -712,22 +712,22 @@ RTC_DATA_ATTR float    avgBlockSec   = 600;    // measured epoch pace
 const char *TZ_NAMES[5] = {"LOC","EST","PST","UTC","GMT"};
 const long  TZ_OFF  [5] = {0, -18000, -28800, 0, 0};  // fixed, no DST
 
-// MEM sits after HLV. The saved hidden-faces mask is migrated once (NVS
-// "faceV"): the bits for WAL and JOE move up one place.
-enum { M_HGHT, M_PRICE, M_SATS, M_MCAP, M_FEES, M_SUPL, M_HALV, M_MEMP,
+// MEM sits beside HGT: the chain's two faces together. The saved
+// hidden-faces mask is migrated by name from older orders (NVS "faceV").
+enum { M_HGHT, M_MEMP, M_PRICE, M_SATS, M_MCAP, M_FEES, M_SUPL, M_HALV,
        M_WALT, M_JOE, NUM_MODES };
 // 3-char labels while nine or fewer faces are on; all ten across 190 px
 // leaves ~18 px a cell, where three letters clip, so two
 const char *MODE_LABELS[NUM_MODES] =
-  {"HGT","PRC","SAT","CAP","FEE","SUP","HLV","MEM","WAL","JOE"};
+  {"HGT","MEM","PRC","SAT","CAP","FEE","SUP","HLV","WAL","JOE"};
 const char *MODE_LABELS2[NUM_MODES] =
-  {"HG","PR","SA","CA","FE","SU","HL","ME","WA","JO"};
+  {"HG","ME","PR","SA","CA","FE","SU","HL","WA","JO"};
 const char *MODE_NAMES [NUM_MODES] =
-  {"BLOCK HEIGHT","PRICE","SATS/FIAT","MCAP","FEE SAT/VB",
-   "SUPPLY","HALVING","MEMPOOL","WALLET BTC","TIME"};
+  {"BLOCK HEIGHT","MEMPOOL","PRICE","SATS/FIAT","MCAP","FEE SAT/VB",
+   "SUPPLY","HALVING","WALLET BTC","TIME"};
 const char *MODE_UNITS [NUM_MODES] =
-  {"TIMECHAIN TIP","USD / BTC","SAT / USD","BILLION USD","SAT/VB FAST",
-   "MILLION BTC","NEXT HALVING","TIMECHAIN TIP","BTC BALANCE",""};
+  {"TIMECHAIN TIP","TIMECHAIN TIP","USD / BTC","SAT / USD","BILLION USD",
+   "SAT/VB FAST","MILLION BTC","NEXT HALVING","BTC BALANCE",""};
 
 // the currency dial: UP in PRC/SAT/CAP cycles it; SATS and MCAP
 // inherit whatever PRICE speaks. Chart shape stays USD (Coinbase only
@@ -2073,9 +2073,20 @@ public:
     buzzBlock = p.getBool("hBlk", BUZZ_ON_BLOCK);
     priceStep = p.getUShort("hPrc", BUZZ_PRICE_STEP);
     faceHide  = p.getUShort("face", 0);
-    if (p.getUChar("faceV", 1) < 2) {       // saved before MEM existed: WAL
-      faceHide = (faceHide & 0x7F) | ((faceHide & 0x180) << 1);  // and JOE
-    }                                       // move up one; MEM starts shown
+    // Saved in an older face order? Re-map it bit by bit, by face. v1 had
+    // no MEM (it starts shown); v2 had MEM after HLV.
+    { uint8_t v = p.getUChar("faceV", 1);
+      if (v < 3) {
+        static const int8_t V1[] = {M_HGHT, M_PRICE, M_SATS, M_MCAP, M_FEES,
+                                    M_SUPL, M_HALV, M_WALT, M_JOE};
+        static const int8_t V2[] = {M_HGHT, M_PRICE, M_SATS, M_MCAP, M_FEES,
+                                    M_SUPL, M_HALV, M_MEMP, M_WALT, M_JOE};
+        const int8_t *old = v < 2 ? V1 : V2;
+        int n = v < 2 ? 9 : 10;
+        uint16_t m = 0;
+        for (int i = 0; i < n; i++) if ((faceHide >> i) & 1) m |= 1 << old[i];
+        faceHide = m;
+      } }
     faceHide &= (1 << NUM_MODES) - 1;
     if (faceHide == (1 << NUM_MODES) - 1) faceHide = 0;  // never all hidden
     battProfile = p.getUChar("batt", 0);
@@ -2135,7 +2146,7 @@ public:
     p.putBool("hBlk", buzzBlock);
     p.putUShort("hPrc", priceStep);
     p.putUShort("face", faceHide);
-    p.putUChar("faceV", 2);
+    p.putUChar("faceV", 3);
     p.putUChar("batt", battProfile);
     p.putBool("wpriv", walletPrivate);
     p.putUChar("cur", curIdx);
