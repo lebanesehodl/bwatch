@@ -3464,10 +3464,9 @@ public:
     // the last sat: block 6,930,000, at ten minutes a block from the real
     // tip (a fact about now, wherever Time Travel has gone)
     // (the same clock as HGT and the travel title, so they agree on 2140)
-    time_t tEnd = heightUtc(6930000L), tNow = heightUtc(blockHeight);
-    double years = tEnd > tNow ? (tEnd - tNow) / (365.25 * 86400.0) : 0;
-    tmElements_t te; breakTime(tEnd, te);
-    snprintf(a, 24, "LAST SAT ~%d", tmYearToCalendar(te.Year));
+    int64_t tEnd = heightUtc(6930000L), tNow = heightUtc(blockHeight);
+    double years = tEnd > tNow ? (double)(tEnd - tNow) / (365.25 * 86400.0) : 0;
+    snprintf(a, 24, "LAST SAT ~%d", civil64(tEnd).y);
     snprintf(b, 24, "IN %d YEARS", (int)(years + 0.5));
     lowAt(a, 8, 160); lowRight(b, 160);
   }
@@ -3630,14 +3629,31 @@ public:
   // dates, interpolated, since early blocks came far faster than today's
   // pace (counting back at today's pace put block 100,000 in June 2010,
   // not December); the future at the measured pace, as the title does.
-  time_t heightUtc(long h) {
-    time_t now = time(nullptr);
-    if (now < 1700000000) { tmElements_t tn; RTC.read(tn); now = makeTime(tn); }
-    if (blockHeight <= 0) return now + (time_t)((h - blockHeight) * 600.0);
+  // time_t is 32 bits on this core: it runs out in January 2038, and the
+  // chain runs to 2140. Every date past the present goes through these two
+  // in 64 bits (2140 through time_t came out as 2094, "in 0 years").
+  struct Ymd { int y, m, d; };
+  static Ymd civil64(int64_t t) {                 // days to civil, Hinnant
+    int64_t z = (t >= 0 ? t / 86400 : (t - 86399) / 86400) + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    int64_t doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int64_t mp = (5 * doy + 2) / 153;
+    Ymd r;
+    r.d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    r.m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    r.y = (int)(yoe + era * 400 + (r.m <= 2));
+    return r;
+  }
+  int64_t heightUtc(long h) {
+    int64_t now = (int64_t)time(nullptr);
+    if (now < 1700000000) { tmElements_t tn; RTC.read(tn); now = (int64_t)makeTime(tn); }
+    if (blockHeight <= 0) return now + (int64_t)((h - blockHeight) * 600.0);
     if (h >= blockHeight) {        // this epoch at its pace, then ten minutes
       long dh = h - blockHeight, toRet = 2016L - (blockHeight % 2016L);
       long atPace = dh < toRet ? dh : toRet;
-      return now + (time_t)(atPace * (double)avgBlockSec + (dh - atPace) * 600.0);
+      return now + (int64_t)(atPace * (double)avgBlockSec + (dh - atPace) * 600.0);
     }
     static const struct { long h; uint32_t t; } R[] = {
       {      0L, 1231006505UL },   // 3 Jan 2009
@@ -3656,21 +3672,20 @@ public:
       { 840000L, 1713571767UL },   // 20 Apr 2024
     };
     const int NR = sizeof(R) / sizeof(R[0]);
-    long loH = R[0].h; double loT = R[0].t, hiT = now; long hiH = blockHeight;
+    long loH = R[0].h; double loT = R[0].t, hiT = (double)now; long hiH = blockHeight;
     for (int i = 0; i < NR; i++) {
       if (R[i].h > blockHeight) break;
       if (R[i].h <= h) { loH = R[i].h; loT = R[i].t; }
       else { hiH = R[i].h; hiT = R[i].t; break; }
     }
-    if (hiH <= loH) return (time_t)loT;
-    return (time_t)(loT + (hiT - loT) * (double)(h - loH) / (double)(hiH - loH));
+    if (hiH <= loH) return (int64_t)loT;
+    return (int64_t)(loT + (hiT - loT) * (double)(h - loH) / (double)(hiH - loH));
   }
   void travelMonYear(char *o, size_t n) {
     static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
                                   "JUL","AUG","SEP","OCT","NOV","DEC"};
-    tmElements_t t; breakTime(heightUtc(travelHeight), t);
-    int mo = (t.Month >= 1 && t.Month <= 12) ? t.Month - 1 : 0;
-    snprintf(o, n, "%s %d", MON[mo], tmYearToCalendar(t.Year));
+    Ymd c = civil64(heightUtc(travelHeight));
+    snprintf(o, n, "%s %d", MON[c.m - 1], c.y);
   }
   void priceTxt(char *o, size_t n, double v, const char *code) {
     if (v <= 0) { snprintf(o, n, "----"); return; }
@@ -4307,15 +4322,14 @@ public:
           // the blocks remaining are counted from the target height, so
           // adding them to the present would land the halving too early by
           // exactly the distance travelled.
-          time_t utc = makeTime(currentTime) - settings.gmtOffset;
-          if (travelActive)
-            utc += (time_t)((travelHeight - blockHeight) * (double)avgBlockSec);
-          time_t when = utc + (time_t)(blocksLeft * (double)avgBlockSec);
-          tmElements_t hd; breakTime(when, hd);
-          Serial.printf("[hlv] est=%ld left=%ld avg=%.0f utc=%lu -> %d\n",
-                        estHeight(), blocksLeft, avgBlockSec,
-                        (unsigned long)utc, tmYearToCalendar(hd.Year));
-          snprintf(big, 12, "%d", tmYearToCalendar(hd.Year));
+          int64_t utc = (int64_t)makeTime(currentTime) - settings.gmtOffset;
+          if (travelActive)                         // 64-bit: past 2038
+            utc += (int64_t)((travelHeight - blockHeight) * (double)avgBlockSec);
+          int64_t when = utc + (int64_t)(blocksLeft * (double)avgBlockSec);
+          Ymd hd = civil64(when);
+          Serial.printf("[hlv] est=%ld left=%ld avg=%.0f -> %d\n",
+                        estHeight(), blocksLeft, avgBlockSec, hd.y);
+          snprintf(big, 12, "%d", hd.y);
         } else snprintf(big, 12, "----");
         break; }
       case M_WALT: {
@@ -6231,21 +6245,21 @@ public:
         long targetH = (long)(era + 1 + t) * 210000L;
         long blocksLeft = targetH - estHeight();
         if (blocksLeft < 0) blocksLeft = 0;
-        time_t utc = makeTime(currentTime) - settings.gmtOffset;
-        if (travelActive)
-          utc += (time_t)((travelHeight - blockHeight) * (double)avgBlockSec);
-        time_t when = utc + (time_t)secondsUntil(targetH);
-        tmElements_t hd; breakTime(when, hd);
+        int64_t utc = (int64_t)makeTime(currentTime) - settings.gmtOffset;
+        if (travelActive)                           // 64-bit: past 2038
+          utc += (int64_t)((travelHeight - blockHeight) * (double)avgBlockSec);
+        int64_t when = utc + (int64_t)secondsUntil(targetH);
+        Ymd hd = civil64(when);
         // Precision the projection can actually carry. Hashrate growth has
         // landed every halving so far ahead of the ten-minute estimate, and
         // over tens of thousands of blocks that is weeks, not days — so a
         // day is only shown once the target is close enough to mean it.
         if (blocksLeft < 4032)                    // within two epochs: a date
           snprintf(ub, 24, "#%d - %s %d",
-                   era + 1 + t, MN[hd.Month], hd.Day);
+                   era + 1 + t, MN[hd.m], hd.d);
         else                                      // beyond that: the month
           snprintf(ub, 24, "#%d - %s %d",
-                   era + 1 + t, MN[hd.Month], tmYearToCalendar(hd.Year));
+                   era + 1 + t, MN[hd.m], hd.y);
         unit = ub;
       }
       if (dispMode == M_WALT && haveWallet && walletSats < 1000000ULL)
@@ -6604,14 +6618,11 @@ public:
     static char destLine[26];
     if (travelActive) {
       long dB = travelHeight - blockHeight;
-      time_t then = heightUtc(travelHeight);
       static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
                                     "JUL","AUG","SEP","OCT","NOV","DEC"};
-      tmElements_t td; breakTime(then, td);
-      int mo = (td.Month >= 1 && td.Month <= 12) ? td.Month - 1 : 0;
+      Ymd c = civil64(heightUtc(travelHeight));
       snprintf(destLine, 26, "%s %s %d",
-               dB >= 0 ? "ARRIVING" : "ARRIVED", MON[mo],
-               tmYearToCalendar(td.Year));
+               dB >= 0 ? "ARRIVING" : "ARRIVED", MON[c.m - 1], c.y);
     }
     const char *title = travelActive     ? destLine
                       : showThemeName    ? THEME_NAMES[themeMode]
@@ -8038,10 +8049,9 @@ public:
       else if (isLm && !forAlarm) {               // a landmark carries its date
         static const char *MON[12] = {"JAN","FEB","MAR","APR","MAY","JUN",
                                       "JUL","AUG","SEP","OCT","NOV","DEC"};
-        tmElements_t t; breakTime(heightUtc(target), t);
-        int mo = (t.Month >= 1 && t.Month <= 12) ? t.Month - 1 : 0;
-        if (dBlocks < 0) snprintf(line, 34, "%s %d - %s AGO", MON[mo], tmYearToCalendar(t.Year), span);
-        else             snprintf(line, 34, "~%s %d - IN %s", MON[mo], tmYearToCalendar(t.Year), span);
+        Ymd c = civil64(heightUtc(target));
+        if (dBlocks < 0) snprintf(line, 34, "%s %d - %s AGO", MON[c.m - 1], c.y, span);
+        else             snprintf(line, 34, "~%s %d - IN %s", MON[c.m - 1], c.y, span);
       }
       else if (dBlocks > 0) snprintf(line, 34, "IN %s", span);
       else                  snprintf(line, 34, "%s AGO", span);
