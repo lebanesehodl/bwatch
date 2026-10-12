@@ -6348,10 +6348,14 @@ public:
   // So: the library runs its own loop and tears itself down, as it did
   // before. The timeout is shorter than it was, which is the honest fix for
   // being stuck — you wait, but not for three minutes.
-  bool runPortal(WiFiManager &wm, uint16_t secs) {
+  // clientWait: the timeout only counts while no phone is joined to the
+  // setup network, so it can be short for someone who never joins and still
+  // never cut off someone halfway through pasting.
+  bool runPortal(WiFiManager &wm, uint16_t secs, bool clientWait = false) {
     g_portalSaved = false;
     wm.setSaveParamsCallback([]() { g_portalSaved = true; });
     wm.setConfigPortalBlocking(true);
+    wm.setAPClientCheck(clientWait);
     wm.setTimeout(secs);
     bool ok = wm.startConfigPortal(WIFI_AP_SSID);
     return ok || g_portalSaved;   // the wallet form can save without a join
@@ -6530,10 +6534,30 @@ public:
     wsAt("- A ZPUB (ONE KEY)", 16, 90);
     wsAt("- A DESCRIPTOR (MULTISIG)", 16, 102);
     wsInverse("PUBLIC KEYS ONLY.", "NEVER YOUR SEED WORDS.", 120);
-    wsAt("WAITS 4 MIN", 10, 160);
-    wsFooter("THEN BACK TO THE WATCH");
+    // Ask first. BACK cannot stop the setup network once it is open (the
+    // note on runPortal: stopping it mid-request crashed the watch), so
+    // this is where a wrong turn into Setup Wallet costs nothing.
+    wsFooter("UP: START    BACK: CANCEL");
     display.display(true);   // partial: no flash
-    runPortal(wm, 240);      // longer: pasting takes a while
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);
+    pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    int go = waitForPress(60000);
+    waitAllRelease();
+    if (go != UP_BTN_PIN) {                       // BACK, MENU, or nobody
+      display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+      myShowMenu(menuIndex, false);
+      return;
+    }
+    // open: closes after a minute if no phone joins; while one is joined it
+    // waits, and a minute after it leaves
+    display.fillRect(0, 150, 200, 50, bg());
+    wsAt("OPEN. CLOSES IN 1 MIN IF", 10, 154);
+    wsAt("NO PHONE JOINS", 10, 166);
+    wsFooter("SAVE ON THE PAGE TO FINISH");
+    display.display(true);
+    runPortal(wm, 60, true);
     WiFi.mode(WIFI_OFF); btStop();
     display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
 
