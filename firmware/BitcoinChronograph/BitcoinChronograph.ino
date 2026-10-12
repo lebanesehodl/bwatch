@@ -6855,11 +6855,6 @@ public:
         if (digitalRead(pins[i]) == BTN_ACTIVE) return pins[i];
       unsigned long el = millis() - t0;
       if (el >= timeoutMs) return -1;
-      // The radio is in use (the payment vigil on the QR, the dock): light
-      // sleep would drop the WiFi association, and the watch came back from
-      // VERIFY offline (DK- on the dock). Wait awake instead; the radio is
-      // the bigger draw by far in that state anyway.
-      if (WiFi.getMode() != WIFI_OFF) { delay(40); continue; }
       // The display's busy callback arms a wake on its BUSY line and never
       // disarms it. BUSY idles low, so left armed it would end every sleep
       // the instant it began.
