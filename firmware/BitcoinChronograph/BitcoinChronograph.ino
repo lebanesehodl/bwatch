@@ -49,6 +49,229 @@
 #define WIFI_AP_SSID "BWATCH-SETUP"
 #include <Fonts/FreeMonoBold9pt7b.h>
 
+// (here, above every other function: the Arduino build inserts its
+// function prototypes ahead of the first function, and they name WalletDesc)
+// ==== WALLET DESCRIPTOR: BEGIN (host-tested against embit; keep portable) ====
+// A multisig wallet, read from its output descriptor:
+//   wsh(sortedmulti(2,[a1b2c3d4/48'/0'/0'/2']xpub.../<0;1>/*,...))#checksum
+// Native segwit (wsh) and wrapped (sh(wsh(...))), multi and sortedmulti, any
+// m-of-n up to 15. The watch only ever derives RECEIVE (and change) addresses
+// from public keys: nothing here can spend, and nothing here should ever see
+// a private key (descParse refuses one).
+//
+// Plain C strings and uBitcoin types only, no Arduino String, so the same
+// code compiles on a desktop for testing.
+
+static const int DESC_MAX_KEYS = 15;
+
+struct WalletDesc {
+  bool ok;                     // parsed and usable
+  bool nested;                 // sh(wsh(...)) rather than wsh(...)
+  bool sorted;                 // sortedmulti rather than multi
+  uint8_t m, n;
+  bool hasFp[DESC_MAX_KEYS];   // origin given: [fingerprint/path]
+  uint8_t fp[DESC_MAX_KEYS][4];
+  char tail[DESC_MAX_KEYS][9]; // the xpub's last 8 chars, when there is no origin
+  // what follows each xpub: 0 = nothing (chain/index appended),
+  // 1 = "/<0;1>/*" or "/0/*" (the receive branch, change = 1)
+  uint8_t suffix[DESC_MAX_KEYS];
+  HDPublicKey keys[DESC_MAX_KEYS];
+  char checksum[9];            // computed over what was pasted
+  int  given;                  // 0 none pasted, 1 matched, -1 did not match
+  const char *err;             // why not, in a few words for the screen
+};
+
+// ---- BIP 380 descriptor checksum ----
+static uint64_t descPolymod(uint64_t c, int val) {
+  uint8_t c0 = c >> 35;
+  c = ((c & 0x7ffffffffULL) << 5) ^ val;
+  if (c0 & 1)  c ^= 0xf5dee51989ULL;
+  if (c0 & 2)  c ^= 0xa9fdca3312ULL;
+  if (c0 & 4)  c ^= 0x1bab10e32dULL;
+  if (c0 & 8)  c ^= 0x3706b1677aULL;
+  if (c0 & 16) c ^= 0x644d626ffdULL;
+  return c;
+}
+
+// the checksum of s[0..len), into out[9]; false on a character it cannot take
+static bool descChecksum(const char *s, size_t len, char out[9]) {
+  static const char *IN =
+    "0123456789()[],'/*abcdefgh@:$%{}"
+    "IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~"
+    "ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
+  static const char *CS = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+  uint64_t c = 1;
+  int cls = 0, clscount = 0;
+  for (size_t i = 0; i < len; i++) {
+    const char *p = strchr(IN, s[i]);
+    if (!p || !s[i]) return false;
+    int pos = p - IN;
+    c = descPolymod(c, pos & 31);
+    cls = cls * 3 + (pos >> 5);
+    if (++clscount == 3) { c = descPolymod(c, cls); cls = 0; clscount = 0; }
+  }
+  if (clscount > 0) c = descPolymod(c, cls);
+  for (int j = 0; j < 8; j++) c = descPolymod(c, 0);
+  c ^= 1;
+  for (int j = 0; j < 8; j++) out[j] = CS[(c >> (5 * (7 - j))) & 31];
+  out[8] = 0;
+  return true;
+}
+
+static bool descStartsWith(const char *s, const char *pre) {
+  return strncmp(s, pre, strlen(pre)) == 0;
+}
+
+// Something that must never be pasted: an extended private key, or a
+// mnemonic (a dozen or more plain words). The setup refuses these outright.
+static bool looksPrivate(const char *s) {
+  static const char *PRV[] = {"xprv", "yprv", "zprv", "Yprv", "Zprv",
+                              "tprv", "uprv", "vprv", "Uprv", "Vprv"};
+  // only where a key starts (the beginning, or after ( , ] or a space):
+  // "xprv" can turn up by chance in the middle of a perfectly good xpub
+  for (const char *p = s; *p; p++) {
+    if (p != s && !strchr("(,] \n\r\t", p[-1])) continue;
+    for (const char *k : PRV)
+      if (descStartsWith(p, k)) return true;
+  }
+  // words: letters and spaces only, eleven or more spaces between them
+  int spaces = 0, letters = 0;
+  for (const char *p = s; *p; p++) {
+    if (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
+      spaces++;
+      while (p[1] == ' ' || p[1] == '\n' || p[1] == '\r' || p[1] == '\t') p++;
+    } else if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')) letters++;
+    else return false;
+  }
+  return spaces >= 11 && letters > 30;
+}
+
+static bool hexNibble(char ch, uint8_t &v) {
+  if (ch >= '0' && ch <= '9') { v = ch - '0'; return true; }
+  if (ch >= 'a' && ch <= 'f') { v = ch - 'a' + 10; return true; }
+  if (ch >= 'A' && ch <= 'F') { v = ch - 'A' + 10; return true; }
+  return false;
+}
+
+// one key expression, [fp/path]xpub<suffix>, ending at ',' or ')'
+static bool descKey(WalletDesc &d, int k, const char *&p) {
+  d.hasFp[k] = false; d.suffix[k] = 0; d.tail[k][0] = 0;
+  if (*p == '[') {
+    p++;
+    for (int i = 0; i < 4; i++) {
+      uint8_t hi, lo;
+      if (!hexNibble(p[0], hi) || !hexNibble(p[1], lo)) { d.err = "BAD FINGERPRINT"; return false; }
+      d.fp[k][i] = (hi << 4) | lo; p += 2;
+    }
+    d.hasFp[k] = true;
+    while (*p && *p != ']') p++;          // the origin path: shown by the
+    if (*p != ']') { d.err = "BAD KEY ORIGIN"; return false; }   // checksum
+    p++;
+  }
+  const char *start = p;
+  while (*p && *p != '/' && *p != ',' && *p != ')') p++;
+  size_t len = p - start;
+  if (len < 100 || len > 120) { d.err = "BAD KEY"; return false; }
+  char x[121]; memcpy(x, start, len); x[len] = 0;
+  if (!descStartsWith(x, "xpub")) { d.err = "MAINNET XPUBS ONLY"; return false; }
+  d.keys[k] = HDPublicKey(x);
+  if (!d.keys[k].isValid()) { d.err = "BAD KEY"; return false; }
+  memcpy(d.tail[k], x + len - 8, 8); d.tail[k][8] = 0;
+  // receive branch and a wildcard: what every multisig coordinator exports.
+  // Anything else (a fixed key, hardened steps, deeper paths) would give
+  // addresses the wallet does not, so it is refused rather than guessed at.
+  if (descStartsWith(p, "/<0;1>/*")) { p += 8; d.suffix[k] = 1; }
+  else if (descStartsWith(p, "/0/*"))  { p += 4; d.suffix[k] = 1; }
+  else { d.err = "UNSUPPORTED KEY PATH"; return false; }
+  return true;
+}
+
+// Parse a pasted descriptor. Whitespace is ignored around it; inside it,
+// anything unexpected is an error rather than a guess.
+static bool descParse(const char *in, WalletDesc &d) {
+  d.ok = false; d.err = "NOT A DESCRIPTOR"; d.given = 0; d.checksum[0] = 0;
+  if (looksPrivate(in)) { d.err = "PRIVATE KEY OR SEED"; return false; }
+  while (*in == ' ' || *in == '\n' || *in == '\r' || *in == '\t') in++;
+  size_t len = strlen(in);
+  while (len && (in[len - 1] == ' ' || in[len - 1] == '\n' ||
+                 in[len - 1] == '\r' || in[len - 1] == '\t')) len--;
+  const char *hash = (const char *)memchr(in, '#', len);
+  size_t body = hash ? (size_t)(hash - in) : len;
+  if (!descChecksum(in, body, d.checksum)) { d.err = "BAD CHARACTER"; return false; }
+  if (hash) {
+    if (len - body - 1 != 8 || strncmp(hash + 1, d.checksum, 8) != 0) {
+      d.given = -1; d.err = "CHECKSUM WRONG"; return false;
+    }
+    d.given = 1;
+  }
+  const char *p = in;
+  d.nested = false;
+  if (descStartsWith(p, "sh(wsh(")) { d.nested = true; p += 7; }
+  else if (descStartsWith(p, "wsh(")) p += 4;
+  else if (descStartsWith(p, "tr("))  { d.err = "TAPROOT NOT YET"; return false; }
+  else return false;
+  if (descStartsWith(p, "sortedmulti(")) { d.sorted = true; p += 12; }
+  else if (descStartsWith(p, "multi(")) { d.sorted = false; p += 6; }
+  else { d.err = "ONLY MULTI / SORTEDMULTI"; return false; }
+  int m = 0;
+  while (*p >= '0' && *p <= '9') m = m * 10 + (*p++ - '0');
+  if (*p != ',' || m < 1) { d.err = "BAD THRESHOLD"; return false; }
+  int n = 0;
+  while (*p == ',') {
+    p++;
+    if (n >= DESC_MAX_KEYS) { d.err = "TOO MANY KEYS"; return false; }
+    if (!descKey(d, n, p)) return false;
+    n++;
+  }
+  if (*p++ != ')' || *p++ != ')' || (d.nested && *p++ != ')')) {
+    d.err = "BAD BRACKETS"; return false;
+  }
+  if ((size_t)(p - in) != body) { d.err = "TRAILING TEXT"; return false; }
+  if (m > n) { d.err = "THRESHOLD OVER KEYS"; return false; }
+  d.m = m; d.n = n;
+  d.ok = true; d.err = "";
+  return true;
+}
+
+// The keys of one branch (0 receive, 1 change): derived once and kept, so a
+// scan walking twenty addresses pays one derivation per key per address.
+static void descBranch(const WalletDesc &d, int chain, HDPublicKey *out) {
+  for (int k = 0; k < d.n; k++) out[k] = d.keys[k].child(chain);
+}
+
+// Address `index` from branch keys, into out; 0 on failure.
+static size_t descAddressFrom(const WalletDesc &d, const HDPublicKey *branch,
+                              int index, char *out, size_t outLen) {
+  if (!d.ok) return 0;
+  PublicKey pubs[DESC_MAX_KEYS];
+  for (int k = 0; k < d.n; k++) pubs[k] = branch[k].child(index);
+  // sortedmulti: keys in byte order of their compressed encoding (BIP 67).
+  // Sorted HERE: uBitcoin's own sortedmulti() does not sort (its source says
+  // TODO), and its addresses were wrong in every sortedmulti test vector.
+  if (d.sorted) {
+    uint8_t sec[DESC_MAX_KEYS][33];
+    for (int k = 0; k < d.n; k++) pubs[k].sec(sec[k], 33);
+    for (int i = 1; i < d.n; i++)                    // insertion sort, n <= 15
+      for (int j = i; j > 0 && memcmp(sec[j - 1], sec[j], 33) > 0; j--) {
+        uint8_t t[33]; memcpy(t, sec[j], 33); memcpy(sec[j], sec[j - 1], 33);
+        memcpy(sec[j - 1], t, 33);
+        PublicKey tp = pubs[j]; pubs[j] = pubs[j - 1]; pubs[j - 1] = tp;
+      }
+  }
+  Script ms = multi(d.m, pubs, d.n);
+  Script spk = d.nested ? sh(wsh(ms)) : wsh(ms);
+  return spk.address(out, outLen);
+}
+
+// Address `index` on `chain`, the slow way (derives the branch every call)
+static size_t descAddress(const WalletDesc &d, int chain, int index,
+                          char *out, size_t outLen) {
+  static HDPublicKey branch[DESC_MAX_KEYS];
+  descBranch(d, chain, branch);
+  return descAddressFrom(d, branch, index, out, outLen);
+}
+// ==== WALLET DESCRIPTOR: END ====
+
 // Watchy library menu internals (globals defined in Watchy.cpp)
 extern int  guiState;
 extern int  menuIndex;
@@ -221,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0143
+#define RTC_LAYOUT_MAGIC 0xB17C0144
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -469,6 +692,7 @@ RTC_DATA_ATTR bool     forceFetch    = false;
 // runtime settings, cached in RTC RAM, persisted in NVS flash
 RTC_DATA_ATTR char     zpubBuf[120]  = {0};
 RTC_DATA_ATTR bool     prefsLoaded   = false;
+RTC_DATA_ATTR bool     haveDesc      = false;  // a multisig descriptor is set (NVS "desc")
 // network keychain: up to 3 saved networks, most-recent first
 RTC_DATA_ATTR char     wifiSsid[3][33] = {{0}};
 RTC_DATA_ATTR char     wifiPass[3][65] = {{0}};
@@ -535,6 +759,9 @@ void IRAM_ATTR btnISR0() { g_isrPin = BACK_BTN_PIN; }
 void IRAM_ATTR btnISR1() { g_isrPin = MENU_BTN_PIN; }
 void IRAM_ATTR btnISR2() { g_isrPin = UP_BTN_PIN;   }
 void IRAM_ATTR btnISR3() { g_isrPin = DOWN_BTN_PIN; }
+
+
+static const int DESC_TEXT_MAX = 2200;  // ~145 characters a key: 15 keys fit
 
 class BitcoinChrono : public Watchy {
 public:
@@ -1625,6 +1852,7 @@ public:
     Preferences p;
     p.begin("btcchrono", true);
     bool zSet = p.isKey("zpub");          // stored, even as "": no default
+    haveDesc = p.isKey("desc") && p.getString("desc", "").length() > 0;
     bool lSet = p.isKey("lnaddr");
     String z  = p.getString("zpub", "");
     int    tz = p.getInt("tz", -1);
@@ -1771,12 +1999,46 @@ public:
   bool walletConfigured() {
     if (WALLET_ADDR_LIST[0]) return true;
     loadPrefs();
+    if (haveDesc) return true;
     return zpubBuf[0] != 0 && strcmp(zpubBuf, BIP84_TEST_ZPUB) != 0;
   }
   bool isDemoWallet() { return !walletConfigured(); }
 
+  // ---- multisig: the descriptor lives in NVS (too long for RTC memory) and
+  // is read and parsed once per wake, the first time an address is wanted.
+  // The branch keys are cached too: a scan then costs one derivation per key
+  // per address instead of two.
+  bool descRead = false;
+  WalletDesc wdesc;
+  HDPublicKey descBr[2][DESC_MAX_KEYS];
+  bool descBrOk[2] = {false, false};
+
+  const WalletDesc *walletDesc() {
+    if (!haveDesc) return nullptr;
+    if (!descRead) {
+      descRead = true;
+      Preferences p; p.begin("btcchrono", true);
+      String t = p.getString("desc", "");
+      p.end();
+      descParse(t.c_str(), wdesc);
+      descBrOk[0] = descBrOk[1] = false;
+      if (!wdesc.ok) Serial.printf("[wallet] stored descriptor: %s\n", wdesc.err);
+    }
+    return wdesc.ok ? &wdesc : nullptr;
+  }
+
+  String descAddr(int chain, int index) {
+    const WalletDesc *d = walletDesc();
+    if (!d || chain < 0 || chain > 1) return "";
+    if (!descBrOk[chain]) { descBranch(*d, chain, descBr[chain]); descBrOk[chain] = true; }
+    char a[96];
+    if (!descAddressFrom(*d, descBr[chain], index, a, sizeof a)) return "";
+    return String(a);
+  }
+
   String deriveAddress(int chain, int index) {
     loadPrefs();
+    if (haveDesc) return descAddr(chain, index);
     HDPublicKey hd(zpubBuf);
     if (!hd.isValid()) return "";
     return hd.child(chain).child(index).address();
@@ -2051,6 +2313,7 @@ public:
   const char *walletList() {
     if (WALLET_ADDR_LIST[0]) return WALLET_ADDR_LIST;
     loadPrefs();
+    if (haveDesc) return "";                 // the descriptor derives them
     if (!zpubBuf[0] || strcmp(zpubBuf, BIP84_TEST_ZPUB) == 0) return DEMO_ADDR;
     return "";
   }
@@ -3224,7 +3487,8 @@ public:
     display.setCursor(14, oy + qs + 8);  display.print(shortAddr);
     display.setCursor(14, oy + qs + 17);
     display.print("RECV #"); display.print(recvIndex);
-    display.print(lnConfigured() ? "  (UP = LN)" : "  (UP = BALANCE)");
+    display.print(lnConfigured() ? " UP:LN" : " UP:BAL");
+    display.print(" DOWN:VERIFY");
     drawModeStrip();
   }
 
@@ -4322,6 +4586,10 @@ public:
       Serial.printf("[wal] privacy %s\n", walletPrivate ? "ON" : "OFF");
       return;
     }
+    if (dispMode == M_WALT && walletView == 1 && !isDemoWallet()) {
+      verifyScreen();                  // the receive QR: check it, by eye
+      return;
+    }
     themeMode = (themeMode + 1) % 3;
     savePrefs();
     showThemeName = true;
@@ -4439,6 +4707,7 @@ public:
     vlogWake = 0;
     loadVlog();
     prefsLoaded = false;                    // NVS reloads the real ones
+    haveDesc = false;                       // (and says if there is one)
     memset(wifiSsid, 0, sizeof(wifiSsid));
     memset(wifiPass, 0, sizeof(wifiPass));
     avgBlockSec = 600;
@@ -6074,77 +6343,296 @@ public:
     return ok || g_portalSaved;   // the wallet form can save without a join
   }
 
+  // ---- wallet setup and VERIFY screens: theme colours, built-in font ----
+  void wsTitle(const char *t) {
+    display.setFullWindow();
+    display.fillScreen(bg());
+    display.setTextColor(fg());
+    display.setFont(NULL);
+    bootCenter(t, 8, 2);
+    display.setTextSize(1);
+    display.drawFastHLine(10, 28, 180, fg());
+  }
+  void wsFooter(const char *t) {
+    display.drawFastHLine(10, 180, 180, fg());
+    centerSmall(t, 187);
+  }
+  // an address in groups of four, three to a row, large: made to be
+  // compared character by character. Returns the y under it.
+  int wsGrouped(const char *a, int y) {
+    int n = strlen(a), g = 0, rl = 0;
+    char row[20];
+    display.setTextSize(2);
+    for (int i = 0; i < n; i += 4) {
+      if (rl) row[rl++] = ' ';
+      for (int k = 0; k < 4 && i + k < n; k++) row[rl++] = a[i + k];
+      if (++g % 3 == 0 || i + 4 >= n) {
+        row[rl] = 0;
+        display.setCursor(12, y); display.print(row);
+        y += 19; rl = 0;
+      }
+    }
+    display.setTextSize(1);
+    return y;
+  }
+  void wsAt(const char *t, int x, int y) { display.setCursor(x, y); display.print(t); }
+  void wsInverse(const char *a, const char *b, int y) {    // a black band
+    display.fillRect(10, y, 180, b ? 30 : 18, fg());
+    display.setTextColor(bg());
+    centerSmall(a, y + 5);
+    if (b) centerSmall(b, y + 18);
+    display.setTextColor(fg());
+  }
+  // a key as the coordinator shows it: the origin fingerprint, or failing
+  // that the end of the xpub
+  void wsKeyId(const WalletDesc &d, int k, char *o) {
+    if (d.hasFp[k]) snprintf(o, 12, "%02x%02x%02x%02x", d.fp[k][0], d.fp[k][1],
+                              d.fp[k][2], d.fp[k][3]);
+    else snprintf(o, 12, "..%s", d.tail[k]);
+  }
+
+  void wsSeedRefused() {
+    wsTitle("NOT SAVED");
+    display.fillRect(10, 36, 180, 44, fg());
+    display.setTextColor(bg());
+    centerSmall("THAT LOOKS LIKE", 42);
+    bootCenter("SEED WORDS", 54, 2);
+    display.setTextSize(1);
+    display.setTextColor(fg());
+    centerSmall("OR A PRIVATE KEY. THE WATCH", 90);
+    centerSmall("NEVER NEEDS EITHER.", 102);
+    centerSmall("IF THEY WERE REAL, TREAT", 118);
+    centerSmall("THEM AS EXPOSED: MOVE FUNDS.", 130);
+    centerSmall("PASTE A ZPUB OR DESCRIPTOR.", 152);
+    wsFooter("ANY BUTTON: OK");
+  }
+
+  void wsError(const char *why) {
+    wsTitle("NOT SAVED");
+    centerSmall("THE WATCH COULD NOT READ IT:", 44);
+    wsInverse(why, nullptr, 60);
+    centerSmall("NATIVE SEGWIT MULTISIG:", 100);
+    centerSmall("wsh(sortedmulti(...))", 112);
+    centerSmall("OR A SINGLE-KEY ZPUB.", 124);
+    centerSmall("NOTHING WAS CHANGED.", 152);
+    wsFooter("ANY BUTTON: OK");
+  }
+
+  // multisig: what the wearer compares against their signers. Nothing is
+  // saved until UP: this is the moment the phone stops being trusted.
+  void wsKeyCheck(const WalletDesc &d, int page) {
+    wsTitle("CHECK KEYS");
+    char t[34];
+    snprintf(t, 34, "MULTISIG %d OF %d", d.m, d.n);
+    wsAt(t, 10, 36);
+    wsAt(d.nested ? "WRAPPED" : "SEGWIT", d.nested ? 148 : 154, 36);
+    wsAt(d.given == 1 ? "CHECKSUM" : "CHECKSUM*", 10, 54);
+    display.setTextSize(2); wsAt(d.checksum, 70, 50); display.setTextSize(1);
+    int per = 4, first = page * per, y = 72;
+    for (int k = first; k < d.n && k < first + per; k++) {
+      snprintf(t, 34, "KEY %d", k + 1);
+      wsAt(t, 10, y + 4);
+      char id[12]; wsKeyId(d, k, id);
+      display.setTextSize(2); wsAt(id, 70, y); display.setTextSize(1);
+      y += 20;
+    }
+    if (d.n > per) {
+      snprintf(t, 34, "KEYS %d-%d OF %d, DOWN: MORE", first + 1,
+               first + per < d.n ? first + per : d.n, d.n);
+      centerSmall(t, 154);
+    } else {
+      centerSmall("SAME AS YOUR SIGNERS SHOW?", 154);
+    }
+    centerSmall(d.given == 1 ? "NOTHING IS SAVED UNTIL YES"
+                             : "*COMPUTED: NONE WAS PASTED", 166);
+    wsFooter("UP: YES, SAVE   BACK: NO");
+  }
+
+  bool wsConfirmKeys(const WalletDesc &d) {
+    int page = 0, pages = (d.n + 3) / 4;
+    while (true) {
+      wsKeyCheck(d, page);
+      display.display(true);
+      int b = waitForPress(120000);
+      waitAllRelease();
+      if (b == UP_BTN_PIN) return true;
+      if (b == DOWN_BTN_PIN) { page = (page + 1) % pages; continue; }
+      return false;                     // BACK, MENU or nobody: not saved
+    }
+  }
+
+  // the first address, after a save: check it before trusting the watch
+  void wsFirstAddress(const char *title, const char *addr, const char *kind) {
+    wsTitle(title);
+    int y = wsGrouped(addr, 36);        // six rows for multisig: it leads
+    wsAt("#0. CHECK IT IN YOUR WALLET", 10, y + 2);
+    wsAt(kind, 10, y + 14);
+    wsFooter("ANY BUTTON: DONE");
+    display.display(true);
+    waitForPress(120000);
+    waitAllRelease();
+  }
+
+  void wsForgetWallet() {               // the balance and index start over
+    haveWallet = false; walletSats = 0; recvIndex = 0;
+    descRead = false; descBrOk[0] = descBrOk[1] = false;
+  }
+
   void setupWallet() {
     loadPrefs();
     guiState = APP_STATE;
     display.epd2.setBusyCallback(0);
     WiFiManager wm;
     wm.setTimeout(WIFI_AP_TIMEOUT);
+    // One field for both: a zpub, or a multisig descriptor. It opens EMPTY:
+    // the library writes a default into value='...' unescaped, and every
+    // descriptor carries ' and <> that would break the page. It is better
+    // that way anyway: the open setup network never shows the keys to
+    // whoever else joins it. Empty means keep the wallet as it is.
+    static char cur[DESC_TEXT_MAX + 1];
+    cur[0] = 0;
+    if (haveDesc) {
+      Preferences p; p.begin("btcchrono", true);
+      strncpy(cur, p.getString("desc", "").c_str(), DESC_TEXT_MAX);
+      p.end();
+    } else if (walletConfigured()) strncpy(cur, zpubBuf, DESC_TEXT_MAX);
+    cur[DESC_TEXT_MAX] = 0;
     WiFiManagerParameter pZpub(
-      "zpub", "Watch-only zpub (NEVER a private key or seed)",
-      zpubBuf, 120);
+      "zpub", "Wallet: a zpub, or a multisig descriptor. Public keys only, "
+              "NEVER seed words or a private key. Leave empty to keep the "
+              "current wallet",
+      "", DESC_TEXT_MAX);
     wm.addParameter(&pZpub);
     WiFiManagerParameter pLn(
       "lnaddr", "Lightning address (optional, user@domain)",
       lnAddrBuf, 63);
     wm.addParameter(&pLn);
-    display.setFullWindow();
-    display.fillScreen(bg());
-    display.setFont(&FreeMonoBold9pt7b);
-    display.setTextColor(fg());
-    display.setCursor(0, 25);
-    display.println("On your phone,");
-    display.println("join WiFi AP:");
-    display.println(WIFI_AP_SSID);
-    display.println("");
-    display.println("Open setup page,");
-    display.println("paste your zpub.");
-    display.println("");
-    display.println("Addresses only -");
-    display.println("NEVER a seed!");
-    display.println("");
-    display.println("Waits 4 min.");
+
+    wsTitle("WALLET");
+    wsAt("ON YOUR PHONE, JOIN WIFI", 10, 38);
+    bootCenter(WIFI_AP_SSID, 52, 2);
+    display.setTextSize(1);
+    wsAt("A PAGE OPENS. PASTE ONE OF:", 10, 76);
+    wsAt("- A ZPUB (ONE KEY)", 16, 90);
+    wsAt("- A DESCRIPTOR (MULTISIG)", 16, 102);
+    wsInverse("PUBLIC KEYS ONLY.", "NEVER YOUR SEED WORDS.", 120);
+    wsAt("WAITS 4 MIN", 10, 160);
+    wsFooter("THEN BACK TO THE WATCH");
     display.display(true);   // partial: no flash
-    runPortal(wm, 240);      // longer: pasting a zpub takes a while
+    runPortal(wm, 240);      // longer: pasting takes a while
+    WiFi.mode(WIFI_OFF); btStop();
+    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+
     const char *lv = pLn.getValue();
     if (lv && strchr(lv, '@')) {
       strncpy(lnAddrBuf, lv, 63); lnAddrBuf[63] = 0;
       lnInvoice[0] = 0; lnVerify[0] = 0;
       savePrefs();
     }
-    const char *v = pZpub.getValue();
-    display.fillScreen(bg());
-    display.setCursor(0, 30);
-    if (v && strlen(v) > 20 && strncmp(v, zpubBuf, sizeof(zpubBuf)) != 0) {
-      strncpy(zpubBuf, v, sizeof(zpubBuf) - 1);
-      zpubBuf[sizeof(zpubBuf) - 1] = 0;
-      savePrefs();
-      haveWallet = false; walletSats = 0; recvIndex = 0;   // rescan
-      HDPublicKey hd(zpubBuf);
-      if (hd.isValid()) {
-        display.println("Wallet saved!");
-        display.println("");
-        display.println("First address:");
-        String a = deriveAddress(0);
-        display.println(a.substring(0, 18));
-        display.println(a.substring(18));
-        display.println("");
-        display.println("VERIFY it against");
-        display.println("your wallet app!");
+
+    String in = pZpub.getValue() ? pZpub.getValue() : "";
+    in.trim();
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);
+    pinMode(DOWN_BTN_PIN, INPUT);
+    if (in.length() == 0 || in == String(cur)) {
+      wsTitle("WALLET");
+      centerSmall("NO CHANGE MADE.", 90);
+      wsFooter("");
+      display.display(true);
+      delay(2500);
+    } else if (looksPrivate(in.c_str())) {
+      // refused before anything else looks at it, and never stored
+      wsSeedRefused();
+      display.display(true);
+      for (int i = 0; i < 3; i++) { buzz(60, 4); delay(150); }
+      waitForPress(120000);
+      waitAllRelease();
+      Serial.println("[wallet] refused: private key or seed words");
+    } else if (in.indexOf('(') >= 0) {
+      static WalletDesc nd;
+      if (!descParse(in.c_str(), nd)) {
+        wsError(nd.err);
+        display.display(true);
+        waitForPress(120000); waitAllRelease();
+      } else if (!wsConfirmKeys(nd)) {
+        wsTitle("NOT SAVED");
+        centerSmall("THE WALLET IS AS IT WAS.", 90);
+        wsFooter("");
+        display.display(true);
+        delay(2500);
       } else {
-        display.println("Saved, but this");
-        display.println("zpub looks");
-        display.println("INVALID - check");
-        display.println("and re-enter.");
+        Preferences p; p.begin("btcchrono", false);
+        p.putString("desc", in);
+        p.putString("zpub", "");         // one wallet at a time
+        p.end();
+        haveDesc = true; zpubBuf[0] = 0;
+        wsForgetWallet();
+        char a[96]; descAddress(nd, 0, 0, a, sizeof a);
+        char kind[34]; snprintf(kind, 34, "MULTISIG %d OF %d  %s", nd.m, nd.n, nd.checksum);
+        Serial.printf("[wallet] multisig %d of %d saved, #0 %s\n", nd.m, nd.n, a);
+        wsFirstAddress("WALLET SAVED", a, kind);
       }
     } else {
-      display.println("No change made.");
+      HDPublicKey hd(in.c_str());
+      if (!hd.isValid() || in.length() >= sizeof(zpubBuf)) {
+        wsError("NOT A ZPUB");
+        display.display(true);
+        waitForPress(120000); waitAllRelease();
+      } else {
+        strncpy(zpubBuf, in.c_str(), sizeof(zpubBuf) - 1);
+        zpubBuf[sizeof(zpubBuf) - 1] = 0;
+        if (haveDesc) {
+          Preferences p; p.begin("btcchrono", false);
+          p.remove("desc"); p.end();
+          haveDesc = false;
+        }
+        savePrefs();
+        wsForgetWallet();
+        String a = deriveAddress(0);
+        wsFirstAddress("WALLET SAVED", a.c_str(), "ONE KEY, NATIVE SEGWIT");
+      }
     }
-    display.display(true);   // partial: no flash
-    delay(5000);
-    WiFi.mode(WIFI_OFF); btStop();
-    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
     myShowMenu(menuIndex, false);
+  }
+
+  // VERIFY: the receive address, worked out on the wrist from public keys
+  // alone, set out to be compared by eye with what the phone shows. UP and
+  // DOWN step through the neighbours (a wallet app is often a few ahead);
+  // MENU goes back to the next one; BACK, or a minute, leaves.
+  void verifyScreen() {
+    guiState = APP_STATE;
+    int idx = recvIndex;
+    const WalletDesc *d = walletDesc();
+    while (true) {
+      String a = walletAddr(0, idx);
+      char t[34];
+      snprintf(t, 34, "VERIFY #%d", idx);
+      wsTitle(t);
+      int y = wsGrouped(a.length() ? a.c_str() : "----", 36);
+      y += 2;
+      if (idx == recvIndex)     wsAt("NEXT TO RECEIVE", 10, y);
+      else if (idx > recvIndex) wsAt("AHEAD: NOT YET USED", 10, y);
+      else                      wsAt("EARLIER: MAY BE USED", 10, y);
+      if (haveWallet) {
+        uint32_t ago = wakeMin >= lastWalletMin ? wakeMin - lastWalletMin : 0;
+        if (ago < 600) snprintf(t, 34, "SCAN %luM", (unsigned long)ago);
+        else snprintf(t, 34, "SCAN %luH", (unsigned long)(ago / 60));
+        wsAt(t, 190 - (int)strlen(t) * 6, y);
+      }
+      if (d) snprintf(t, 34, "MULTISIG %d OF %d  %s", d->m, d->n, d->checksum);
+      else   snprintf(t, 34, "ONE KEY, NATIVE SEGWIT");
+      wsAt(t, 10, y + 12);
+      wsFooter("UP/DOWN: STEP  MENU: NEXT");
+      display.display(true);
+      int b = waitForPress(60000);
+      waitAllRelease();
+      if (b == UP_BTN_PIN)        { if (idx > 0) idx--; }
+      else if (b == DOWN_BTN_PIN) { if (idx < 9999) idx++; }
+      else if (b == MENU_BTN_PIN) idx = recvIndex;
+      else break;                       // BACK, or nobody
+    }
+    guiState = WATCHFACE_STATE;
   }
 
   // menu session for DOCKED mode: on USB power, run the menu right in
@@ -6643,6 +7131,7 @@ public:
       p.remove(("ws" + String(i)).c_str());
       p.remove(("wp" + String(i)).c_str());
     }
+    p.remove("desc"); haveDesc = false;            // multisig, too
     p.putString("zpub", "");                       // stored empty: the compiled
     p.putString("lnaddr", "");                     // defaults do not return
     p.remove("wsat"); p.remove("ltx"); p.remove("ridx");
