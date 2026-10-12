@@ -3458,8 +3458,14 @@ public:
     int era = (int)(h / 210000L);
     double sub = era < 33 ? 50.0 / (double)(1LL << era) : 0;
     char a[24], b[24];
-    snprintf(a, 24, sub * 144 >= 10 ? "%.0f BTC A DAY" : "%.2f BTC A DAY", sub * 144);
-    snprintf(b, 24, "%.2f%% A YEAR", issued > 0 ? sub * 144 * 365.25 / issued * 100 : 0);
+    long long daySats = subsidySats(era) * 144;
+    if (daySats == 0)                 snprintf(a, 24, "NO MORE BTC");
+    else if (daySats < 1000000LL)     snprintf(a, 24, "%lld SATS A DAY", daySats);
+    else snprintf(a, 24, sub * 144 >= 10 ? "%.0f BTC A DAY" : "%.2f BTC A DAY", sub * 144);
+    double pct = issued > 0 ? sub * 144 * 365.25 / issued * 100 : 0;
+    if (daySats == 0)       snprintf(b, 24, "FEES ONLY");
+    else if (pct < 0.005)   snprintf(b, 24, "~0%% A YEAR");
+    else                    snprintf(b, 24, "%.2f%% A YEAR", pct);
     lowAt(a, 8, 148); lowRight(b, 148);
     // the last sat: block 6,930,000, at ten minutes a block from the real
     // tip (a fact about now, wherever Time Travel has gone)
@@ -3468,7 +3474,22 @@ public:
     double years = tEnd > tNow ? (double)(tEnd - tNow) / (365.25 * 86400.0) : 0;
     snprintf(a, 24, "LAST SAT ~%d", civil64(tEnd).y);
     snprintf(b, 24, "IN %d YEARS", (int)(years + 0.5));
+    if (daySats == 0) {                    // travelled past it: it is behind you
+      snprintf(a, 24, "LAST SAT MINED");
+      snprintf(b, 24, "~%d", civil64(tEnd).y);
+    }
     lowAt(a, 8, 160); lowRight(b, 160);
+  }
+
+  // the block subsidy of era k in sats, as consensus computes it (a shift)
+  static long long subsidySats(int k) { return (k >= 0 && k < 64) ? (5000000000LL >> k) : 0; }
+  // sats, short: 78M, 9.8M, 610K, 1.2K, 37
+  static void satsShort(char *o, size_t n, long long v) {
+    if (v >= 10000000LL)    snprintf(o, n, "%lldM", v / 1000000LL);
+    else if (v >= 1000000LL) snprintf(o, n, "%.1fM", v / 1e6);
+    else if (v >= 10000LL)   snprintf(o, n, "%lldK", v / 1000LL);
+    else if (v >= 1000LL)    snprintf(o, n, "%.1fK", v / 1e3);
+    else                     snprintf(o, n, "%lld", v);
   }
 
   // HLV: the subsidy, era by era, and where we are on it
@@ -3477,12 +3498,20 @@ public:
     long h = estHeight();
     int era = (int)(h / 210000L);
     char a[24], g[16];
-    snprintf(a, 24, "ERA %d OF 33", era + 1);
-    lowAt(a, 8, 103);
-    grouped(g, 16, (long long)((era + 1) * 210000L - h));
-    snprintf(a, 24, "%s TO GO", g);
-    lowRight(a, 103);
+    bool over = era > LAST_HALVING;                 // 6,930,000 on: reward 0
+    if (over) {
+      lowAt("NO MORE BTC", 8, 103);
+      lowRight("FEES ONLY", 103);
+    } else {
+      snprintf(a, 24, "ERA %d OF 33", era + 1);
+      lowAt(a, 8, 103);
+      grouped(g, 16, (long long)((era + 1) * 210000L - h));
+      snprintf(a, 24, "%s TO GO", g);
+      lowRight(a, 103);
+    }
     int first = era < 4 ? 0 : era - 4;              // NOW stays in the window
+    if (first > LAST_HALVING - 6) first = LAST_HALVING - 6;   // ends on 1 sat
+    bool inSats = subsidySats(first) < 100000000LL; // under a coin: count sats
     const int base = 152, bw = 24, gap = 4, x = 4;
     for (int i = 0; i < 7; i++) {
       int k = first + i;
@@ -3493,13 +3522,14 @@ public:
       if (k == era) lowAt("NOW", xx + 3, base - hgt - 10);
       double v = 50.0 / (double)(1LL << k);
       char t[8];
-      if (v >= 10 && v == (long)v) snprintf(t, 8, "%.0f", v);
+      if (inSats)                  satsShort(t, 8, subsidySats(k));
+      else if (v >= 10 && v == (long)v) snprintf(t, 8, "%.0f", v);
       else if (v >= 10)            snprintf(t, 8, "%.1f", v);
       else if (v >= 1)             snprintf(t, 8, "%.2f", v + 1e-9);  // 3.13, not 3.12
       else                         snprintf(t, 8, ".%02d", (int)(v * 100 + 0.5));
       lowAt(t, xx + (bw - (int)strlen(t) * 6) / 2, base + 3);
     }
-    lowRight("BTC/BLOCK", base - 38);
+    lowRight(inSats ? "SATS/BLOCK" : "BTC/BLOCK", base - 38);
   }
 
   // digits grouped in threes, in a 7-segment face, commas as pixels; returns
@@ -4304,7 +4334,11 @@ public:
         // subsidy per block — one climbing, one falling — so the decimals are
         // the part worth watching.
         double issued = supplyBTC(estHeight());
-        if (cellSel[M_SUPL] % 2) snprintf(big, 14, "%.2f", supplyCapBTC() - issued);
+        double rem = supplyCapBTC() - issued;
+        if (cellSel[M_SUPL] % 2) {
+          if (rem < 0.5e-8) snprintf(big, 14, "0");  // not 0.00: none at all
+          else snprintf(big, 14, "%.2f", rem);
+        }
         else                     snprintf(big, 14, "%.2f", issued);
         break;
       }
@@ -4312,7 +4346,10 @@ public:
         // the DATE of the selected halving (UP walks future epochs),
         // projected at the chain's MEASURED pace, not idealized 10 min.
         // Big display carries the year; the unit line the day.
-        if (estHeight() > 0) {
+        if (estHeight() > 0 &&
+            estHeight() / 210000L + 1 + cellSel[dispMode] % 6 > LAST_HALVING + 1) {
+          snprintf(big, 12, "----");                // past the 33rd: none
+        } else if (estHeight() > 0) {
           int t = cellSel[dispMode] % 6;
           int era = (int)(estHeight() / 210000L);
           long targetH = (long)(era + 1 + t) * 210000L;
@@ -6194,7 +6231,9 @@ public:
       // like a broken one. This also lines the line up with the LIVE -> OLD
       // tag, so both indicators change state together.
       if (dispMode == M_SUPL) {
-        unit = (cellSel[M_SUPL] % 2) ? "BTC REMAINING" : "BTC ISSUED";
+        bool none = estHeight() >= 210000L * (LAST_HALVING + 1);
+        unit = (cellSel[M_SUPL] % 2) ? (none ? "NO MORE BTC" : "BTC REMAINING")
+                                     : (none ? "BTC ISSUED - ALL OF IT" : "BTC ISSUED");
       }
       if (!travelActive && dispMode == M_HGHT && !inDocked &&
           heightStaleMinutes() >= staleAfter() && estBlocksAhead() > 0) {
@@ -6324,11 +6363,21 @@ public:
     } else if (dispMode == M_HALV) {   // the subsidy the SELECTED
       int t = cellSel[dispMode] % 6;            // halving brings — box and date
       int era = estHeight() > 0 ? (int)(estHeight() / 210000L) : 4;
-      double sub = 50.0 / (double)(1LL << (era + 1 + t));
+      int k = era + 1 + t;
+      double sub = 50.0 / (double)(1LL << (k < 62 ? k : 62));
+      long long ss = subsidySats(k);
       static const char *HL[6] =
         {"B NEXT", "B +2", "B +3", "B +4", "B +5", "B +6"};
-      cellLabel = HL[t];
-      snprintf(cell, 18, sub >= 1 ? "%.3f" : "%.4f", sub);
+      static const char *HS[6] =
+        {"S NEXT", "S +2", "S +3", "S +4", "S +5", "S +6"};
+      if (ss == 0) {                            // 0.0000 was true, and useless
+        cellLabel = ""; strcpy(cell, "NO MORE BTC"); cellIsText = true;
+      } else if (ss < 1000000LL) {              // under 0.01: whole sats
+        cellLabel = HS[t]; snprintf(cell, 18, "%lld", ss);
+      } else {
+        cellLabel = HL[t];
+        snprintf(cell, 18, sub >= 1 ? "%.3f" : "%.4f", sub);
+      }
     } else if (dispMode == M_SATS) {
       // ONE SAT, in the face's currency: the other side of the big number,
       // and the useful one for small payments (a 2,000-sat zap is about
