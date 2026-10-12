@@ -6873,6 +6873,12 @@ public:
         if (digitalRead(pins[i]) == BTN_ACTIVE) return pins[i];
       unsigned long el = millis() - t0;
       if (el >= timeoutMs) return -1;
+      // Never light-sleep with the radio up: docked (the dock holds WiFi
+      // the whole time) or on the QR's payment vigil. Light sleep dropped
+      // the dock's association (DK- after leaving VERIFY) and, with the
+      // radio's interrupts live, ended in an interrupt-watchdog reset.
+      // Awake and polling instead; the radio is the bigger draw anyway.
+      if (inDocked || WiFi.getMode() != WIFI_OFF) { delay(40); continue; }
       // The display's busy callback arms a wake on its BUSY line and never
       // disarms it. BUSY idles low, so left armed it would end every sleep
       // the instant it began.
@@ -6882,9 +6888,19 @@ public:
       esp_sleep_enable_timer_wakeup((uint64_t)(timeoutMs - el) * 1000ULL);
       Serial.flush();
       esp_light_sleep_start();
-      for (int i = 0; i < 4; i++) gpio_wakeup_disable((gpio_num_t)pins[i]);
+      for (int i = 0; i < 4; i++) {
+        gpio_wakeup_disable((gpio_num_t)pins[i]);
+        // the wake set each pin to interrupt on a LEVEL: left that way, a
+        // held button re-fires for as long as it is held
+        gpio_set_intr_type((gpio_num_t)pins[i], GPIO_INTR_DISABLE);
+      }
       esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
       esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+      // and put the pins back as the rest of the watch reads them: UP on v3
+      // is GPIO 0 and needs its pull-up, or it reads as never pressed
+      pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+      pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP);
+      pinMode(DOWN_BTN_PIN, INPUT);
     }
   }
 
