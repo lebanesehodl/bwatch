@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0144
+#define RTC_LAYOUT_MAGIC 0xB17C0145
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -693,6 +693,8 @@ RTC_DATA_ATTR bool     forceFetch    = false;
 RTC_DATA_ATTR char     zpubBuf[120]  = {0};
 RTC_DATA_ATTR bool     prefsLoaded   = false;
 RTC_DATA_ATTR bool     haveDesc      = false;  // a multisig descriptor is set (NVS "desc")
+RTC_DATA_ATTR int      qrDrawnIdx    = -1;     // the receive QR on the glass (-1: none)
+RTC_DATA_ATTR uint8_t  qrPartials    = 0;      // minute redraws since its full one
 // network keychain: up to 3 saved networks, most-recent first
 RTC_DATA_ATTR char     wifiSsid[3][33] = {{0}};
 RTC_DATA_ATTR char     wifiPass[3][65] = {{0}};
@@ -4708,6 +4710,7 @@ public:
     loadVlog();
     prefsLoaded = false;                    // NVS reloads the real ones
     haveDesc = false;                       // (and says if there is one)
+    qrDrawnIdx = -1; qrPartials = 0;
     memset(wifiSsid, 0, sizeof(wifiSsid));
     memset(wifiPass, 0, sizeof(wifiPass));
     avgBlockSec = 600;
@@ -4765,6 +4768,7 @@ public:
   // LIVE does, and the strip that normally steers between modes says the one
   // thing anyone picking it up needs to know.
   void drawRestFace() {
+    qrDrawnIdx = -1;
     bool night = (restState == REST_NIGHT);
     themeDark = darkNow();
     paintedDark = themeDark;          // its callers refresh it full
@@ -4983,6 +4987,7 @@ public:
     if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {
       bootAnimation();
       paintedDark = true;             // every boot sequence ends on black
+      qrDrawnIdx = -1;                // and nothing it drew is a QR
       // A restart has no data, so the first fetch (WiFi, then every
       // source: 10-20 s) runs before the face can draw. Say so on the boot
       // screen, or the last frame just sits there looking frozen.
@@ -5088,10 +5093,22 @@ public:
     if (dispMode == M_WALT && walletView > 0) {
       if (walletView == 2) drawLightning();
       else drawReceive();
-      displayFull();   // FULL refresh: partial updates smear
-                                // large black<->white flips (ghost
-                                // "LN..." fragments over the QR in dark
-                                // mode) and a QR must scan crisply
+      // FULL refresh when a QR first goes up: partial updates smear large
+      // black<->white flips (ghost "LN..." fragments over the QR in dark
+      // mode) and a QR must scan crisply. But the chain QR then sat there
+      // flashing the whole panel every minute for the sake of the clock.
+      // Same address, same theme: the minute's change is a few digits, so
+      // partial, with a full one every 15 minutes to keep the code clean.
+      bool sameQr = (walletView == 1 && qrDrawnIdx == recvIndex &&
+                     paintedDark == themeDark && !restExitFull &&
+                     qrPartials < 15);
+      if (sameQr) { display.display(true); qrPartials++; }
+      else {
+        displayFull();
+        qrPartials = 0;
+        qrDrawnIdx = (walletView == 1) ? recvIndex : -1;
+      }
+      restExitFull = false;
       paintedDark = themeDark;
       if (vigilPending && !inDocked && !inVigil) {
         vigilPending = false;
@@ -5099,6 +5116,8 @@ public:
       }
       return;
     }
+
+    qrDrawnIdx = -1;                    // whatever QR was up, it is not now
 
     // --- big value + unit ---
     char big[16]; buildValue(big);
@@ -5681,6 +5700,7 @@ public:
   }
 
   void myShowMenu(byte idx, bool partial) {
+    qrDrawnIdx = -1;                    // the menu covers any QR
     const int len = menuLen();
     const char *const *items = menuLevel == 1 ? MY_ITEMS
                              : menuLevel == 2 ? SET_ITEMS : MAIN_ITEMS;
@@ -6602,6 +6622,7 @@ public:
   // MENU goes back to the next one; BACK, or a minute, leaves.
   void verifyScreen() {
     guiState = APP_STATE;
+    qrDrawnIdx = -1;                    // the QR after it starts clean
     int idx = recvIndex;
     const WalletDesc *d = walletDesc();
     while (true) {
@@ -7763,6 +7784,7 @@ public:
   bool showEvent(bool timerWake) {
     uint8_t ev = firstEvent();
     if (!ev) return false;
+    qrDrawnIdx = -1;                              // it covers any QR
     if (timerWake && !inDocked && evShown == ev) {
       if (!longSleep(1)) drawEventScreen(ev);     // v3 does not return
       return true;
