@@ -444,7 +444,8 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0147
+#define RTC_LAYOUT_MAGIC 0xB17C0148
+#define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
 RTC_DATA_ATTR int      themeMode     = 0;   // 0 LIGHT, 1 DARK, 2 AUTO
@@ -619,6 +620,8 @@ RTC_DATA_ATTR uint8_t  battProfile   = 0;      // 0 Live, 1 Balanced, 2 Saver
 RTC_DATA_ATTR bool     walletPeek    = false;  // privacy: shown for one glance
 RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
                                                // ghost: next minute, full
+RTC_DATA_ATTR uint8_t  facePartials  = 0;      // partial face refreshes since
+                                               // the last full one
 RTC_DATA_ATTR bool     fetchPending  = false;  // a long-press asked for data
                                                // and the radio has not gone
                                                // out yet. The corner says so,
@@ -4176,10 +4179,22 @@ public:
 
   // MEM: waiting on the left, NOW at x = 100, mined on the right, newest
   // beside the line: the mempool emptying into the chain, left to right
+  // MEM's divider label: NOW while live; once the data is old, how old, since
+  // the queue on the left is a snapshot from then, not the mempool now
+  bool memOld() { return !inDocked && heightStaleMinutes() >= staleAfter(); }
+  const char *memTitle() {
+    static char t[16];
+    if (!memOld()) return "NOW";
+    long e = heightStaleMinutes();
+    if (e < 60) snprintf(t, 16, "%ld MIN AGO", e);
+    else        snprintf(t, 16, "%ldH AGO", e / 60 > 48 ? 48 : e / 60);
+    return t;
+  }
   void drawMemLower() {
     display.setFont(NULL); display.setTextColor(fg());
-    // how long since the tip, against the ten minutes (bar: 0-20 min)
-    lowAt("LAST BLOCK", 8, 103);
+    // how long since the tip, against the ten minutes (bar: 0-20 min).
+    // Old data: it is the last block SEEN; later ones almost surely exist
+    lowAt(memOld() ? "LAST BLOCK SEEN" : "LAST BLOCK", 8, 103);
     long ago = -1;
     if (tipBlockTime > 0) {
       // the RTC keeps UTC plus the fixed gmtOffset (the zone is applied on
@@ -4317,8 +4332,10 @@ public:
     switch (dispMode) {
     }
     switch (dispMode) {
-      case M_HGHT:
-      case M_MEMP:  snprintf(big, 12, "%ld", estHeight()); break;
+      case M_HGHT:  snprintf(big, 12, "%ld", estHeight()); break;
+      // MEM shows only what it has seen: the last fetched tip, frozen when
+      // the data goes old (HGT is the one that dead-reckons ahead)
+      case M_MEMP:  snprintf(big, 12, "%ld", travelActive ? estHeight() : blockHeight); break;
       case M_PRICE:
         // spelled out, whatever the currency: 12,760,000 rather than 12.76.
         // The comment this replaces said eight digits would not fit — true
@@ -5739,7 +5756,7 @@ public:
     // flash come back through loadPrefs; these are working state.
     chgFromT = 0; chgFromPct = -1; chgLearned = false;
     runStartT = 0; runStartPct = -1; runProf = 0;
-    restHrsShown = -2; cleanNext = false; paintedDark = false;
+    restHrsShown = -2; cleanNext = false; paintedDark = false; facePartials = 0;
     dispMode = M_HGHT; themeMode = 0; tzIndex = 0;
     btcPrice = 0; btcChange24h = 0; btcMcapB = 0;
     fearGreed = 50; fastFee = 0.0f;
@@ -6230,6 +6247,13 @@ public:
       // five minutes of every normal cycle, which makes a healthy watch look
       // like a broken one. This also lines the line up with the LIVE -> OLD
       // tag, so both indicators change state together.
+      if (dispMode == M_MEMP && !travelActive && !inDocked &&
+          heightStaleMinutes() >= staleAfter()) {
+        long e = heightStaleMinutes();
+        if (e < 60) snprintf(ub, 24, "LAST SEEN %ld MIN AGO", e);
+        else        snprintf(ub, 24, "LAST SEEN %ldH AGO", e / 60 > 48 ? 48 : e / 60);
+        unit = ub;
+      }
       if (dispMode == M_SUPL) {
         bool none = estHeight() >= 210000L * (LAST_HALVING + 1);
         unit = (cellSel[M_SUPL] % 2) ? (none ? "NO MORE BTC" : "BTC REMAINING")
@@ -6678,7 +6702,7 @@ public:
                       : (dispMode == M_WALT && walletPrivate && !walletPeek &&
                          walletView == 0) ? "DOWN = PEEK"
                       : (dispMode == M_WALT) ? "UP = RECEIVE QR"
-                      : (dispMode == M_MEMP) ? "NOW"
+                      : (dispMode == M_MEMP) ? memTitle()
                                              : "TICK TOCK NEXT BLOCK";
     showThemeName = false;
     { int16_t x1,y1; uint16_t w,h;
@@ -6694,6 +6718,14 @@ public:
     // the theme changed since the last paint (DOWN, or AUTO at its hours):
     // a whole-panel flip, which a partial refresh only half drives
     if (!prePaint && themeDark != paintedDark) restExitFull = true;
+    // Partial refreshes only nudge the pixels that change, and on this panel
+    // the rest drift: after an hour of minute ticks (or a trip through the
+    // menu) the face goes grey and earlier screens show through. So every
+    // PARTIALS_BEFORE_FULL minute ticks, the tick is a full refresh instead.
+    // Only on a timer wake: never in the middle of someone pressing buttons.
+    if (!prePaint && timerWake && ++facePartials >= PARTIALS_BEFORE_FULL)
+      restExitFull = true;
+    if (restExitFull && !prePaint) facePartials = 0;
     if (restExitFull && !prePaint) { // first face after a rest: full refresh,
       restExitFull = false;          // so the old image leaves no ghost (not
                                      // the FTCH frame: that one is the fast
@@ -9794,7 +9826,9 @@ public:
       if (redraw) {
         buttonWake = true;                    // don't double-count wakes
         drawWatchFace();                      // inDocked guard: no recursion
-        display.display(true);
+        // docked it redraws for hours on partials: clean it the same way
+        if (++facePartials >= PARTIALS_BEFORE_FULL) { facePartials = 0; display.display(false); }
+        else display.display(true);
       }
       delay(50);
     }
@@ -9913,6 +9947,9 @@ public:
     }
     awakeTill = wakeMin + PRESS_GRACE_MIN;   // every press buys a few
     stillRun = 0;                            // minutes of the full face
+    cleanNext = true;     // presses (face changes, the menu) are all partial
+                          // and fast; the next minute wake is a full refresh
+                          // that wipes what they leave behind
     if (guiState == WATCHFACE_STATE && !evQueue && !qrOnGlass() &&
         maybeDateCard()) return;             // the day's first press: the card
     // ANY BUTTON: OK. The press acknowledges the alarm on the glass and does
