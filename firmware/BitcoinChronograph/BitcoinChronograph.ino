@@ -2860,6 +2860,68 @@ public:
     return portal;
   }
 
+  // What each currency was worth at the four halvings, in units per USD:
+  // MARKET rates (the street rate for ARS, NGN and LBP, which had an
+  // official one far from it for years). Rough levels, like the price
+  // anchors: enough to say what a unit of money used to buy.
+  //  2012-11-28  2016-07-09  2020-05-11  2024-04-20
+  static const float *fxRow(int c) {
+    static const float T[NUM_CUR][4] = {
+      {     1.0f,     1.0f,      1.0f,      1.0f },   // USD
+      {   0.773f,   0.903f,    0.924f,    0.938f },   // EUR
+      {   0.995f,   1.310f,    1.400f,    1.375f },   // CAD
+      {    82.1f,   100.6f,    107.6f,    154.6f },   // JPY
+      {   0.625f,   0.773f,    0.808f,    0.809f },   // GBP
+      {   0.931f,   0.983f,    0.972f,    0.911f },   // CHF
+      {   0.959f,   1.326f,    1.535f,    1.558f },   // AUD
+      {    6.23f,    6.69f,     7.09f,     7.24f },   // CNY
+      {    7.75f,    7.76f,     7.75f,     7.83f },   // HKD
+      {   1.221f,   1.350f,    1.414f,    1.361f },   // SGD
+      {    54.9f,    67.2f,     75.6f,     83.4f },   // INR
+      {  1084.0f,  1157.0f,   1222.0f,   1378.0f },   // KRW
+      {    2.10f,    3.32f,     5.80f,     5.21f },   // BRL
+      {   12.98f,    18.6f,     24.0f,    17.07f },   // MXN
+      {    6.46f,    15.2f,    119.5f,   1000.0f },   // ARS (blue)
+      {    1.79f,    2.95f,     7.05f,     32.5f },   // TRY
+      {    8.87f,    14.9f,     18.5f,    19.15f },   // ZAR
+      {   160.0f,   372.0f,    440.0f,   1125.0f },   // NGN (parallel)
+      {   3.673f,   3.673f,    3.673f,    3.673f },   // AED
+      {  1507.5f,  1507.5f,   4000.0f,  89500.0f },   // LBP (street)
+    };
+    return T[(c >= 0 && c < NUM_CUR) ? c : 0];
+  }
+  static bool fxMarket(int c) { return c == 14 || c == 17 || c == 19; }  // ARS NGN LBP
+  // units of currency c per USD at height h: interpolated between the
+  // halvings, then toward today's live cross rate
+  double fxThen(int c, long h) {
+    if (c <= 0 || c >= NUM_CUR) return 1.0;
+    static const long FH[4] = {210000L, 420000L, 630000L, 840000L};
+    const float *T = fxRow(c);
+    if (h <= FH[0]) return T[0];
+    double nowR = (fxRate[0] > 0 && fxRate[c] > 0) ? (double)fxRate[c] / fxRate[0] : T[3];
+    long hh[5] = {FH[0], FH[1], FH[2], FH[3], blockHeight > FH[3] ? blockHeight : FH[3] + 1};
+    double vv[5] = {T[0], T[1], T[2], T[3], nowR};
+    for (int k = 0; k < 4; k++) {
+      if (h <= hh[k + 1]) {
+        double f = (double)(h - hh[k]) / (double)(hh[k + 1] - hh[k]);
+        return exp(log(vv[k]) + f * (log(vv[k + 1]) - log(vv[k])));
+      }
+    }
+    return nowR;
+  }
+  // the unit SAT compares: k of the face currency, k a power of ten so that
+  // today it buys at least 100 sats. Writes "$1" / "1 EUR" / "1,000 LBP".
+  double satUnit(char *o, size_t n) {
+    double k = 1;
+    while (btcPrice > 0 && k < 1e7 && k * 1e8 / btcPrice < 100) k *= 10;
+    char kg[16]; grouped(kg, 16, (long long)k);
+    if (curIdx == 0 && k == 1) snprintf(o, n, "$1");
+    else snprintf(o, n, "%s %s", kg, CUR_CODES[curIdx]);
+    return k;
+  }
+  // the past price in the face's currency
+  double pastPriceCur(long h) { return pastPrice(h) * fxThen(curIdx, h); }
+
   double pastPrice(long targetH) {
     if (travelPastFor == targetH && travelPastPrice > 0)
       return travelPastPrice;            // fetched: the real thing
@@ -2879,7 +2941,8 @@ public:
 
     // the live present is the last anchor
     long  hiH = blockHeight > 0 ? blockHeight : A[N_ANCHORS-1].h;
-    float hiP = btcPrice   > 0 ? (float)btcPrice : A[N_ANCHORS-1].usd;
+    float hiP = fxRate[0] > 0 ? fxRate[0]                 // USD, like the anchors
+              : (curIdx == 0 && btcPrice > 0) ? (float)btcPrice : A[N_ANCHORS-1].usd;
 
     long  loH = A[0].h;  float loP = A[0].usd;
     for (int i = 0; i < N_ANCHORS; i++) {
@@ -3561,19 +3624,32 @@ public:
   // in dollars whatever the face's currency; TODAY is live.
   void drawSatLower() {
     display.setFont(NULL); display.setTextColor(fg());
-    lowAt("WHAT $1 USED TO BUY", 8, 103); lowRight("IN SATS", 103);
+    // in the face's currency (UP turns it): the price anchors are USD, the
+    // currency's own past rate carries them over (market rates)
+    char unit[20], t0[34];
+    double k = satUnit(unit, 20);
+    snprintf(t0, 34, "WHAT %s USED TO BUY", unit);
+    lowAt(t0, 8, 103);
+    if (strlen(t0) <= 22) lowRight("IN SATS", 103);
     const long HH[4] = {210000L, 420000L, 630000L, 840000L};
     const char *YY[5] = {"2012", "2016", "2020", "2024", "TODAY"};
     double sats[5];
-    for (int i = 0; i < 4; i++) { double p = pastPrice(HH[i]); sats[i] = p > 0 ? 1e8 / p : 0; }
-    sats[4] = fxRate[0] > 0 ? 1e8 / fxRate[0] : 0;
+    for (int i = 0; i < 4; i++) { double p = pastPriceCur(HH[i]); sats[i] = p > 0 ? k * 1e8 / p : 0; }
+    sats[4] = btcPrice > 0 ? k * 1e8 / btcPrice : 0;
     // Log scale from just below today's value rather than from 1 sat: from
     // 1, 8.3M sats got 70 px and today's 820 still 29, a gentle slope for
     // a 99.99% fall. From half of today, 2012 is the full width and today
     // a stub. Still log underneath, so 2016 and 2020 stay readable.
     double top = sats[0] > 1 ? sats[0] : 1;
     double floorS = sats[4] > 2 ? sats[4] / 2 : 1;
-    const int BW = 86;                               // 44 .. 130, numbers right
+    // bars from x = 44, stopping short of the widest number (a weak currency
+    // in 2012 runs to 1,289,989,672 sats)
+    int numW = 0;
+    for (int i = 0; i < 5; i++) {
+      char g[16]; grouped(g, 16, (long long)(sats[i] + 0.5));
+      if ((int)strlen(g) * 6 > numW) numW = strlen(g) * 6;
+    }
+    int BW = 194 - numW - 6 - 44; if (BW > 86) BW = 86; if (BW < 30) BW = 30;
     for (int i = 0; i < 5; i++) {
       int y = 113 + i * 9;
       lowAt(YY[i], 8, y);
@@ -3591,7 +3667,20 @@ public:
     display.drawFastHLine(6, 160, 188, fg());
     if (sats[0] > 0 && sats[4] > 0) {
       char t[34];
-      snprintf(t, 34, "THE DOLLAR, IN BITCOIN: -%.2f%%", (1.0 - sats[4] / sats[0]) * 100.0);
+      double lost = (1.0 - sats[4] / sats[0]) * 100.0;
+      char who[20];
+      if (curIdx == 0) snprintf(who, 20, "THE DOLLAR");
+      else if (fxMarket(curIdx)) snprintf(who, 20, "%s (MARKET)", CUR_CODES[curIdx]);
+      else snprintf(who, 20, "THE %s", CUR_CODES[curIdx]);
+      // as many decimals as it takes not to round to -100%: 1,000 ARS in
+      // 2012 bought 12.9 BTC, and today 585 sats
+      char pc[16]; int d = 2;
+      do { snprintf(pc, 16, "%.*f", d, lost); } while (atof(pc) >= 100.0 && ++d <= 7);
+      snprintf(t, 34, d > 2 ? "%s, IN BTC: -%s%%" : "%s, IN BITCOIN: -%s%%", who, pc);
+      if (strlen(t) > 31) {                    // too long: the code alone
+        snprintf(who, 20, "%s", curIdx == 0 ? "THE DOLLAR" : CUR_CODES[curIdx]);
+        snprintf(t, 34, d > 2 ? "%s, IN BTC: -%s%%" : "%s, IN BITCOIN: -%s%%", who, pc);
+      }
       centerSmall(t, 164);
     }
   }
@@ -3856,24 +3945,26 @@ public:
     display.setFont(NULL); display.setTextColor(fg());
     bool past = travelPast();
     long th = estHeight(), nowH = blockHeight;
-    double nowUsd = fxRate[0] > 0 ? fxRate[0] : 0;
-    double thenUsd = past ? pastPrice(th) : modelPrice(th) * usdPerCur();
+    double nowUsd = btcPrice > 0 ? btcPrice : 0;
+    // all in the face's currency now (the past via its own old rate)
+    double thenUsd = past ? pastPriceCur(th) : modelPrice(th);
     static const long AH[10] = {100000L, 210000L, 300000L, 420000L, 500000L,
                                 550000L, 630000L, 700000L, 750000L, 840000L};
     long rightH = past ? nowH : th;
     double hiP = (past ? nowUsd : (thenUsd > nowUsd ? thenUsd : nowUsd));
-    if (hiP <= 0.2 || rightH <= 100000L) return;
+    double loP = pastPriceCur(100000L); if (loP <= 0) loP = 0.2;   // 2010, here
+    if (hiP <= loP || rightH <= 100000L) return;
     const int x0 = 8, y0 = 104, W = 184, h = 40;
     display.drawRect(x0 - 2, y0 - 2, W + 4, h + 4, fg());
     auto X = [&](long hh) { return x0 + 2 + (int)((double)(hh - 100000L) / (rightH - 100000L) * (W - 5)); };
     auto Y = [&](double pr) {
-      if (pr < 0.2) pr = 0.2;
-      return y0 + h - (int)((log10(pr) - log10(0.2)) / (log10(hiP) - log10(0.2)) * h);
+      if (pr < loP) pr = loP;
+      return y0 + h - (int)((log10(pr) - log10(loP)) / (log10(hiP) - log10(loP)) * h);
     };
     int px = -1, py = -1;
     for (int i = 0; i < 10; i++) {                 // the record, then today
       if (AH[i] > nowH) break;
-      int x = X(AH[i]), y = Y(pastPrice(AH[i]));
+      int x = X(AH[i]), y = Y(pastPriceCur(AH[i]));
       if (px >= 0) display.drawLine(px, py, x, y, fg());
       px = x; py = y;
     }
@@ -3893,9 +3984,9 @@ public:
       display.drawCircle(mx, my, 2, fg());
     }
     char a[24], b[24];
-    const char *code = past ? "USD" : CUR_CODES[curIdx];
-    double nowShown  = past ? nowUsd : btcPrice;
-    double thenShown = past ? thenUsd : modelPrice(th);
+    const char *code = CUR_CODES[curIdx];
+    double nowShown  = btcPrice;
+    double thenShown = thenUsd;
     if (past) {
       priceTxt(a, 24, thenShown, code); lowAt("THEN", 8, 152); lowAt(a, 44, 152);
       priceTxt(b, 24, nowShown, code);  lowAt("NOW", 8, 163);  lowAt(b, 44, 163);
@@ -3928,9 +4019,14 @@ public:
     char when[12]; travelMonYear(when, 12);
     char a[34], g[16] = "";
     if (past) {
-      double thenS = pastPrice(th) > 0 ? 1e8 / pastPrice(th) : 0;
-      double nowS  = fxRate[0] > 0 ? 1e8 / fxRate[0] : 0;
-      lowAt("WHAT $1 BOUGHT", 8, 104); lowRight("IN SATS", 104);
+      char unit[20];
+      double k = satUnit(unit, 20);
+      double pp = pastPriceCur(th);
+      double thenS = pp > 0 ? k * 1e8 / pp : 0;
+      double nowS  = btcPrice > 0 ? k * 1e8 / btcPrice : 0;
+      snprintf(a, 34, "WHAT %s BOUGHT", unit);
+      lowAt(a, 8, 104);
+      if (strlen(a) <= 22) lowRight("IN SATS", 104);
       lowAt(when, 8, 117);  grouped(g, 16, (long long)(thenS + 0.5)); lowRight(thenS > 0 ? g : "----", 117);
       int tw = strlen(g) * 6;
       lowAt("TODAY", 8, 129); grouped(g, 16, (long long)(nowS + 0.5)); lowRight(nowS > 0 ? g : "----", 129);
@@ -3938,7 +4034,10 @@ public:
       if (thenS > 0 && nowS > 0) {
         twoBars(thenS, nowS, 117, 129, true, tw);
         display.drawFastHLine(6, 142, 188, fg());
-        centerSmall("SINCE THEN THE DOLLAR", 148);
+        if (curIdx == 0) snprintf(a, 34, "SINCE THEN THE DOLLAR");
+        else if (fxMarket(curIdx)) snprintf(a, 34, "SINCE THEN THE %s (MARKET)", CUR_CODES[curIdx]);
+        else snprintf(a, 34, "SINCE THEN THE %s", CUR_CODES[curIdx]);
+        centerSmall(a, 148);
         double lost = (1 - nowS / thenS) * 100;
         if (nowS < thenS) snprintf(a, 34, lost >= 99.99 ? "LOST %.4f%% IN BITCOIN"
                                                         : "LOST %.2f%% IN BITCOIN", lost);
@@ -3983,8 +4082,8 @@ public:
     long th = estHeight();
     char t[34];
     if (past) {
-      double thenB = supplyBTC(th) * pastPrice(th) / 1e9;
-      double nowB  = fxRate[0] > 0 ? supplyBTC(blockHeight) * fxRate[0] / 1e9 : 0;
+      double thenB = supplyBTC(th) * pastPriceCur(th) / 1e9;   // face currency
+      double nowB  = btcMcapB;
       double big = thenB > nowB ? thenB : nowB;
       lowAt("THEN", 8, 105); lowAt("NOW", 8, 119);
       display.drawRect(40, 105, 110, 8, fg()); display.drawRect(40, 119, 110, 8, fg());
@@ -4094,15 +4193,16 @@ public:
     char when[12]; travelMonYear(when, 12);
     char a[34];
     if (past) {
-      double thenV = btc * pastPrice(th), nowV = fxRate[0] > 0 ? btc * fxRate[0] : 0;
+      double thenV = btc * pastPriceCur(th), nowV = btc * btcPrice;
       lowAt("YOUR SATS, WORTH", 8, 104);
-      lowAt(when, 8, 116);  priceTxt(a, 34, thenV, "USD"); lowRight(hidden ? "-----" : a, 116);
-      lowAt("TODAY", 8, 128); priceTxt(a, 34, nowV, "USD"); lowRight(hidden ? "-----" : a, 128);
+      lowAt(when, 8, 116);  priceTxt(a, 34, thenV, CUR_CODES[curIdx]); lowRight(hidden ? "-----" : a, 116);
+      lowAt("TODAY", 8, 128); priceTxt(a, 34, nowV, CUR_CODES[curIdx]); lowRight(hidden ? "-----" : a, 128);
       display.drawFastHLine(6, 141, 188, fg());
       if (thenV > 0 && nowV > 0) {
         centerSmall("THE SAME SATS,", 147);
-        if (nowV >= thenV) { char r[12]; ratioTxt(r, 12, nowV / thenV); snprintf(a, 34, "%s THE DOLLARS", r); }
-        else snprintf(a, 34, "%.0f%% OF THE DOLLARS", nowV / thenV * 100);
+        const char *mon = curIdx == 0 ? "DOLLARS" : CUR_CODES[curIdx];
+        if (nowV >= thenV) { char r[12]; ratioTxt(r, 12, nowV / thenV); snprintf(a, 34, "%s THE %s", r, mon); }
+        else snprintf(a, 34, "%.0f%% OF THE %s", nowV / thenV * 100, mon);
         centerSmall(a, 159);
       }
     } else {
@@ -4313,7 +4413,7 @@ public:
     if (travelActive) {
       long th = estHeight();
       bool past = (th < blockHeight);
-      double mp = past ? pastPrice(th) : modelPrice(th);
+      double mp = past ? pastPriceCur(th) : modelPrice(th);
       switch (dispMode) {
         case M_PRICE:                       // modelled, not fetched
           if (mp <= 0) { strcpy(big, "----"); return; }
@@ -5736,7 +5836,8 @@ public:
     }
     if (m == M_FEES) return 3;      // high, medium, low
     if (m == M_SUPL) return 2;      // issued, remaining
-    if (m == M_MEMP) return 1;      // blocks waiting
+    if (m == M_MEMP) return travelActive ? 1 : 6;   // waiting, then the
+                                    // last block and the chain's pace
     return 6;                       // halving almanac, currency dials
   }
 
@@ -6281,8 +6382,8 @@ public:
         // history both are), so say USD there whatever the dial is on;
         // ahead, the model scales today's price, in today's currency
         bool past = estHeight() < blockHeight;
-        const char *cc = past ? "USD" : CUR_CODES[curIdx];
-        double tp = past ? pastPrice(estHeight()) : modelPrice(estHeight());
+        const char *cc = CUR_CODES[curIdx];   // the past via the currency's own old rate
+        double tp = past ? pastPriceCur(estHeight()) : modelPrice(estHeight());
         if (dispMode == M_PRICE) {
           snprintf(tu, 26, "%s / BTC", cc);
           unit = tu;
@@ -6373,16 +6474,41 @@ public:
       cellIsText = true;
     } else if (travelActive && dispMode == M_WALT) {
       // what the balance is worth at that date, in the selected currency
-      double mp = estHeight() < blockHeight ? pastPrice(estHeight())
+      double mp = estHeight() < blockHeight ? pastPriceCur(estHeight())
                                             : modelPrice(estHeight());
       cellLabel = CUR_CODES[curIdx];
       cellIsText = true;                 // separators need the text font
       if (mp <= 0 || !haveWallet) strcpy(cell, "----");
       else fmtMoney(cell, 18, (double)walletSats / 1e8 * mp);
-    } else if (dispMode == M_MEMP) {   // the queue, in blocks
-      cellLabel = "BLK WAITING";
-      if (mempoolBlocks > 0) snprintf(cell, 18, "%d", (int)ceilf(mempoolBlocks));
-      else strcpy(cell, "-");          // "----" would run into the label
+    } else if (dispMode == M_MEMP) {   // the queue, then HGT's chain stats
+      // UP walks: what's waiting, what the last block carried and paid, how
+      // fast blocks come, what the retarget will do, the hashrate. (MINER
+      // stays on HGT: the cubes below already name every pool.)
+      int t = cellSel[M_MEMP] % cellStops(M_MEMP);
+      if (t == 1) {
+        cellLabel = "TXS";
+        if (lastTxCount > 0) snprintf(cell, 18, "%ld", lastTxCount);
+        else strcpy(cell, "-");
+      } else if (t == 2) {
+        cellLabel = "BTC RWD";
+        snprintf(cell, 18, "%.2f", lastRewardBtc);
+      } else if (t == 3) {
+        cellLabel = "MIN/BLK";
+        snprintf(cell, 18, "%.1f", avgBlockSec / 60.0f);
+      } else if (t == 4) {
+        cellLabel = "RETARGET";
+        snprintf(cell, 18, fabs(diffChangeEst) >= 10 ? "%s%.0f" : "%s%.1f",
+                 diffChangeEst < 0 ? "-" : "", fabs(diffChangeEst));
+      } else if (t == 5) {
+        cellLabel = "EH/S";
+        if (netHashEH >= 1000)  snprintf(cell, 18, "%.0f", netHashEH);
+        else if (netHashEH > 0) snprintf(cell, 18, "%.1f", netHashEH);
+        else strcpy(cell, "-");
+      } else {
+        cellLabel = "BLK WAITING";
+        if (mempoolBlocks > 0) snprintf(cell, 18, "%d", (int)ceilf(mempoolBlocks));
+        else strcpy(cell, "-");        // "----" would run into the label
+      }
     } else if (dispMode == M_FEES) {   // fee tiers, same fetch
       int t = cellSel[dispMode] % 3;
       cellLabel = t == 0 ? "HIGH PRI" : t == 1 ? "MED PRI" : "LOW PRI";
@@ -6416,7 +6542,7 @@ public:
       // again, set as a clock. The currency is named just above.
       cellLabel = "/SAT";
       double pr = !travelActive ? btcPrice
-                : (estHeight() < blockHeight ? pastPrice(estHeight())
+                : (estHeight() < blockHeight ? pastPriceCur(estHeight())
                                              : modelPrice(estHeight()));
       double v = pr > 0 ? pr / 1e8 : 0;
       if (v <= 0)        strcpy(cell, "----");
