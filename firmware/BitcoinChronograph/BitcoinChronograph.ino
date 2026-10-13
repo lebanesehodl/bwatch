@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0148
+#define RTC_LAYOUT_MAGIC 0xB17C0149
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -622,6 +622,9 @@ RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
                                                // ghost: next minute, full
 RTC_DATA_ATTR uint8_t  facePartials  = 0;      // partial face refreshes since
                                                // the last full one
+RTC_DATA_ATTR int8_t   drawnMode     = -1;     // the face (and WAL view) the
+RTC_DATA_ATTR int8_t   drawnView     = -1;     // panel last showed: a change is
+                                               // the big redraw that ghosts
 RTC_DATA_ATTR bool     fetchPending  = false;  // a long-press asked for data
                                                // and the radio has not gone
                                                // out yet. The corner says so,
@@ -5757,6 +5760,7 @@ public:
     chgFromT = 0; chgFromPct = -1; chgLearned = false;
     runStartT = 0; runStartPct = -1; runProf = 0;
     restHrsShown = -2; cleanNext = false; paintedDark = false; facePartials = 0;
+    drawnMode = -1; drawnView = -1;
     dispMode = M_HGHT; themeMode = 0; tzIndex = 0;
     btcPrice = 0; btcChange24h = 0; btcMcapB = 0;
     fearGreed = 50; fastFee = 0.0f;
@@ -6138,7 +6142,10 @@ public:
     // pending state, then fetch, then fall through and paint the result.
     // a fast partial wake from rest left a faint ghost: clean it now, on a
     // minute wake nobody is waiting on
-    if (timerWake && cleanNext) { cleanNext = false; restExitFull = true; }
+    // ...and never while someone is looking at it: the press grace has to have
+    // run out (a flash mid-demo, a minute after showing a face, was the
+    // complaint), so the clean happens once the wrist is down
+    if (timerWake && cleanNext && wakeMin >= awakeTill) { cleanNext = false; restExitFull = true; }
     if (fetchPending && !prePaint && !syncOn) {   // the sync screen says it
       prePaint = true;
       drawWatchFace();                // corner reads FTCH; no fetch inside
@@ -6723,8 +6730,17 @@ public:
     // menu) the face goes grey and earlier screens show through. So every
     // PARTIALS_BEFORE_FULL minute ticks, the tick is a full refresh instead.
     // Only on a timer wake: never in the middle of someone pressing buttons.
-    if (!prePaint && timerWake && ++facePartials >= PARTIALS_BEFORE_FULL)
+    if (!prePaint && timerWake && facePartials < 255) facePartials++;
+    if (!prePaint && timerWake && facePartials >= PARTIALS_BEFORE_FULL &&
+        wakeMin >= awakeTill)                     // not while being looked at
       restExitFull = true;
+    // A different face (or WAL view) went up by partial: that is the redraw
+    // that leaves the old one showing through. Clean once nobody is looking.
+    // Small presses on the same face (UP cycling the box) leave no trace.
+    if (!prePaint && (drawnMode != dispMode || drawnView != walletView)) {
+      if (drawnMode >= 0 && !restExitFull) cleanNext = true;
+      drawnMode = dispMode; drawnView = walletView;
+    }
     if (restExitFull && !prePaint) facePartials = 0;
     if (restExitFull && !prePaint) { // first face after a rest: full refresh,
       restExitFull = false;          // so the old image leaves no ghost (not
@@ -9947,9 +9963,6 @@ public:
     }
     awakeTill = wakeMin + PRESS_GRACE_MIN;   // every press buys a few
     stillRun = 0;                            // minutes of the full face
-    cleanNext = true;     // presses (face changes, the menu) are all partial
-                          // and fast; the next minute wake is a full refresh
-                          // that wipes what they leave behind
     if (guiState == WATCHFACE_STATE && !evQueue && !qrOnGlass() &&
         maybeDateCard()) return;             // the day's first press: the card
     // ANY BUTTON: OK. The press acknowledges the alarm on the glass and does
