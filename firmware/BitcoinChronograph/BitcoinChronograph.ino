@@ -5186,54 +5186,174 @@ public:
     return nullptr;
   }
 
-  void curiosityScreen(long h, const char *why) {
+  // ---- the curiosity card: the date cards' layout (time line, big word, big
+  // number, rule, two lines, double border), with brackets under the digits
+  // that show what makes the number what it is. Staged in like the dates.
+  int curioKind(long h) {                   // 0 palindrome, 1 twin, 2 repdigit
+    const char *w = curiosity(h);
+    if (!w) return -1;
+    return w[0] == 'P' ? 0 : w[0] == 'T' ? 1 : 2;
+  }
+  // the next height of the same kind, after h (-1: none worth naming)
+  long curioNext(int kind, long h) {
     char s[16]; snprintf(s, 16, "%ld", h);
+    int n = strlen(s);
+    if (kind == 2) {                        // d x 11..1, same length, then longer
+      for (int len = n; len <= 9; len++) {
+        long ones = 0; for (int i = 0; i < len; i++) ones = ones * 10 + 1;
+        for (int dg = 1; dg <= 9; dg++) if (ones * dg > h) return ones * dg;
+      }
+      return -1;
+    }
+    if (kind == 1) {                        // the halves: 970|970 -> 971|971
+      long p10 = 1;
+      if (n % 2 == 0) {
+        for (int i = 0; i < n / 2; i++) p10 *= 10;
+        long half = h / p10;
+        long c = half * p10 + half;
+        if (c > h) return c;
+        if (half + 1 < p10) return (half + 1) * p10 + (half + 1);
+        n += 1;                             // 999|999: no more at this length
+      }
+      p10 = 1; for (int i = 0; i < (n + 1) / 2; i++) p10 *= 10;
+      return (p10 / 10) * p10 + p10 / 10;   // 1000|1000
+    }
+    for (long c = h + 1; c < h + 20000; c++)  // palindromes: 1,100 apart at most
+      if (curioKind(c) == 0) return c;      // at 6 digits, 11,000 at 7
+    return -1;
+  }
+  // "IN ~17 HOURS": blocks at ten minutes
+  void curioEta(char *o, size_t n, long blocks) {
+    double m = blocks * 10.0;
+    if (m < 120)              snprintf(o, n, "IN ~%.0f MIN", m);
+    else if (m < 48 * 60)     snprintf(o, n, "IN ~%.0f HOURS", m / 60);
+    else if (m < 730 * 1440)  snprintf(o, n, "IN ~%.0f DAYS", m / 1440);
+    else                      snprintf(o, n, "IN ~%.0f YEARS", m / 525960);
+  }
+  // when it was mined, and how long ago in blocks: the tip and the last few
+  // blocks carry their real timestamps; older ones are estimated (~)
+  void curioWhen(char *o, size_t n, long h) {
+    uint32_t t = 0; bool exact = false;
+    if (h == blockHeight && tipBlockTime > 0) { t = tipBlockTime; exact = true; }
+    for (int i = 0; i < 6 && !exact; i++)
+      if (recH[i] == h && recT[i] > 0) { t = recT[i]; exact = true; }
+    if (!t && tipBlockTime > 0)
+      t = tipBlockTime - (uint32_t)((blockHeight - h) * (double)avgBlockSec);
+    long ago = blockHeight - h; if (ago < 0) ago = 0;
+    time_t nowUtc = makeTime(currentTime) - settings.gmtOffset;
+    if (!t) { snprintf(o, n, ago ? "MINED %ld BLOCKS AGO" : "JUST MINED", ago); return; }
+    if (ago == 0 && (long)nowUtc - (long)t < 15 * 60) { snprintf(o, n, "JUST MINED"); return; }
+    tmElements_t a, b;
+    breakTime(localFromUtc((time_t)t), a);
+    breakTime(localFromUtc(nowUtc), b);
+    char hm[8]; snprintf(hm, 8, "%s%02d:%02d", exact ? "" : "~", a.Hour, a.Minute);
+    long dayDiff = (long)(localFromUtc(nowUtc) / 86400) - (long)(localFromUtc((time_t)t) / 86400);
+    static const char *DN[8] = {"", "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+    if (dayDiff <= 0) {
+      if (ago == 1)    snprintf(o, n, "MINED %s, 1 BLOCK AGO", hm);
+      else if (ago)    snprintf(o, n, "MINED %s, %ld BLOCKS AGO", hm, ago);
+      else             snprintf(o, n, "MINED %s", hm);
+    } else if (dayDiff == 1) snprintf(o, n, "MINED YESTERDAY %s", hm);
+    else if (dayDiff < 7)    snprintf(o, n, "MINED %s %s", DN[a.Wday <= 7 ? a.Wday : 0], hm);
+    else                     snprintf(o, n, "MINED %ld BLOCKS AGO", ago);
+  }
+  // the whole card at a stage: 0 the number, 1 half the brackets, 2 all of
+  // them, 3 the title, 4 the details and the frame (what stays up)
+  void drawCurioCard(long h, int stage) {
+    static const char *T[3] = {"PALINDROME", "TWIN", "REPDIGIT"};
+    static const char *L1[3] = {"READS THE SAME BOTH WAYS",
+                                "THE SAME DIGITS, TWICE OVER",
+                                "ONE DIGIT, ALL THE WAY ACROSS"};
+    int kind = curioKind(h); if (kind < 0) kind = 0;
+    char s[16], line[34];
+    snprintf(s, 16, "%ld", h);
     display.setFullWindow();
     display.fillScreen(GxEPD_BLACK);
     display.setTextColor(GxEPD_WHITE);
-
-    // 1. the number, and nothing else
-    centerText(s, 104, &DSEG7_Classic_Bold_25);
-    display.display(true);
-    delay(240);
-
-    // 2. the two halves closing on the middle
-    //
-    //    There was an axis line down the centre of the number as well. It
-    //    said the same thing the arrows say and the number already shows,
-    //    and it sat between two digits that are meant to mirror each other.
-    for (int k = 0; k < 3; k++) {
-      int off = 26 - k * 8;
-      display.fillTriangle(100 - off, 128, 100 - off - 9, 122,
-                           100 - off - 9, 134, GxEPD_WHITE);
-      display.fillTriangle(100 + off, 128, 100 + off + 9, 122,
-                           100 + off + 9, 134, GxEPD_WHITE);
-      display.display(true);
-      delay(170);
+    display.setTextWrap(false);
+    display.setFont(NULL); display.setTextSize(1);
+    curioWhen(line, 34, h);
+    centerSmall(line, 14);
+    // the number, digits with pixel commas, and each digit's centre
+    const GFXfont *F = strlen(s) > 6 ? &DSEG7_Classic_Bold_25 : &DSEG7_Classic_Bold_32;
+    int n = strlen(s), cw = 6, w = 0, cx[12];
+    for (int i = 0; i < n; i++) {
+      w += F->glyph[s[i] - F->first].xAdvance;
+      if ((n - 1 - i) % 3 == 0 && i < n - 1) w += cw;
     }
-
-    // 3. what it is, over two lines. "PALINDROME BLOCK" set at size 2 is
-    //    192 px on a 200 px panel — it fits, with four pixels to spare on
-    //    each side, which is not a margin so much as a coincidence.
+    int x = (200 - w) / 2, yb = 108;
+    display.setFont(F);
+    for (int i = 0; i < n; i++) {
+      GFXglyph *g = F->glyph + (s[i] - F->first);
+      char c[2] = {s[i], 0};
+      display.setCursor(x, yb); display.print(c);
+      cx[i] = x + g->xOffset + g->width / 2;
+      x += g->xAdvance;
+      if ((n - 1 - i) % 3 == 0 && i < n - 1) {
+        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, GxEPD_WHITE); x += cw;
+      }
+    }
     display.setFont(NULL);
-    display.setTextSize(2);
-    { char a[16], b[8]; const char *sp = strchr(why, ' ');
-      int n = sp ? (int)(sp - why) : (int)strlen(why);
-      if (n > 15) n = 15;
-      memcpy(a, why, n); a[n] = 0;
-      snprintf(b, 8, "%s", sp ? sp + 1 : "");
-      display.setCursor((200 - n * 12) / 2, 146);
-      display.print(a);
-      if (b[0]) {
-        display.setCursor((200 - (int)strlen(b) * 12) / 2, 168);
-        display.print(b);
-      } }
-    display.setTextSize(1);
-    display.display(true);
-    delay(240);
+    // the brackets: what pairs with what
+    int y = 118, P = kind == 0 ? n / 2 : kind == 1 ? 2 : 1;
+    int upto = stage >= 2 ? P : stage == 1 ? (P + 1) / 2 : 0;
+    if (kind == 0) {                         // mirrors, outermost first
+      for (int i = 0; i < P && i < upto; i++) {
+        int dp = 4 + (P - 1 - i) * 5, a = cx[i], b = cx[n - 1 - i];
+        display.fillRect(a - 1, y, 2, dp + 1, GxEPD_WHITE);
+        display.fillRect(b - 1, y, 2, dp + 1, GxEPD_WHITE);
+        display.fillRect(a - 1, y + dp - 1, b - a + 2, 2, GxEPD_WHITE);
+      }
+      if (n % 2 && upto >= P) display.fillCircle(cx[n / 2], y + 3, 2, GxEPD_WHITE);
+    } else if (kind == 1) {                  // two halves, equal
+      int hf = n / 2;
+      for (int k = 0; k < 2 && k < upto; k++) {
+        int a = cx[k * hf], b = cx[k * hf + hf - 1];
+        display.fillRect(a - 1, y, 2, 7, GxEPD_WHITE);
+        display.fillRect(b - 1, y, 2, 7, GxEPD_WHITE);
+        display.fillRect(a - 1, y + 6, b - a + 2, 2, GxEPD_WHITE);
+      }
+      if (upto >= 2) {
+        int m = (cx[hf - 1] + cx[hf]) / 2;
+        display.fillRect(m - 3, y + 2, 7, 2, GxEPD_WHITE);
+        display.fillRect(m - 3, y + 6, 7, 2, GxEPD_WHITE);
+      }
+    } else if (upto) {                       // every digit, one line
+      for (int i = 0; i < n; i++) display.fillRect(cx[i] - 1, y, 2, 6, GxEPD_WHITE);
+      display.fillRect(cx[0] - 1, y + 5, cx[n - 1] - cx[0] + 2, 2, GxEPD_WHITE);
+    }
+    if (stage >= 3) {
+      display.setTextSize(3);
+      display.setCursor((200 - (int)strlen(T[kind]) * 18) / 2, 34);
+      display.print(T[kind]);
+      display.setTextSize(1);
+      centerSmall("BLOCK", 62);
+    }
+    if (stage >= 4) {
+      display.drawFastHLine(30, 142, 140, GxEPD_WHITE);
+      centerSmall(L1[kind], 154);
+      long nx = curioNext(kind, h);
+      if (nx > 0) {
+        char g[16], eta[20];
+        grouped(g, 16, nx);
+        long from = blockHeight > 0 ? blockHeight : h;
+        if (nx > from) { curioEta(eta, 20, nx - from); snprintf(line, 34, "NEXT: %s %s", g, eta); }
+        else snprintf(line, 34, "NEXT: %s", g);
+        centerSmall(line, 170);
+      }
+      display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+      display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    }
+  }
 
-    // 4. and the clean frame that stays up
-    drawCurioFrame(h, why);
+  void curiosityScreen(long h, const char *why) {
+    // staged in, a partial at each step, like a find in an old handheld game:
+    // the number, the brackets closing in, the name, then the card settles
+    drawCurioCard(h, 0); display.display(true); delay(260);
+    drawCurioCard(h, 1); display.display(true); delay(200);
+    drawCurioCard(h, 2); display.display(true); delay(260);
+    drawCurioCard(h, 3); display.display(true); delay(320);
+    drawCurioCard(h, 4);
     displayFull();
     paintedDark = true;           // white on black, whatever the theme: the
                                   // face after it must not flip by partial
@@ -5242,35 +5362,8 @@ public:
   }
 
   // The finished card, whole: the end of the animation, and what an event
-  // redraws while it waits to be seen
-  void drawCurioFrame(long h, const char *why) {
-    char s[16]; snprintf(s, 16, "%ld", h);
-    display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
-    centerText(s, 104, &DSEG7_Classic_Bold_25);
-    int off = 10;                                    // the arrows, closed
-    display.fillTriangle(100 - off, 128, 100 - off - 9, 122,
-                         100 - off - 9, 134, GxEPD_WHITE);
-    display.fillTriangle(100 + off, 128, 100 + off + 9, 122,
-                         100 + off + 9, 134, GxEPD_WHITE);
-    display.setFont(NULL);
-    display.setTextSize(2);
-    { char a[16], b[8]; const char *sp = strchr(why, ' ');
-      int n = sp ? (int)(sp - why) : (int)strlen(why);
-      if (n > 15) n = 15;
-      memcpy(a, why, n); a[n] = 0;
-      snprintf(b, 8, "%s", sp ? sp + 1 : "");
-      display.setCursor((200 - n * 12) / 2, 146);
-      display.print(a);
-      if (b[0]) {
-        display.setCursor((200 - (int)strlen(b) * 12) / 2, 168);
-        display.print(b);
-      } }
-    display.setTextSize(1);
-    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
-    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
-  }
+  // redraws while it waits to be seen (its time line is worked out again)
+  void drawCurioFrame(long h, const char *why) { (void)why; drawCurioCard(h, 4); }
 
   // Bitcoin dates. The block curiosities are found in the chain; these are on
   // the calendar. Once each, on the first press of the day: a press means
