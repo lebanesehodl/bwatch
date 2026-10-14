@@ -8214,7 +8214,12 @@ public:
     else snprintf(s, 16, " %06ld", shown);        // the wheels: 000,000
     const GFXfont *F = &DSEG7_Classic_Bold_32;
     int adv = F->glyph['0' - F->first].xAdvance, cw = 6;
-    int w = 7 * adv + 2 * cw, x = (200 - w) / 2, yb = 108;
+    // centred on the ink of 1,000,000, not on the cells: DSEG's "1" sits at
+    // the right of its cell, which pushed the whole number right
+    GFXglyph *g1 = F->glyph + ('1' - F->first), *g0 = F->glyph + ('0' - F->first);
+    int inkL0 = g1->xOffset, inkR0 = 6 * adv + 2 * cw + g0->xOffset + g0->width;
+    int w = 7 * adv + 2 * cw, x = 100 - (inkL0 + inkR0) / 2, yb = 108;
+    int x0 = x;
     display.setFont(F);
     for (int i = 0; i < 7; i++) {
       if (s[i] != ' ') { char c[2] = {s[i], 0}; display.setCursor(x, yb); display.print(c); }
@@ -8225,11 +8230,17 @@ public:
       if (i == 0 || i == 3) x += cw;
     }
     display.setFont(NULL);
-    // ten segments, one per 100,000 blocks
+    // ten segments, one per 100,000 blocks, spanning exactly the ink of
+    // 1,000,000 (the "1" sits right in its cell, so the cells' own span
+    // looked left of the digits)
+    (void)w;
+    int inkL = x0 + inkL0, inkR = x0 + inkR0;
+    const int gap = 2;
     for (int k = 0; k < 10; k++) {
-      int sx = 14 + k * 17;
-      if (k < segs) display.fillRect(sx, 118, 15, 7, GxEPD_WHITE);
-      else display.drawRect(sx, 118, 15, 7, GxEPD_WHITE);
+      int a = inkL + (inkR - inkL + gap) * k / 10;
+      int b = inkL + (inkR - inkL + gap) * (k + 1) / 10 - gap;
+      if (k < segs) display.fillRect(a, 118, b - a, 7, GxEPD_WHITE);
+      else display.drawRect(a, 118, b - a, 7, GxEPD_WHITE);
     }
     if (stage >= 1) {
       display.setTextSize(3);
