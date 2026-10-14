@@ -1944,6 +1944,10 @@ public:
       for (long h = blockHeight; h >= from; h--) {
         if (h <= lastCurio) break;
         const char *why = curiosity(h);
+        if (why && (evQueue & EV_CURIO) && evCurioH == 1000000L) {
+          lastCurio = h;      // block 1,000,000 is still waiting to be seen:
+          break;              // 1,000,001 (a palindrome) must not replace it
+        }
         if (why) {
           lastCurio = h;
           curiosityScreen(h, why);
@@ -2029,10 +2033,11 @@ public:
 
     checkAlarms();                 // block, fee, confirmations: arithmetic
 
-    // the milestone: checked where a new height first becomes known
-    if (!sawMillion && blockHeight >= 1000000L) millionScreen();
-
     markMoments();                 // curiosities, a retarget
+
+    // the milestone: checked where a new height first becomes known; after
+    // the curiosities, so it is the one left waiting on the glass
+    if (!sawMillion && blockHeight >= 1000000L && !travelActive) millionScreen();
 
     forceFetch   = false;   // wallet scanning moved to the post-render hook
     fetchPending = false;   // the radio has been out: the corner stops saying
@@ -5363,7 +5368,11 @@ public:
 
   // The finished card, whole: the end of the animation, and what an event
   // redraws while it waits to be seen (its time line is worked out again)
-  void drawCurioFrame(long h, const char *why) { (void)why; drawCurioCard(h, 4); }
+  void drawCurioFrame(long h, const char *why) {
+    (void)why;
+    if (h == 1000000L) drawMillionCard(2, 1000000L, 10);   // the milestone
+    else drawCurioCard(h, 4);
+  }
 
   // Bitcoin dates. The block curiosities are found in the chain; these are on
   // the calendar. Once each, on the first press of the day: a press means
@@ -8186,53 +8195,89 @@ public:
                   chgFromPct, chgRate(), batteryVolts(), lib, (unsigned long)mv);
   }
 
-  // Block 1,000,000. Fires once, on the first face draw that sees it, and
-  // then never again. Ten pulses — one per hundred thousand blocks since the
-  // genesis block — and a screen that holds until a button is pressed.
-  void millionScreen() {
-    guiState = APP_STATE;
+  // Block 1,000,000. The curiosity cards' layout, with an odometer: 999,999
+  // rolls over digit by digit to 1,000,000, then a bar of ten segments fills,
+  // one per hundred thousand blocks, each with its pulse. Then it waits on the
+  // glass like a curiosity (an event), so a fetch nobody watched still keeps it
+  // for whoever looks next, with when it was mined and how long ago.
+  void drawMillionCard(int stage, long shown, int segs) {
+    char s[16], line[34];
     display.setFullWindow();
     display.fillScreen(GxEPD_BLACK);
     display.setTextColor(GxEPD_WHITE);
-
+    display.setTextWrap(false);
+    display.setFont(NULL); display.setTextSize(1);
+    curioWhen(line, 34, 1000000L);
+    centerSmall(line, 14);
+    // the odometer: 7 digit slots, the leading one blank until it carries
+    if (shown >= 1000000L) snprintf(s, 16, "%7ld", shown);
+    else snprintf(s, 16, " %06ld", shown);        // the wheels: 000,000
+    const GFXfont *F = &DSEG7_Classic_Bold_32;
+    int adv = F->glyph['0' - F->first].xAdvance, cw = 6;
+    int w = 7 * adv + 2 * cw, x = (200 - w) / 2, yb = 108;
+    display.setFont(F);
+    for (int i = 0; i < 7; i++) {
+      if (s[i] != ' ') { char c[2] = {s[i], 0}; display.setCursor(x, yb); display.print(c); }
+      x += adv;
+      if ((i == 0 && s[0] != ' ') || i == 3) {
+        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, GxEPD_WHITE);
+      }
+      if (i == 0 || i == 3) x += cw;
+    }
     display.setFont(NULL);
-    centerText("BLOCK HEIGHT", 26, NULL);   // the face's own header
+    // ten segments, one per 100,000 blocks
+    for (int k = 0; k < 10; k++) {
+      int sx = 14 + k * 17;
+      if (k < segs) display.fillRect(sx, 118, 15, 7, GxEPD_WHITE);
+      else display.drawRect(sx, 118, 15, 7, GxEPD_WHITE);
+    }
+    if (stage >= 1) {
+      display.setTextSize(3);
+      display.setCursor((200 - 7 * 18) / 2, 34);
+      display.print("MILLION");
+      display.setTextSize(1);
+      centerSmall("BLOCK", 62);
+    }
+    if (stage >= 2) {
+      display.drawFastHLine(30, 136, 140, GxEPD_WHITE);
+      int64_t g = heightUtc(0), m = heightUtc(1000000L);
+      double yrs = (double)(m - g) / (365.25 * 86400.0);
+      snprintf(line, 34, "%.0f YEARS, ONE BLOCK AT A TIME", yrs);
+      centerSmall(line, 146);
+      char gs[16]; grouped(gs, 16, (long long)(supplyBTC(1000000L) + 0.5));
+      snprintf(line, 34, "%s BTC ISSUED", gs);
+      centerSmall(line, 160);
+      centerSmall("TICK TOCK NEXT BLOCK", 178);
+      display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+      display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    }
+  }
 
-    char big[16]; snprintf(big, 16, "%ld", blockHeight);
-    drawGrouped(big, 84, fitFont(big));
-
-    display.setFont(NULL);
-    centerText("ONE MILLION BLOCKS", 108, NULL);
-
-    RTC.read(currentTime);
-    char when[26];
-    snprintf(when, 26, "%04d-%02d-%02d  %02d:%02d UTC",
-             tmYearToCalendar(currentTime.Year), currentTime.Month,
-             currentTime.Day, currentTime.Hour, currentTime.Minute);
-    centerText(when, 126, NULL);
-
-    display.drawFastHLine(30, 140, 140, GxEPD_WHITE);
-    centerText("EVERY TEN MINUTES", 156, NULL);
-    centerText("SINCE JANUARY 2009", 168, NULL);
-    centerText("TICK TOCK NEXT BLOCK", 190, NULL);
+  void millionScreen() {
+    // the odometer rolls over: each carry a partial
+    static const long ROLL[8] = {999999L, 999990L, 999900L, 999000L,
+                                 990000L, 900000L, 0L, 1000000L};
+    for (int i = 0; i < 8; i++) {
+      drawMillionCard(0, ROLL[i], 0);
+      display.display(true);
+      delay(i == 0 ? 500 : i == 6 ? 260 : 140);
+    }
+    drawMillionCard(1, 1000000L, 0); display.display(true); delay(300);
+    for (int k = 1; k <= 10; k++) {            // ten segments, ten pulses
+      drawMillionCard(1, 1000000L, k);
+      display.display(true);
+      buzz(60, 4);
+    }
+    drawMillionCard(2, 1000000L, 10);
     displayFull();            // full refresh: this one is worth it
     paintedDark = true;       // always black: the next face flips full
-
-    for (int i = 0; i < 10; i++) { buzz(60, 4); delay(140); }
-
-    Serial.printf("[1M] block %ld — marked\n", blockHeight);
-    pinMode(BACK_BTN_PIN, INPUT); pinMode(MENU_BTN_PIN, INPUT);
-    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
-    unsigned long t0 = millis();
-    while (millis() - t0 < 120000) {   // holds two minutes, or until pressed
-      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
-          digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
-          digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
-          digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) { waitAllRelease(); break; }
-      delay(50);
-    }
+    Serial.printf("[1M] block 1,000,000 marked at tip %ld\n", blockHeight);
     sawMillion = true;
     savePrefs();
+    // and it waits on the glass until a press, like a curiosity
+    evCurioH = 1000000L;
+    fireEvent(EV_CURIO);
+    evShown = EV_CURIO;
   }
 
   // Wait for a button, asleep. The picker can be open for minutes while
