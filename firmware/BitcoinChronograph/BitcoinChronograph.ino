@@ -8236,7 +8236,7 @@ public:
     (void)w;
     int inkL = x0 + inkL0, inkR = x0 + inkR0;
     const int gap = 2;
-    for (int k = 0; k < 10; k++) {
+    for (int k = 0; k < 10 && stage >= 1; k++) {   // not during the roll
       int a = inkL + (inkR - inkL + gap) * k / 10;
       int b = inkL + (inkR - inkL + gap) * (k + 1) / 10 - gap;
       if (k < segs) display.fillRect(a, 118, b - a, 7, GxEPD_WHITE);
