@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0149
+#define RTC_LAYOUT_MAGIC 0xB17C014A
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -620,6 +620,11 @@ RTC_DATA_ATTR uint8_t  battProfile   = 0;      // 0 Live, 1 Balanced, 2 Saver
 RTC_DATA_ATTR bool     walletPeek    = false;  // privacy: shown for one glance
 RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
                                                // ghost: next minute, full
+RTC_DATA_ATTR uint8_t  lastMode      = 0;      // what the last minute wake was:
+RTC_DATA_ATTR uint8_t  lastWhy       = 0;      // awake/rest/night, and if awake
+                                               // when it could have rested, why
+                                               // (About shows it: a watch that
+                                               // stopped resting says why)
 RTC_DATA_ATTR uint8_t  facePartials  = 0;      // partial face refreshes since
                                                // the last full one
 RTC_DATA_ATTR int8_t   drawnMode     = -1;     // the face (and WAL view) the
@@ -1681,13 +1686,40 @@ public:
 
   // Everything that must keep the watch fully awake. Resting is a saving, so
   // anything doing something on the wearer's behalf wins.
-  bool restAllowed() {
-    return guiState == WATCHFACE_STATE && !inDocked && chargeState() == 0 &&
-           !travelActive && !fetchPending && !prePaint && !inWalletScan &&
-           !vigilPending && !(dispMode == M_WALT && walletView > 0) &&
-           haveData && blockHeight > 0 &&
-           !(evQueue && wakeMin - evWake < EVENT_HOLD_MIN);
+  // What stops the watch resting, if anything: 0 nothing. Kept apart from
+  // restAllowed() so the watch can say which one (About: "Was awake CARD").
+  enum { RB_OK = 0, RB_MENU, RB_DOCK, RB_CHARGER, RB_TRAVEL, RB_FETCH, RB_DRAW,
+         RB_WALLET, RB_PAYMENT, RB_QR, RB_NODATA, RB_CARD, RB_PRESSED, RB_MOVING };
+  int restBlock() {
+    if (guiState != WATCHFACE_STATE) return RB_MENU;
+    if (inDocked)                    return RB_DOCK;
+    if (chargeState() != 0)          return RB_CHARGER;
+    if (travelActive)                return RB_TRAVEL;
+    if (fetchPending)                return RB_FETCH;
+    if (prePaint)                    return RB_DRAW;
+    if (inWalletScan)                return RB_WALLET;
+    if (vigilPending)                return RB_PAYMENT;
+    if (dispMode == M_WALT && walletView > 0) return RB_QR;
+    if (!haveData || blockHeight <= 0)        return RB_NODATA;
+    if (evQueue && wakeMin - evWake < EVENT_HOLD_MIN) return RB_CARD;
+    return RB_OK;
   }
+  const char *blockName(int b) {
+    static const char *N[] = {"", "MENU", "DOCKED", "CHARGER", "TRAVEL", "FETCH",
+                              "DRAWING", "WALLET", "PAYMENT", "QR", "NO DATA",
+                              "CARD", "PRESSED", "MOVING"};
+    return (b >= 0 && b <= RB_MOVING) ? N[b] : "?";
+  }
+  enum { LM_NONE = 0, LM_AWAKE, LM_REST, LM_NIGHT };
+  // note the outcome of a minute wake; say it on serial when it changes
+  void noteMode(uint8_t m, uint8_t why) {
+    if (m != lastMode || why != lastWhy)
+      Serial.printf("[rest] now %s%s%s\n",
+                    m == LM_NIGHT ? "NIGHT" : m == LM_REST ? "REST" : "AWAKE",
+                    why ? ": " : "", why ? blockName(why) : "");
+    lastMode = m; lastWhy = why;
+  }
+  bool restAllowed() { return restBlock() == RB_OK; }
 
   // Deep sleep for whole minutes, waking on the minute like the library does.
   // Mirrors Watchy::deepSleep() for the v3 board with a longer timer; it does
@@ -1845,17 +1877,24 @@ public:
     bool night = inNightWindow() && !pressed;
     bool still = accDelta >= 0 && accDelta < STILL_DELTA;
 
+    // a forgotten trip must not keep the watch up all night: night brings
+    // it home (rest, night and the radio all wait while travelling)
+    if (night && travelActive && guiState == WATCHFACE_STATE) {
+      travelActive = false;
+      Serial.println("[travel] night: home");
+    }
     if (restState != REST_NONE) {
-      if (!restAllowed()) { endRest("busy"); return false; }
+      if (!restAllowed()) { int b = restBlock(); endRest("busy"); noteMode(LM_AWAKE, b); return false; }
       if (restState == REST_NIGHT) {
-        if (!inNightWindow()) { endRest("morning"); return false; }
+        if (!inNightWindow()) { endRest("morning"); noteMode(LM_AWAKE, 0); return false; }
       } else {
         // a pickup: real movement, or set down a different way up
         if (accDelta < 0 || accDelta > MOVE_THRESHOLD || accPose != restPose) {
-          endRest("moved"); return false;
+          endRest("moved"); noteMode(LM_AWAKE, 0); return false;
         }
         if (night) {                          // dozed into the night
           restState = REST_NIGHT;
+          noteMode(LM_NIGHT, 0);
           drawRestFace(); displayFull();
           longSleep(restSleepMinutes());
           return true;
@@ -1874,6 +1913,7 @@ public:
         // number that strands a wearer. Partial: nothing flips
         drawRestFace(); display.display(true);
       }
+      noteMode(restState == REST_NIGHT ? LM_NIGHT : LM_REST, 0);
       // still resting, nothing changed: the panel already says it. Straight
       // back to sleep, no refresh at all.
       if (!longSleep(restSleepMinutes())) drawRestFace();
@@ -1883,7 +1923,10 @@ public:
     // awake: should it rest?
     if (accPose == POSE_FACE_UP && still) stillRun++;
     else stillRun = 0;
-    if (!restAllowed() || pressed) return false;
+    if (!restAllowed() || pressed) {
+      noteMode(LM_AWAKE, pressed ? RB_PRESSED : restBlock());
+      return false;
+    }
 
     uint8_t want = REST_NONE;
     const char *why = "";
@@ -1892,9 +1935,10 @@ public:
              accDelta <= MOVE_THRESHOLD)                 { want = REST_DAY; why = "face down"; }
     else if (stillRun >= FLAT_STILL_MIN)                 { want = REST_DAY; why = "on a table"; }
     else if (watchIsIdle())                              { want = REST_DAY; why = "still an hour"; }
-    if (want == REST_NONE) return false;
+    if (want == REST_NONE) { noteMode(LM_AWAKE, RB_MOVING); return false; }
 
     Serial.printf("[rest] begin (%s)\n", why);
+    noteMode(want == REST_NIGHT ? LM_NIGHT : LM_REST, 0);
     restState = want;
     restPose  = accPose;
     evShown = 0;                // the rest face covers anything waiting: it
@@ -5963,6 +6007,7 @@ public:
     chgFromT = 0; chgFromPct = -1; chgLearned = false;
     runStartT = 0; runStartPct = -1; runProf = 0;
     restHrsShown = -2; cleanNext = false; paintedDark = false; facePartials = 0;
+    lastMode = 0; lastWhy = 0;
     drawnMode = -1; drawnView = -1;
     dispMode = M_HGHT; themeMode = 0; tzIndex = 0;
     btcPrice = 0; btcChange24h = 0; btcMcapB = 0;
@@ -9501,10 +9546,8 @@ public:
       display.printf("Net  %s", s);                                 // <=18
     } else display.print("Net  none");
 
-    int saved = 0;
-    for (int i = 0; i < 3; i++) if (wifiSsid[i][0]) saved++;
-    y += 18; display.setCursor(0, y);
-    display.printf("Keys %d of 3", saved);                          // 11
+    // (the saved-networks count gave its line to "Was": the networks
+    // screen lists them all, and Seal/Open still need to fit)
 
     y += 18; display.setCursor(0, y);
     if (!haveData) display.print("Data none");
@@ -9515,6 +9558,15 @@ public:
       if (age < 60) display.printf("Data %lum old", (unsigned long)age);
       else          display.printf("Data %luh old", (unsigned long)(age / 60));
     }
+
+    // what the watch was doing before this press: the line that explains a
+    // watch that stopped resting. Docked, it is plainly docked.
+    y += 18; display.setCursor(0, y);
+    if (inDocked)                  display.print("Was  docked");
+    else if (lastMode == LM_NIGHT) display.print("Was  night");
+    else if (lastMode == LM_REST)  display.print("Was  resting");
+    else if (lastMode == LM_AWAKE) display.printf("Was  awake %s", lastWhy ? blockName(lastWhy) : "");
+    else                           display.print("Was  --");
 
     y += 18; display.setCursor(0, y);
     if (lastNtpWake == 0) display.print("Sync never");
