@@ -912,6 +912,18 @@ void IRAM_ATTR btnISR3() { g_isrPin = DOWN_BTN_PIN; }
 
 static const int DESC_TEXT_MAX = 2200;  // ~145 characters a key: 15 keys fit
 
+// Turn the panel's next refresh into a full one. Whoever draws the face
+// (the library's minute tick, a button, the dock loop) always sends it to the
+// panel afterwards with a partial. A full refresh done inside the draw was
+// therefore followed at once by a redundant partial of the same image, which
+// on this panel can wash the fresh full refresh out ("it flashes, then
+// fades"). Arming the driver's own "first refresh must be full" flag makes
+// that one closing refresh the full one instead. (A pointer to a protected
+// member, taken through a derived class, is the standard way to reach it.)
+struct EpdFull : WatchyDisplay {
+  static void arm(WatchyDisplay &e) { e.*(&EpdFull::_initial_refresh) = true; }
+};
+
 class BitcoinChrono : public Watchy {
 public:
   BitcoinChrono(const watchySettings &s) : Watchy(s) {}
@@ -6204,6 +6216,8 @@ public:
   // nothing within a couple of seconds. Off costs one re-power on the next
   // refresh, ~0.1 s.
   void displayFull() { display.display(false); display.powerOff(); }
+  // inside a face draw: the caller's closing refresh becomes the full one
+  void fullOnClose() { EpdFull::arm(display.epd2); }
   void showFaceFull() { showWatchFace(false); display.powerOff(); }
 
   void centerSmall(const char *s, int y) {          // built-in 6x8 font
@@ -6471,9 +6485,17 @@ public:
       bool sameQr = (walletView == 1 && qrDrawnIdx == recvIndex &&
                      paintedDark == themeDark && !restExitFull &&
                      qrPartials < 15);
-      if (sameQr) { display.display(true); qrPartials++; }
-      else {
+      // A payment vigil about to start holds this wake for two minutes, so
+      // the QR must be on the glass now, not when the caller sends it
+      bool vigilNow = vigilPending && !inDocked && !inVigil;
+      if (sameQr) { if (vigilNow) display.display(true); qrPartials++; }
+      else if (vigilNow) {
         displayFull();
+        qrPartials = 0;
+        qrDrawnIdx = (walletView == 1) ? recvIndex : -1;
+      } else {                        // the caller's partial is the minute
+                                      // redraw (it used to be sent twice)
+        fullOnClose();
         qrPartials = 0;
         qrDrawnIdx = (walletView == 1) ? recvIndex : -1;
       }
@@ -7019,7 +7041,8 @@ public:
       restExitFull = false;          // so the old image leaves no ghost (not
                                      // the FTCH frame: that one is the fast
                                      // answer, the full comes with the data)
-      displayFull();
+      fullOnClose();                 // the caller's refresh, made full: one
+                                     // refresh, not a full and then a partial
     }
     if (!prePaint) paintedDark = themeDark;   // what the panel now shows
 
@@ -9335,7 +9358,7 @@ public:
       paintedDark = dark;
       longSleep(1);                               // without a second one
     }
-    if (dark != paintedDark) { displayFull(); paintedDark = dark; }
+    if (dark != paintedDark) { fullOnClose(); paintedDark = dark; }
     return true;                                  // otherwise the caller
   }                                               // sends it to the panel
 
