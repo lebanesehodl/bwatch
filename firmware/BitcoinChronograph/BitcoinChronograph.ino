@@ -3418,7 +3418,7 @@ public:
     display.setFullWindow();
     display.fillScreen(GxEPD_BLACK);
     display.setTextColor(GxEPD_WHITE);
-    static const int CX[] = {30, 62, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
+    static const int CX[] = {26, 62, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
     int k = stage < 2 ? stage : 2;
     drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "EPOC");
     if (stage < 4) return;
@@ -3470,7 +3470,7 @@ public:
     display.setFullWindow();
     display.fillScreen(GxEPD_BLACK);
     display.setTextColor(GxEPD_WHITE);
-    static const int CX[] = {170, 138, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
+    static const int CX[] = {174, 138, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
     int k = stage < 2 ? stage : 2;
     drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "HALV");
     if (stage < 4) return;
@@ -4817,6 +4817,20 @@ public:
 
   // DSEG's '.' glyph has zero xAdvance at 18px — print one char at a
   // time and step the cursor past the dot manually
+  // the box's second line on HGT and MEM, where two stops share it
+  void boxLineBlock(char *o) {         // TXS: which block carried them
+    if (blockHeight > 0) snprintf(o, 20, "IN BLOCK %ld", blockHeight);
+  }
+  void boxLineFees(char *o) {          // BTC RWD: the part that was fees
+    if (blockHeight <= 0 || lastRewardBtc <= 0) return;
+    double fees = lastRewardBtc - subsidySats((int)(blockHeight / 210000L)) / 1e8;
+    if (fees >= 0) snprintf(o, 20, "INCL %.3f FEES", fees);
+  }
+  void boxLineRetarget(char *o) {      // RETARGET: blocks until it happens
+    long h = estHeight(); if (h <= 0) return;
+    long left = 2016 - h % 2016;
+    snprintf(o, 20, left == 1 ? "%% IN 1 BLOCK" : "%% IN %ld BLOCKS", left);
+  }
   void printCellValue(const char *s, int x, int y) {
     display.setFont(&DSEG7_Classic_Bold_14);
     display.setCursor(x, y);
@@ -7126,12 +7140,19 @@ public:
     long eh = estHeight();
     float epochPct = eh > 0 ? (eh % 2016L)   / 2016.0f   : 0;
     float halvPct  = eh > 0 ? (eh % 210000L) / 210000.0f : 0;
-    drawSubdial(30, 80, 16, epochPct, "EPOC");
-    drawSubdial(170, 80, 16, halvPct, "HALV");
+    drawSubdial(26, 80, 16, epochPct, "EPOC");    // 4 px out from the box
+    drawSubdial(174, 80, 16, halvPct, "HALV");
 
     // single-line cell: [ value   LABEL ] — label beside the number,
     // bottoms aligned, instead of stacked underneath
-    display.drawRect(52, 66, 96, 22, fg());
+    // HGT and MEM (live): a taller, wider box with a second line that says
+    // what the number means. Elsewhere the one-line box, as before.
+    const bool tall = (dispMode == M_HGHT || dispMode == M_MEMP) && !travelActive;
+    const int bx = tall ? 50 : 52, bw = tall ? 101 : 96;
+    const int vy = tall ? 81 : 84, ly = tall ? 74 : 77;   // value baseline, label row
+    if (tall) display.drawRect(50, 63, 101, 34, fg());
+    else      display.drawRect(52, 66, 96, 22, fg());
+    char line2[20] = "";
     char cell[18]; const char *cellLabel;   // 18: "POWER LAW MODEL" plus
                                            // room, not 12 which truncates it
     int hashExp = -1;          // MEM HASHES: the power of ten after the digits
@@ -7168,17 +7189,22 @@ public:
         cellLabel = "TXS";
         if (lastTxCount > 0) snprintf(cell, 18, "%ld", lastTxCount);
         else strcpy(cell, "-");
+        boxLineBlock(line2);
       } else if (t == 2) {
         cellLabel = "BTC RWD";
         snprintf(cell, 18, "%.2f", lastRewardBtc);
+        boxLineFees(line2);
       } else if (t == 3) {
         cellLabel = "MIN/BLK";
         snprintf(cell, 18, "%.1f", avgBlockSec / 60.0f);
+        strcpy(line2, "AIM: 10 MINUTES");
       } else if (t == 4) {
         cellLabel = "RETARGET";
         snprintf(cell, 18, fabs(diffChangeEst) >= 10 ? "%s%.0f" : "%s%.1f",
                  diffChangeEst < 0 ? "-" : "", fabs(diffChangeEst));
+        boxLineRetarget(line2);
       } else if (t == 5) {
+        strcpy(line2, "ALL MINERS NOW");
         cellLabel = "EH/S";
         if (netHashEH >= 1000)  snprintf(cell, 18, "%.0f", netHashEH);
         else if (netHashEH > 0) snprintf(cell, 18, "%.1f", netHashEH);
@@ -7189,6 +7215,7 @@ public:
         // while live: from old data it would count past blocks never seen.
         cellLabel = "HASHES";
         strcpy(cell, "-");
+        strcpy(line2, "SINCE LAST BLOCK");
         if (tipBlockTime > 0 && netHashEH > 0 && !memOld()) {
           time_t nowUtc = makeTime(currentTime) - settings.gmtOffset;
           double sec = (double)((long)nowUtc - (long)tipBlockTime);
@@ -7204,6 +7231,11 @@ public:
         cellLabel = "BLK WAITING";
         if (mempoolBlocks > 0) snprintf(cell, 18, "%d", (int)ceilf(mempoolBlocks));
         else strcpy(cell, "-");        // "----" would run into the label
+        if (mempoolBlocks > 0 && avgBlockSec > 0) {     // at the chain's pace
+          long mins = (long)(ceilf(mempoolBlocks) * avgBlockSec / 60.0f + 0.5f);
+          if (mins < 100) snprintf(line2, 20, "~%ld MIN TO CLEAR", mins);
+          else            snprintf(line2, 20, "~%ldH TO CLEAR", (mins + 30) / 60);
+        }
       }
     } else if (dispMode == M_FEES) {   // fee tiers, same fetch
       int t = cellSel[dispMode] % 3;
@@ -7278,10 +7310,18 @@ public:
       if (t == 0) {
         cellLabel = "BTC RWD";         // subsidy + tx fees
         snprintf(cell, 18, "%.2f", lastRewardBtc);
+        boxLineFees(line2);
       } else if (t == 1 && dispMode == M_HGHT) {
         cellLabel = "MINER";           // who found the last block
         snprintf(cell, 18, "%s", poolName[0] ? poolName : "...");
         cellIsText = true;
+        if (recPool[0][0]) {           // its share of the cubes on MEM
+          int n = 0, of = 0;
+          for (int i = 0; i < 6; i++) if (recH[i] > 0 && recPool[i][0]) {
+            of++; if (!strcmp(recPool[i], recPool[0])) n++;
+          }
+          if (of > 1) snprintf(line2, 20, "%d OF THE LAST %d", n, of);
+        }
       } else if ((t == 2 && dispMode == M_HGHT) ||
                  (t == 1 && dispMode != M_HGHT)) {
         if (dispMode == M_HGHT) {
@@ -7290,6 +7330,7 @@ public:
           // value collides with the 8-char label (-12.3 vs RETARGET)
           snprintf(cell, 18, fabs(diffChangeEst) >= 10 ? "%s%.0f" : "%s%.1f",
                    diffChangeEst < 0 ? "-" : "", fabs(diffChangeEst));
+          boxLineRetarget(line2);
         } else {
           cellLabel = "24H %";
           snprintf(cell, 18, "%s%.1f",
@@ -7301,11 +7342,13 @@ public:
         cellLabel = "TXS";
         if (lastTxCount > 0) snprintf(cell, 18, "%ld", lastTxCount);
         else                 snprintf(cell, 18, "%s", "----");
+        boxLineBlock(line2);
       } else if (t == 5 && dispMode == M_HGHT) {
         // what is actually defending the chain. Exahash keeps it to three or
         // four digits for years; below 1000 EH/s show a decimal, above it
         // drop to whole units so the cell never overflows.
         cellLabel = "EH/S";
+        strcpy(line2, "ALL MINERS NOW");
         if (netHashEH >= 1000)     snprintf(cell, 18, "%.0f", netHashEH);
         else if (netHashEH > 0)    snprintf(cell, 18, "%.1f", netHashEH);
         else                       snprintf(cell, 18, "%s", "----");
@@ -7314,7 +7357,9 @@ public:
         // dead-reckoning uses, so a wearer can see why an estimate drifts
         cellLabel = "MIN/BLK";
         snprintf(cell, 18, "%.1f", avgBlockSec / 60.0f);
+        strcpy(line2, "AIM: 10 MINUTES");
       } else {
+        strcpy(line2, "BLOCKS WAITING");
         cellLabel = "UNCONF";          // blocks-worth, abbreviated:
         snprintf(cell, 18, "%.1f", mempoolBlocks); // UNCONFIRMED
       }                                            // overflows the box
@@ -7345,27 +7390,31 @@ public:
     }
     if (cellIsText) {
       display.setFont(NULL);
-      display.setCursor(57, 77);       // letters: small caps font,
+      display.setCursor(tall ? 55 : 57, ly);   // letters: small caps font,
       display.print(cell);             // aligned with the label row
     } else {
       // HASHES: two pixels further left and a 3 x 3 times sign, so
       // "5.5x10^23" clears the label
-      printCellValue(cell, hashExp >= 0 ? 55 : 57, 84);
+      printCellValue(cell, bx + (hashExp >= 0 ? 4 : 5), vy);
       if (hashExp >= 0) {              // "x10" small, the power raised
         int ex = display.getCursorX() + 1;
         for (int i = 0; i < 3; i++) {
-          display.drawPixel(ex + i, 79 + i, fg());
-          display.drawPixel(ex + 2 - i, 79 + i, fg());
+          display.drawPixel(ex + i, ly + 2 + i, fg());
+          display.drawPixel(ex + 2 - i, ly + 2 + i, fg());
         }
         char es[6]; snprintf(es, 6, "%d", hashExp);
         display.setFont(NULL);
-        lowAt("10", ex + 4, 77);
-        lowAt(es, ex + 15, 73);
+        lowAt("10", ex + 4, ly);
+        lowAt(es, ex + 15, ly - 4);
       }
     }
     display.setFont(NULL);
-    display.setCursor(146 - (int)strlen(cellLabel) * 6, 77);
+    display.setCursor((tall ? 148 : 146) - (int)strlen(cellLabel) * 6, ly);
     display.print(cellLabel);
+    if (tall && line2[0]) {            // centred under the value and label
+      display.setCursor(bx + (bw - (int)strlen(line2) * 6) / 2 + 1, 86);
+      display.print(line2);
+    }
 
     // The lower half belongs to the face where the gauge and the 24H chart
     // say nothing about it. SUP and HLV are arithmetic on the height, so
@@ -7390,13 +7439,13 @@ public:
     } else {
 
     // --- fear/greed gauge ---
-    int ry = 113;
+    int ry = 115;                      // 2 px under the taller HGT box
     display.drawFastHLine(6, ry, 188, fg());
     for (int i = 0; i <= 20; i++)
       display.drawFastVLine(6 + i * 188 / 20, ry - (i%5==0 ? 8 : 4),
                             (i%5==0 ? 8 : 4), fg());
     int nx = 6 + fearGreed * 188 / 100;
-    display.fillTriangle(nx-5, ry-16, nx+5, ry-16, nx, ry-9, fg());
+    display.fillTriangle(nx-4, ry-15, nx+4, ry-15, nx, ry-11, fg());
     const char *nums[5] = {"0","25","50","75","100"};
     for (int i = 0; i < 5; i++) {
       int x = 6 + i * 188 / 4;
@@ -7413,7 +7462,7 @@ public:
     display.setCursor(194 - 5*6, ry + 13); display.print("GREED");
 
     // --- boxed 24H chart with H/L ---
-    int cy = 136, ch = 38;
+    int cy = 138, ch = 36;
     display.drawRect(6, cy, 188, ch, fg());
     float hi, lo; int n; sparkHiLo(hi, lo, n);
     if (!n) { display.setCursor(10, cy + 3); display.print("24H"); }
