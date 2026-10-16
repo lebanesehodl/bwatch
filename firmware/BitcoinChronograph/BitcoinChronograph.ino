@@ -3510,34 +3510,6 @@ public:
   // Built-in font throughout; y 100-173, between the dials and the divider.
   void lowAt(const char *t, int x, int y) { display.setCursor(x, y); display.print(t); }
   void lowRight(const char *t, int y) { lowAt(t, 194 - (int)strlen(t) * 6, y); }
-  // A 3 x 5 pixel font for lines that must fit between others: 4 px a
-  // character. Digits, capitals and a few signs; lowercase x is a small
-  // times sign. Each glyph is five 3-bit rows, top row in the high bits.
-  static uint16_t tinyGlyph(char c) {
-    static const uint16_t dig[10] = {
-      0x7B6F, 0x2C97, 0x73E7, 0x72CF, 0x5BC9, 0x79CF, 0x79EF, 0x7292, 0x7BEF, 0x7BCF };
-    static const uint16_t cap[26] = {
-      0x2BED, 0x6BAE, 0x3923, 0x6B6E, 0x79A7, 0x79A4, 0x396B, 0x5BED, 0x7497, 0x126A,
-      0x5BAD, 0x4927, 0x5FED, 0x6B6D, 0x2B6A, 0x6BA4, 0x2B7B, 0x6BAD, 0x388E, 0x7492,
-      0x5B6F, 0x5B6A, 0x5BFD, 0x5AAD, 0x5A92, 0x72A7 };
-    if (c >= '0' && c <= '9') return dig[c - '0'];
-    if (c >= 'A' && c <= 'Z') return cap[c - 'A'];
-    switch (c) {
-      case 'x': return 0x0AA8; case '~': return 0x0780; case '.': return 0x0002;
-      case ',': return 0x0014; case '-': return 0x01C0; case ':': return 0x0410;
-      case '%': return 0x52A5; case '/': return 0x12A4; case '+': return 0x05D0;
-    }
-    return 0;
-  }
-  int tinyAt(const char *t, int x, int y) {        // y = top row; returns the end x
-    for (; *t; t++, x += 4) {
-      uint16_t g = tinyGlyph(*t);
-      for (int r = 0; r < 5; r++)
-        for (int c = 0; c < 3; c++)
-          if (g & (1 << (14 - r * 3 - c))) display.drawPixel(x + c, y + r, fg());
-    }
-    return x;
-  }
 
   // a price in the chosen currency, with cents when it is small
   void fiatSmall(char *o, size_t n, double v) {
@@ -4448,7 +4420,7 @@ public:
     display.setFont(NULL); display.setTextColor(fg());
     // how long since the tip, against the ten minutes (bar: 0-20 min).
     // Old data: it is the last block SEEN; later ones almost surely exist
-    lowAt(memOld() ? "LAST BLOCK SEEN" : "LAST BLOCK", 8, 101);
+    lowAt(memOld() ? "LAST BLOCK SEEN" : "LAST BLOCK", 8, 103);
     long ago = -1;
     if (tipBlockTime > 0) {
       // the RTC keeps UTC plus the fixed gmtOffset (the zone is applied on
@@ -4461,34 +4433,13 @@ public:
     if (ago < 0) strcpy(t, "----");
     else if (ago < 120) snprintf(t, 24, "%ld MIN AGO", ago);
     else snprintf(t, 24, "%ldH AGO", ago / 60);
-    lowRight(t, 101);
-    int x0 = 8, W = 184, y = 111;
-    display.drawRect(x0, y, W, 6, fg());
-    if (ago > 0) display.fillRect(x0, y, (int)(W * (ago > 20 ? 20 : ago) / 20), 6, fg());
-    display.drawFastVLine(x0 + W / 2, y - 3, 10, fg());
-    // the work done since it: hashrate x time, "~5.4x10^23 HASHES SINCE".
-    // Every one a guess at the next block; the count resets when one lands.
-    if (ago >= 0 && tipBlockTime > 0 && netHashEH > 0 && !memOld()) {
-      time_t nowUtc = makeTime(currentTime) - settings.gmtOffset;
-      double sec = (double)((long)nowUtc - (long)tipBlockTime);
-      if (sec < 1) sec = 1;
-      double hs = netHashEH * 1e18 * sec;
-      int e = (int)floor(log10(hs));
-      double m = hs / pow(10.0, e);
-      if (m >= 9.95) { m /= 10; e++; }
-      char ms[12], es[6];
-      snprintf(ms, 12, "~%.1fx10", m);
-      snprintf(es, 6, "%d", e);
-      const char *tail = " HASHES SINCE";
-      // the 3 x 5 font, snug between the bar and the blocks' heights
-      int w = (strlen(ms) + strlen(es) + strlen(tail)) * 4;
-      int tx = (200 - w) / 2, ty = 123;
-      tx = tinyAt(ms, tx, ty);
-      tx = tinyAt(es, tx, ty - 2);                             // the exponent, raised
-      tinyAt(tail, tx, ty);
-    }
+    lowRight(t, 103);
+    int x0 = 8, W = 184, y = 113;
+    display.drawRect(x0, y, W, 8, fg());
+    if (ago > 0) display.fillRect(x0, y, (int)(W * (ago > 20 ? 20 : ago) / 20), 8, fg());
+    display.drawFastVLine(x0 + W / 2, y - 3, 14, fg());
 
-    const int w = 21, h = 19, dp = 4, gap = 6, cy = 145;   // under the hash line
+    const int w = 21, h = 19, dp = 4, gap = 6, cy = 142;
     int x = 100 - 7 - (3 * (w + dp) + 2 * gap);
     // waiting: furthest left, the next block nearest the line
     for (int i = 0; i < 3; i++) {
@@ -6106,7 +6057,7 @@ public:
     }
     if (m == M_FEES) return 3;      // high, medium, low
     if (m == M_SUPL) return 2;      // issued, remaining
-    if (m == M_MEMP) return travelActive ? 1 : 6;   // waiting, then the
+    if (m == M_MEMP) return travelActive ? 1 : 7;   // waiting, then the
                                     // last block and the chain's pace
     return 6;                       // halving almanac, currency dials
   }
@@ -7183,6 +7134,7 @@ public:
     display.drawRect(52, 66, 96, 22, fg());
     char cell[18]; const char *cellLabel;   // 18: "POWER LAW MODEL" plus
                                            // room, not 12 which truncates it
+    int hashExp = -1;          // MEM HASHES: the power of ten after the digits
     bool cellIsText = false;   // pool names are letters: the 7-seg
                                // font is digits-only, like real ones
     // THE BOX: each mode's contextual sub-dial; UP turns it.
@@ -7231,6 +7183,23 @@ public:
         if (netHashEH >= 1000)  snprintf(cell, 18, "%.0f", netHashEH);
         else if (netHashEH > 0) snprintf(cell, 18, "%.1f", netHashEH);
         else strcpy(cell, "-");
+      } else if (t == 6) {
+        // the work since the last block: hashrate x time, "5.5x10^23", each
+        // one a guess at the next block; it starts over when one lands. Only
+        // while live: from old data it would count past blocks never seen.
+        cellLabel = "HASHES";
+        strcpy(cell, "-");
+        if (tipBlockTime > 0 && netHashEH > 0 && !memOld()) {
+          time_t nowUtc = makeTime(currentTime) - settings.gmtOffset;
+          double sec = (double)((long)nowUtc - (long)tipBlockTime);
+          if (sec < 1) sec = 1;
+          double hs = netHashEH * 1e18 * sec;
+          int e = (int)floor(log10(hs));
+          double m = hs / pow(10.0, e);
+          if (m >= 9.95) { m /= 10; e++; }
+          snprintf(cell, 18, "%.1f", m);
+          hashExp = e;
+        }
       } else {
         cellLabel = "BLK WAITING";
         if (mempoolBlocks > 0) snprintf(cell, 18, "%d", (int)ceilf(mempoolBlocks));
@@ -7379,7 +7348,20 @@ public:
       display.setCursor(57, 77);       // letters: small caps font,
       display.print(cell);             // aligned with the label row
     } else {
-      printCellValue(cell, 57, 84);
+      // HASHES: two pixels further left and a 3 x 3 times sign, so
+      // "5.5x10^23" clears the label
+      printCellValue(cell, hashExp >= 0 ? 55 : 57, 84);
+      if (hashExp >= 0) {              // "x10" small, the power raised
+        int ex = display.getCursorX() + 1;
+        for (int i = 0; i < 3; i++) {
+          display.drawPixel(ex + i, 79 + i, fg());
+          display.drawPixel(ex + 2 - i, 79 + i, fg());
+        }
+        char es[6]; snprintf(es, 6, "%d", hashExp);
+        display.setFont(NULL);
+        lowAt("10", ex + 4, 77);
+        lowAt(es, ex + 15, 73);
+      }
     }
     display.setFont(NULL);
     display.setCursor(146 - (int)strlen(cellLabel) * 6, 77);
