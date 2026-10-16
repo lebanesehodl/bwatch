@@ -3407,7 +3407,7 @@ public:
       display.print(l);
     } else {                                       // the face's own layout
       display.setCursor(cx - (int)strlen(p) * 3, cy - 3); display.print(p);
-      display.setCursor(cx - (int)strlen(name) * 3, cy - R - 10);
+      display.setCursor(cx - (int)strlen(name) * 3, cy - R - 12);
       display.print(name);
     }
   }
@@ -4500,7 +4500,7 @@ public:
     display.print(p);
     // label above the dial
     display.getTextBounds(label,0,0,&x1,&y1,&w,&h);
-    display.setCursor(cx - w/2, cy - r - 10);
+    display.setCursor(cx - w/2, cy - r - 12);
     display.print(label);
   }
 
