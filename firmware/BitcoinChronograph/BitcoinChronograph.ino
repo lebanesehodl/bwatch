@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C014A
+#define RTC_LAYOUT_MAGIC 0xB17C014B
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -584,6 +584,11 @@ RTC_DATA_ATTR uint32_t sleptSince    = 0;      // RTC epoch a long sleep began,
                                                // so wakeMin can catch up
 RTC_DATA_ATTR uint16_t stillRun      = 0;      // consecutive flat dead-still wakes
 RTC_DATA_ATTR uint32_t awakeTill     = 0;      // wakeMin the last press lasts to
+RTC_DATA_ATTR uint8_t  joeStep       = 0;      // JOE's UP cycle: 0 time, 1 the
+                                               // chain, then each person, then
+                                               // the watch; a minute tick resets
+RTC_DATA_ATTR int8_t   evAgeWho      = -1;     // a block birthday waiting on the
+RTC_DATA_ATTR uint32_t evAgeN        = 0;      // glass: who (4 = the watch), age
 RTC_DATA_ATTR bool     joeReveal     = false;  // tap UP in JOE and the date
                                                // line shows the block height
                                                // for one refresh
@@ -2090,6 +2095,7 @@ public:
     checkAlarms();                 // block, fee, confirmations: arithmetic
 
     markMoments();                 // curiosities, a retarget
+    checkAges();                   // block birthdays: people, the watch
 
     // the milestone: checked where a new height first becomes known; after
     // the curiosities, so it is the one left waiting on the glass
@@ -2416,7 +2422,7 @@ public:
   // buttons itself. (The long press, fetch everything, is not offered while
   // the radio is busy listening.)
   void upShortPress() {
-    if (dispMode == M_JOE) joeReveal = !joeReveal;
+    if (dispMode == M_JOE) joeAdvance();
     else if (dispMode == M_WALT) walletToggleView();
     else if (dispMode == M_PRICE || dispMode == M_SATS || dispMode == M_MCAP) {
       curIdx = nextCur(curIdx);
@@ -3911,6 +3917,10 @@ public:
   static const int LAST_HALVING = 32;   // 6,720,000: the reward becomes 1 sat
   // the name of a landmark at exactly h, into o; false if h is none
   bool landmarkName(long h, char *o, size_t n) {
+    loadPeople();
+    for (int i = 0; i < MAX_PEOPLE; i++)            // births are landmarks too
+      if (pplBirth[i] && !bornBefore(i) && heightAtUtc(birthUtc(i)) == h) {
+        snprintf(o, n, "%s IS BORN", pplName[i]); return true; }
     for (int i = 0; i < N_LANDMARKS; i++)
       if (landmarks()[i].h == h) { snprintf(o, n, "%s", landmarks()[i].name); return true; }
     if (h > 0 && h % 210000L == 0 && h / 210000L <= LAST_HALVING) {
@@ -3925,6 +3935,13 @@ public:
   // the nearest landmark strictly after (dir > 0) or before h; -1 if none
   long landmarkNext(long h, int dir) {
     long best = -1;
+    loadPeople();
+    for (int i = 0; i < MAX_PEOPLE; i++) {
+      if (!pplBirth[i] || bornBefore(i)) continue;
+      long c = heightAtUtc(birthUtc(i));
+      if (dir > 0 && c > h && (best < 0 || c < best)) best = c;
+      if (dir < 0 && c < h && (best < 0 || c > best)) best = c;
+    }
     for (int i = 0; i < N_LANDMARKS; i++) {
       long c = landmarks()[i].h;
       if (dir > 0 && c > h && (best < 0 || c < best)) best = c;
@@ -5556,6 +5573,7 @@ public:
 
   // true when a card went up (and the face after it): the press is spent
   bool maybeDateCard() {
+    if (maybeBirthdayCard()) return true;
     uint32_t key = 0;
     const BtcDate *b = dateCardDue(key);
     if (!b) return false;
@@ -6067,6 +6085,7 @@ public:
     // 2028 halving by months without anything looking obviously broken.
     avgBlockSec = 600;
     joeReveal = false; captivePortal = false; resting = false;
+    joeStep = 0; evAgeWho = -1; evAgeN = 0;
     restState = 0; restPose = 0; sleptSince = 0; stillRun = 0;
     candleWake = 0; goldWake = 0; slowWake = 0; fngWake = 0; dayAgoUsd = 0;
     alarmHeight = 0; feeAlarm = 0; feeArmed = true;   // NVS reloads the alarms
@@ -6153,7 +6172,7 @@ public:
     long h0 = estHeight();
     if (h0 <= 0) return 0;
     long windowSec = (long)minutesUntilHour(nightTo) * 60L;
-    struct Ev { long h; char t[26]; } ev[6]; int n = 0;
+    struct Ev { long h; char t[26]; } ev[11]; int n = 0;
     long r = (h0 / 2016L + 1) * 2016L;                       // retarget
     snprintf(ev[n].t, 26, diffChangeEst != 0 ? "RETARGET ~%+.1f%%" : "RETARGET",
              diffChangeEst);
@@ -6174,6 +6193,29 @@ public:
     if (alarmHeight > h0) {                                  // the radio is off:
       snprintf(ev[n].t, 26, "ALARM, RINGS %02d:00", nightTo); // it rings on the
       ev[n++].h = alarmHeight;                                // morning fetch
+    }
+    for (int i = 1; i < n; i++)                              // soonest first
+      for (int j = i; j > 0 && ev[j].h < ev[j - 1].h; j--) { Ev t = ev[j]; ev[j] = ev[j - 1]; ev[j - 1] = t; }
+    // block birthdays: as heights for real-block ages, so they sort with the
+    // rest (a ten-minute age is turned into the height it lands at)
+    loadPeople();
+    for (int who = 0; who <= MAX_PEOPLE && n < 11; who++) {
+      long long a, nx; bool ten; long at;
+      if (who == WATCH_WHO) {
+        a = watchAge(h0); if (a < 0) continue; ten = false;
+        nx = milestoneAbove(a, false); at = watchSince() + (long)nx;
+      } else {
+        if (!pplBirth[who]) continue;
+        ten = bornBefore(who);
+        int64_t now64 = nowUtc64();
+        a = ageOf(who, h0, now64); if (a < 0) continue;
+        nx = milestoneAbove(a, ten);
+        at = ten ? h0 + (long)(((birthUtc(who) + nx * 600) - now64) / 600)
+                 : heightAtUtc(birthUtc(who)) + (long)nx;
+      }
+      char g[16]; grouped(g, 16, nx);
+      snprintf(ev[n].t, 26, "%s %s", who == WATCH_WHO ? "BWATCH" : pplName[who], g);
+      ev[n++].h = at;
     }
     for (int i = 1; i < n; i++)                              // soonest first
       for (int j = i; j > 0 && ev[j].h < ev[j - 1].h; j--) { Ev t = ev[j]; ev[j] = ev[j - 1]; ev[j - 1] = t; }
@@ -6291,7 +6333,369 @@ public:
   // JOE. Four digits, each one filling a quarter of the panel, with nothing
   // drawn between them — the gaps do the dividing. Below them a strip: the
   // date, the cell as a bar, and the mark. Nothing here comes off the chain.
+  // ---------------- people: ages in blocks ----------------
+  // Up to four people (name and birthday), entered on the phone (Setup
+  // Wallet's page) or under My Watch > Birthdays, kept in NVS. Someone born
+  // before Bitcoin has an age in ten-minute blocks counted back past genesis
+  // (every block ever mined happened in their lifetime, so "blocks seen" would
+  // just be the height); someone born after it has seen real blocks, counted
+  // from the height at their birth. The watch counts its own: blocks since it
+  // was unboxed. Round ages ("block birthdays") get a card.
+  static const int MAX_PEOPLE = 4;
+  static const int WATCH_WHO = 4;                   // the watch, in milestones
+  char pplName[MAX_PEOPLE][9];
+  uint32_t pplBirth[MAX_PEOPLE];                    // yyyymmdd, 0 = empty
+  uint32_t pplMile[MAX_PEOPLE + 1];                 // last age celebrated
+  bool peopleLoaded = false;
+  static const int64_t GENESIS_UTC = 1231006505LL;  // 3 Jan 2009 18:15:05
+
+  void loadPeople() {
+    if (peopleLoaded) return;
+    peopleLoaded = true;
+    Preferences p; p.begin("btcchrono", true);
+    for (int i = 0; i < MAX_PEOPLE; i++) {
+      char k[6];
+      snprintf(k, 6, "pN%d", i);
+      String n = p.getString(k, "");
+      strncpy(pplName[i], n.c_str(), 8); pplName[i][8] = 0;
+      snprintf(k, 6, "pB%d", i); pplBirth[i] = p.getULong(k, 0);
+    }
+    for (int i = 0; i <= MAX_PEOPLE; i++) {
+      char k[6]; snprintf(k, 6, "pM%d", i); pplMile[i] = p.getULong(k, 0);
+    }
+    p.end();
+  }
+  void savePeople() {
+    Preferences p; p.begin("btcchrono", false);
+    for (int i = 0; i < MAX_PEOPLE; i++) {
+      char k[6];
+      snprintf(k, 6, "pN%d", i); p.putString(k, pplName[i]);
+      snprintf(k, 6, "pB%d", i); p.putULong(k, pplBirth[i]);
+    }
+    for (int i = 0; i <= MAX_PEOPLE; i++) {
+      char k[6]; snprintf(k, 6, "pM%d", i); p.putULong(k, pplMile[i]);
+    }
+    p.end();
+  }
+  int peopleCount() {
+    loadPeople();
+    int n = 0;
+    for (int i = 0; i < MAX_PEOPLE; i++) if (pplBirth[i]) n++;
+    return n;
+  }
+  // the i-th entered person, skipping empty slots; -1 if none
+  int personAt(int k) {
+    loadPeople();
+    for (int i = 0; i < MAX_PEOPLE; i++) if (pplBirth[i] && k-- == 0) return i;
+    return -1;
+  }
+  static int64_t daysFromCivil(int y, int m, int d) {    // Hinnant
+    y -= m <= 2;
+    int64_t era = (y >= 0 ? y : y - 399) / 400;
+    int64_t yoe = y - era * 400;
+    int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+  }
+  // local midnight of the birthday, as UTC seconds
+  int64_t birthUtc(int i) {
+    uint32_t b = pplBirth[i];
+    return daysFromCivil(b / 10000, (b / 100) % 100, b % 100) * 86400LL
+           - settings.gmtOffset;
+  }
+  int64_t nowUtc64() { return (int64_t)makeTime(currentTime) - settings.gmtOffset; }
+  // the height at a moment: the inverse of heightUtc() (recorded dates in the
+  // past, ten minutes a block beyond the tip)
+  long heightAtUtc(int64_t t) {
+    if (t <= GENESIS_UTC || blockHeight <= 0) return 0;
+    int64_t now = heightUtc(blockHeight);
+    if (t >= now) return blockHeight + (long)((t - now) / 600);
+    long lo = 0, hi = blockHeight;
+    while (hi - lo > 1) {
+      long mid = (lo + hi) / 2;
+      if (heightUtc(mid) <= t) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+  bool bornBefore(int i) { return birthUtc(i) < GENESIS_UTC; }
+  // where "now" is: the trip's destination, or the real present
+  long ctxHeight() { return travelActive ? travelHeight : (blockHeight > 0 ? blockHeight : estHeight()); }
+  int64_t ctxUtc() { return travelActive ? heightUtc(travelHeight) : nowUtc64(); }
+  // the age shown: ten-minute blocks (born before genesis) or real blocks
+  // seen (after). Negative: not born yet (a trip into the past).
+  long long ageOf(int i, long h, int64_t t) {
+    if (bornBefore(i)) return (long long)((t - birthUtc(i)) / 600);
+    return (long long)h - heightAtUtc(birthUtc(i));
+  }
+  // the block the watch started counting from: unboxed, or first seen
+  long watchSince() {
+    Preferences p; p.begin("btcchrono", true);
+    long o = p.getLong("openH", 0), f = p.getLong("h1st", 0);
+    p.end();
+    return o > 0 ? o : f;
+  }
+  void noteFirstHeight() {                     // once, for a watch never sealed
+    if (blockHeight <= 0 || travelActive) return;
+    Preferences p; p.begin("btcchrono", false);
+    if (p.getLong("openH", 0) == 0 && p.getLong("h1st", 0) == 0) p.putLong("h1st", blockHeight);
+    p.end();
+  }
+  // round ages: ten-minute ages every 100,000; real-block ages (kids, the
+  // watch) at 1,000 / 10,000 / 50,000 / 100,000 and every 100,000 after;
+  // and same-digit ages (222,222, 1,111,111 ...) from six digits up
+  static bool isRep(long long a) {
+    if (a < 111111) return false;
+    long long d = a % 10; if (!d) return false;
+    while (a) { if (a % 10 != d) return false; a /= 10; }
+    return true;
+  }
+  static bool isMilestone(long long a, bool ten) {
+    if (a <= 0) return false;
+    if (isRep(a)) return true;
+    if (a % 100000 == 0) return true;
+    return !ten && (a == 1000 || a == 10000 || a == 50000);
+  }
+  static long long milestoneAtOrBelow(long long a, bool ten) {
+    if (a <= 0) return 0;
+    long long best = 0;
+    long long c = (a / 100000) * 100000;
+    if (c > 0) best = c;
+    if (!ten) { if (a >= 1000 && best < 1000) best = 1000;
+                if (a >= 10000 && best < 10000) best = 10000;
+                if (a >= 50000 && best < 50000) best = 50000; }
+    for (int len = 6; len <= 8; len++) {
+      long long ones = 0; for (int k = 0; k < len; k++) ones = ones * 10 + 1;
+      for (int dg = 1; dg <= 9; dg++) { long long r = ones * dg; if (r <= a && r > best) best = r; }
+    }
+    return best;
+  }
+  static long long milestoneAbove(long long a, bool ten) {
+    long long best = ((a / 100000) + 1) * 100000;
+    if (!ten) { if (a < 1000) best = 1000; else if (a < 10000) best = 10000;
+                else if (a < 50000) best = 50000; }
+    for (int len = 6; len <= 8; len++) {
+      long long ones = 0; for (int k = 0; k < len; k++) ones = ones * 10 + 1;
+      for (int dg = 1; dg <= 9; dg++) { long long r = ones * dg; if (r > a && r < best) best = r; }
+    }
+    return best;
+  }
+  // the watch's age now, in blocks witnessed
+  long long watchAge(long h) { long s0 = watchSince(); return s0 > 0 ? (long long)h - s0 : -1; }
+
+  // After every fetch: a person (or the watch) who crossed a round age since
+  // the last check gets a card. A new person starts at their current age, so
+  // adding someone does not replay every milestone they ever passed.
+  void checkAges() {
+    if (blockHeight <= 0 || travelActive) return;
+    loadPeople();
+    noteFirstHeight();
+    int64_t now = nowUtc64();
+    bool dirty = false;
+    for (int who = 0; who <= MAX_PEOPLE; who++) {
+      long long a; bool ten;
+      if (who == WATCH_WHO) { a = watchAge(blockHeight); ten = false; }
+      else { if (!pplBirth[who]) continue; ten = bornBefore(who); a = ageOf(who, blockHeight, now); }
+      if (a <= 0) continue;
+      long long m = milestoneAtOrBelow(a, ten);
+      if (pplMile[who] == 0) { pplMile[who] = m ? (uint32_t)m : 1; dirty = true; continue; }
+      if (m > (long long)pplMile[who]) {
+        pplMile[who] = (uint32_t)m; dirty = true;
+        if (!(evQueue & EV_AGE)) {                 // one card at a time
+          evAgeWho = who; evAgeN = (uint32_t)m;
+          fireEvent(EV_AGE);
+          buzz(35, 2);
+          Serial.printf("[age] %s: %llu blocks\n",
+                        who == WATCH_WHO ? "watch" : pplName[who], (unsigned long long)m);
+        }
+      }
+    }
+    if (dirty) savePeople();
+  }
+
+  // The card all of these share: the curiosity cards' layout
+  void drawStatCard(const char *top, const char *title, long long num,
+                    const char *l1, const char *l2, const char *l3) {
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.setTextWrap(false);
+    display.setFont(NULL); display.setTextSize(1);
+    centerSmall(top, 14);
+    int tl = strlen(title); int sz = tl <= 10 ? 3 : 2;
+    display.setTextSize(sz);
+    display.setCursor((200 - tl * 6 * sz) / 2, 34);
+    display.print(title);
+    display.setTextSize(1);
+    char s[24]; snprintf(s, 24, "%lld", num < 0 ? -num : num);
+    const GFXfont *F = strlen(s) > 7 ? &DSEG7_Classic_Bold_25 : &DSEG7_Classic_Bold_32;
+    int n = strlen(s), cw = 6, w = 0;
+    for (int i = 0; i < n; i++) {
+      w += F->glyph[s[i] - F->first].xAdvance;
+      if ((n - 1 - i) % 3 == 0 && i < n - 1) w += cw;
+    }
+    int x = (200 - w) / 2;
+    display.setFont(F);
+    for (int i = 0; i < n; i++) {
+      char c[2] = {s[i], 0};
+      display.setCursor(x, 104); display.print(c);
+      x += F->glyph[s[i] - F->first].xAdvance;
+      if ((n - 1 - i) % 3 == 0 && i < n - 1) {
+        display.fillRect(x + cw / 2 - 1, 103, 3, 5, GxEPD_WHITE); x += cw;
+      }
+    }
+    display.setFont(NULL);
+    centerSmall(l1, 114);
+    display.drawFastHLine(30, 134, 140, GxEPD_WHITE);
+    centerSmall(l2, 146);
+    centerSmall(l3, 160);
+    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+  }
+
+  // JOE's person card: at the trip's destination when travelling
+  void drawPersonCard(int i, int k, int n) {
+    char top[34], l1[34], l2[34], l3[34], g[16];
+    long h = ctxHeight(); int64_t t = ctxUtc();
+    if (travelActive) { grouped(g, 16, h); snprintf(top, 34, "AT BLOCK %s", g); }
+    else snprintf(top, 34, "%d OF %d - UP FOR NEXT", k, n);
+    long long a = ageOf(i, h, t);
+    l3[0] = 0;
+    if (bornBefore(i)) {
+      snprintf(l1, 34, "BLOCKS OLD, AT TEN MINUTES");
+      grouped(g, 16, (long long)((GENESIS_UTC - birthUtc(i)) / 600));
+      snprintf(l2, 34, "BORN %s BEFORE GENESIS", g);
+      double share = (double)(t - GENESIS_UTC) / (double)(t - birthUtc(i));
+      if (share > 0) snprintf(l3, 34, "BITCOIN IS %d%% OF YOUR LIFE", (int)(share * 100 + 0.5));
+    } else {
+      long bh = heightAtUtc(birthUtc(i));
+      grouped(g, 16, bh);
+      if (a < 0) {
+        snprintf(l1, 34, "BLOCKS UNTIL BORN");
+        snprintf(l2, 34, "BORN AT BLOCK %s", g);
+      } else {
+        snprintf(l1, 34, "BLOCKS SEEN");
+        snprintf(l2, 34, "BORN AT BLOCK %s", g);
+        if (h > 0) snprintf(l3, 34, "SEEN %d%% OF THE CHAIN", (int)(100.0 * a / h + 0.5));
+      }
+    }
+    drawStatCard(top, pplName[i][0] ? pplName[i] : "SOMEONE", a, l1, l2, l3);
+  }
+  void drawWatchCard() {
+    char top[34], l2[34], l3[34], g[16];
+    long h = ctxHeight(); int64_t t = ctxUtc();
+    long s0 = watchSince();
+    if (travelActive) { grouped(g, 16, h); snprintf(top, 34, "AT BLOCK %s", g); }
+    else snprintf(top, 34, "THIS WATCH");
+    grouped(g, 16, s0);
+    snprintf(l2, 34, "UNBOXED AT BLOCK %s", g);
+    long long a = (long long)h - s0;
+    double days = (double)(t - heightUtc(s0)) / 86400.0;
+    if (a < 0) snprintf(l3, 34, "NOT MADE YET");
+    else snprintf(l3, 34, "%d DAYS ON YOUR WRIST", (int)(days + 0.5));
+    drawStatCard(top, "BWATCH", a, a < 0 ? "BLOCKS UNTIL UNBOXED" : "BLOCKS WITNESSED", l2, l3);
+  }
+  // how many steps JOE's UP cycle has: time, chain, people, watch
+  int joeSteps() { return 2 + peopleCount() + (watchSince() > 0 ? 1 : 0); }
+  void joeAdvance() {
+    joeStep = (joeStep + 1) % joeSteps();
+    joeReveal = (joeStep == 1);
+  }
+
+  // the block-birthday card (an event, waiting on the glass)
+  void drawAgeCard() {
+    loadPeople();
+    int who = evAgeWho; long long n = evAgeN;
+    char top[34], l1[34], l2[34], l3[34], g[16], eta[20];
+    bool watch = (who == WATCH_WHO);
+    bool ten = !watch && who >= 0 && bornBefore(who);
+    if (ten) {                                    // exact: birth + n x 600 s
+      int64_t at = birthUtc(who) + n * 600;
+      int64_t now = nowUtc64();
+      tmElements_t a, b;
+      breakTime(localFromUtc((time_t)at), a); breakTime(localFromUtc((time_t)now), b);
+      long dd = (long)(localFromUtc((time_t)now) / 86400) - (long)(localFromUtc((time_t)at) / 86400);
+      if (now - at < 15 * 60) snprintf(top, 34, "JUST NOW");
+      else if (dd <= 0) snprintf(top, 34, "AT %02d:%02d TODAY", a.Hour, a.Minute);
+      else if (dd == 1) snprintf(top, 34, "YESTERDAY AT %02d:%02d", a.Hour, a.Minute);
+      else snprintf(top, 34, "%ld DAYS AGO", dd);
+    } else {                                      // a real block: when it was mined
+      long bh = watch ? watchSince() : heightAtUtc(birthUtc(who));
+      curioWhen(top, 34, bh + (long)n);
+    }
+    snprintf(l1, 34, watch ? "BLOCKS WITNESSED" : ten ? "BLOCKS OLD" : "BLOCKS SEEN");
+    snprintf(l2, 34, "HAPPY BLOCKDAY");
+    long long nx = milestoneAbove(n, ten);
+    grouped(g, 16, nx);
+    double mins = (double)(nx - n) * 10.0;
+    if (mins < 48 * 60)          snprintf(eta, 20, "~%.0f HOURS", mins / 60);
+    else if (mins < 730 * 1440)  snprintf(eta, 20, "~%.0f DAYS", mins / 1440);
+    else                         snprintf(eta, 20, "~%.1f YEARS", mins / 525960);
+    snprintf(l3, 34, "NEXT: %s IN %s", g, eta);
+    drawStatCard(top, watch ? "BWATCH" : (who >= 0 && pplName[who][0] ? pplName[who] : "SOMEONE"),
+                 n, l1, l2, l3);
+  }
+
+  // Once a year: the birthday itself, on the first press of the day
+  bool maybeBirthdayCard() {
+    tmElements_t dt;
+    if (!localDate(dt)) return false;
+    loadPeople();
+    uint32_t today = tmYearToCalendar(dt.Year) * 10000UL + dt.Month * 100 + dt.Day;
+    for (int i = 0; i < MAX_PEOPLE; i++) {
+      uint32_t b = pplBirth[i];
+      if (!b || (b / 100) % 100 != dt.Month || b % 100 != dt.Day) continue;
+      char k[6]; snprintf(k, 6, "bdS%d", i);
+      Preferences p; p.begin("btcchrono", false);
+      bool seen = p.getULong(k, 0) == today;
+      if (!seen) p.putULong(k, today);
+      p.end();
+      if (seen) continue;
+      int years = tmYearToCalendar(dt.Year) - (int)(b / 10000);
+      static const char *MON[] = {"", "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY",
+        "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"};
+      char top[34], l2[34], l3[34], g[16];
+      snprintf(top, 34, "%d %s", dt.Day, MON[dt.Month]);
+      long long a = ageOf(i, blockHeight, nowUtc64());
+      grouped(g, 16, a);
+      snprintf(l2, 34, bornBefore(i) ? "%s BLOCKS OLD" : "%s BLOCKS SEEN", g);
+      snprintf(l3, 34, "HAPPY BIRTHDAY");
+      guiState = APP_STATE;
+      drawStatCard(top, pplName[i][0] ? pplName[i] : "SOMEONE", years,
+                   years == 1 ? "YEAR OLD TODAY" : "YEARS OLD TODAY", l2, l3);
+      displayFull();
+      paintedDark = true;
+      buzz(35, 2);
+      pinMode(BACK_BTN_PIN, INPUT); pinMode(MENU_BTN_PIN, INPUT);
+      pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+      waitAllRelease();
+      unsigned long t0 = millis();
+      while (millis() - t0 < 60000) {
+        if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE || digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
+            digitalRead(UP_BTN_PIN) == BTN_ACTIVE || digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+          waitAllRelease(); break; }
+        delay(50);
+      }
+      guiState = WATCHFACE_STATE;
+      RTC.read(currentTime);
+      showFaceFull();
+      return true;
+    }
+    return false;
+  }
+
   void drawJoeFace() {
+    if (!buttonWake) { joeStep = 0; joeReveal = false; }   // one glance only
+    if (joeStep >= joeSteps()) joeStep = 0;
+    if (joeStep >= 2) {                                    // a person, or the watch
+      int k = joeStep - 2, n = peopleCount();
+      if (k < n) drawPersonCard(personAt(k), k + 1, n);
+      else drawWatchCard();
+      if (!paintedDark) fullOnClose();                     // black card: a flip
+      paintedDark = true;
+      return;
+    }
+    if (paintedDark != themeDark) fullOnClose();           // back from a card
+    paintedDark = themeDark;
     display.fillScreen(bg());
     display.setTextColor(fg());
     RTC.read(currentTime);
@@ -7168,7 +7572,7 @@ public:
   // set once and left (eleven items in one list had become a scroll).
   static const int MENU_ROWS   = 8;        // 22 px a row from y 22: a ninth
                                            // row's descenders run off the panel
-  static const int MAIN_LEN = 6, MY_LEN = 7, SET_LEN = 7;
+  static const int MAIN_LEN = 6, MY_LEN = 8, SET_LEN = 7;
   // most used first; About, a status page, last
   static const int MYWATCH_POS = 2, SETTINGS_POS = 4;
   const char *const MAIN_ITEMS[MAIN_LEN] = {
@@ -7176,7 +7580,7 @@ public:
     "About BWATCH"};
   const char *const MY_ITEMS[MY_LEN] = {
     "Faces", "Currency", "Dark Hours", "Night Hours", "Haptics", "Battery",
-    "Privacy"};
+    "Privacy", "Birthdays"};
   const char *const SET_ITEMS[SET_LEN] = {
     "Set Time", "Set Timezone", "Sync NTP", "Setup WiFi", "Networks",
     "Start Screen", "Ship Mode"};
@@ -7405,6 +7809,123 @@ public:
       Serial.printf("[%s] %02d:00 to %02d:00%s\n", kind ? "dark" : "night",
                     v[0], v[1], v[0] == v[1] ? " (off)" : "");
     }
+    waitAllRelease();
+    myShowMenu(menuIndex, false);
+  }
+
+  // My Watch > Birthdays. Four slots. UP/DOWN pick a slot, MENU edits it:
+  // eight letters of name, then year, month, day; UP/DOWN change the field
+  // (held, they repeat), MENU moves on and saves after the day. A name left
+  // all blank removes the person. BACK leaves (inside the editor: cancels).
+  bool editPerson(int i) {
+    static const char *L = " ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    char nm[9]; memset(nm, ' ', 8); nm[8] = 0;
+    for (int c = 0; c < 8 && pplName[i][c]; c++) nm[c] = pplName[i][c];
+    int y = 1990, mo = 1, d = 1;
+    if (pplBirth[i]) { y = pplBirth[i] / 10000; mo = (pplBirth[i] / 100) % 100; d = pplBirth[i] % 100; }
+    int field = 0;                       // 0..7 letters, 8 year, 9 month, 10 day
+    bool redraw = true;
+    unsigned long last = millis();
+    waitAllRelease();
+    while (true) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) { waitAllRelease(); return false; }
+      if (millis() - last > 60000) return false;
+      int dir = digitalRead(UP_BTN_PIN) == BTN_ACTIVE ? 1 : digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE ? -1 : 0;
+      if (dir) {
+        if (field < 8) {
+          const char *pos = strchr(L, nm[field]); int ix = pos ? (int)(pos - L) : 0;
+          ix = (ix + dir + 27) % 27; nm[field] = L[ix];
+        } else if (field == 8) { y += dir; if (y < 1900) y = 1900; if (y > 2100) y = 2100; }
+        else if (field == 9)  { mo = (mo - 1 + dir + 12) % 12 + 1; }
+        else { d = (d - 1 + dir + 31) % 31 + 1; }
+        redraw = true; last = millis(); delay(140);
+      }
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        waitRelease(MENU_BTN_PIN); last = millis(); redraw = true;
+        if (field < 10) field++;
+        else break;                      // saved below
+      }
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(bg()); display.setTextColor(fg());
+        display.setFont(&FreeMonoBold9pt7b);
+        char t[20]; snprintf(t, 20, "Person %d", i + 1);
+        display.setCursor(0, 22); display.print(t);
+        for (int c = 0; c < 8; c++) {    // the name, a box per letter
+          int x = 8 + c * 23;
+          if (c == field) { display.fillRect(x, 40, 21, 24, fg()); display.setTextColor(bg()); }
+          else { display.drawFastHLine(x, 64, 21, fg()); display.setTextColor(fg()); }
+          display.setCursor(x + 5, 58); char ch[2] = {nm[c] == ' ' ? (c == field ? '_' : ' ') : nm[c], 0};
+          display.print(ch);
+        }
+        display.setTextColor(fg());
+        const char *lab[3] = {"Year", "Month", "Day"}; int val[3] = {y, mo, d};
+        for (int k = 0; k < 3; k++) {
+          int yy = 96 + k * 22; char line[20];
+          snprintf(line, 20, k ? "%-5s %02d" : "%-5s %04d", lab[k], val[k]);
+          if (field == 8 + k) { display.fillRect(8, yy - 15, 184, 21, fg()); display.setTextColor(bg()); }
+          else display.setTextColor(fg());
+          display.setCursor(16, yy); display.print(line);
+        }
+        display.setTextColor(fg()); display.setFont(NULL);
+        centerSmall("UP/DOWN: CHANGE   BLANK NAME: REMOVE", 170);
+        centerSmall(field < 10 ? "MENU: NEXT   BACK: CANCEL" : "MENU: SAVE   BACK: CANCEL", 182);
+        display.display(true);
+      }
+      delay(30);
+    }
+    int e = 8; while (e > 0 && nm[e - 1] == ' ') nm[--e] = 0;   // trim
+    int b0 = 0; while (nm[b0] == ' ') b0++;
+    if (!nm[b0]) { pplName[i][0] = 0; pplBirth[i] = 0; pplMile[i] = 0; }
+    else {
+      strncpy(pplName[i], nm + b0, 8); pplName[i][8] = 0;
+      static const int ML[12] = {31,29,31,30,31,30,31,31,30,31,30,31};
+      if (d > ML[mo - 1]) d = ML[mo - 1];
+      pplBirth[i] = (uint32_t)y * 10000 + mo * 100 + d;
+      pplMile[i] = 0;                    // starts from today's age
+    }
+    savePeople();
+    buzz(30, 2);
+    return true;
+  }
+  void birthdaysScreen() {
+    guiState = APP_STATE;
+    loadPeople();
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, BTN_ACTIVE ? INPUT : INPUT_PULLUP); pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    int sel = 0;
+    bool redraw = true;
+    display.setFullWindow();
+    unsigned long last = millis();
+    while (true) {
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(bg()); display.setTextColor(fg());
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setCursor(0, 22); display.print("Birthdays");
+        for (int i = 0; i < MAX_PEOPLE; i++) {
+          int yy = 52 + i * 26; char line[24];
+          if (pplBirth[i]) snprintf(line, 24, "%-8s %02lu/%02lu", pplName[i],
+                                    (unsigned long)(pplBirth[i] % 100), (unsigned long)((pplBirth[i] / 100) % 100));
+          else snprintf(line, 24, "  + add");
+          if (i == sel) { display.fillRect(4, yy - 15, 192, 21, fg()); display.setTextColor(bg()); }
+          else display.setTextColor(fg());
+          display.setCursor(8, yy); display.print(line);
+        }
+        display.setTextColor(fg()); display.setFont(NULL);
+        centerSmall("AGES IN BLOCKS ON JOE (UP)", 160);
+        centerSmall("MENU: EDIT   BACK: DONE", 182);
+        display.display(true);
+      }
+      int b = waitForPress(60000);
+      if (b < 0 || b == BACK_BTN_PIN) break;
+      if (b == UP_BTN_PIN)   { sel = (sel + MAX_PEOPLE - 1) % MAX_PEOPLE; redraw = true; waitAllRelease(); }
+      if (b == DOWN_BTN_PIN) { sel = (sel + 1) % MAX_PEOPLE; redraw = true; waitAllRelease(); }
+      if (b == MENU_BTN_PIN) { editPerson(sel); redraw = true; }
+      last = millis();
+    }
+    (void)last;
     waitAllRelease();
     myShowMenu(menuIndex, false);
   }
@@ -8044,6 +8565,21 @@ public:
       "lnaddr", "Lightning address (optional)",
       lnAddrBuf, 63);
     wm.addParameter(&pLn);
+    // birthdays, as "NAME YYYY-MM-DD": ages in blocks on JOE
+    loadPeople();
+    static char bdCur[MAX_PEOPLE][24];
+    for (int i = 0; i < MAX_PEOPLE; i++) {
+      if (pplBirth[i]) snprintf(bdCur[i], 24, "%s %04lu-%02lu-%02lu", pplName[i],
+                                (unsigned long)(pplBirth[i] / 10000), (unsigned long)((pplBirth[i] / 100) % 100),
+                                (unsigned long)(pplBirth[i] % 100));
+      else bdCur[i][0] = 0;
+    }
+    WiFiManagerParameter pB0("bd0", "Birthday 1 (optional): NAME YYYY-MM-DD", bdCur[0], 23);
+    WiFiManagerParameter pB1("bd1", "Birthday 2", bdCur[1], 23);
+    WiFiManagerParameter pB2("bd2", "Birthday 3", bdCur[2], 23);
+    WiFiManagerParameter pB3("bd3", "Birthday 4", bdCur[3], 23);
+    wm.addParameter(&pB0); wm.addParameter(&pB1);
+    wm.addParameter(&pB2); wm.addParameter(&pB3);
 
     wsTitle("WALLET");
     wsAt("ON YOUR PHONE, JOIN WIFI", 10, 38);
@@ -8080,6 +8616,28 @@ public:
     WiFi.mode(WIFI_OFF); btStop();
     display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
 
+    { WiFiManagerParameter *bp[MAX_PEOPLE] = {&pB0, &pB1, &pB2, &pB3};
+      bool changed = false;
+      for (int i = 0; i < MAX_PEOPLE; i++) {
+        const char *v = bp[i]->getValue();
+        if (!v || !strcmp(v, bdCur[i])) continue;      // untouched
+        changed = true;
+        char nm[9] = {0}; int ni = 0; int y = 0, mo = 0, d = 0;
+        const char *q = v;
+        while (*q && !(*q >= '0' && *q <= '9')) {     // the name: letters
+          char c = *q++;
+          if (c >= 'a' && c <= 'z') c -= 32;
+          if (((c >= 'A' && c <= 'Z') || (c == ' ' && ni)) && ni < 8) nm[ni++] = c;
+        }
+        while (ni && nm[ni - 1] == ' ') nm[--ni] = 0;
+        if (sscanf(q, "%d-%d-%d", &y, &mo, &d) == 3 && y >= 1900 && y <= 2100 &&
+            mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+          strncpy(pplName[i], ni ? nm : "SOMEONE", 8); pplName[i][8] = 0;
+          pplBirth[i] = (uint32_t)y * 10000 + mo * 100 + d;
+        } else { pplName[i][0] = 0; pplBirth[i] = 0; }   // cleared (or unreadable)
+        pplMile[i] = 0;
+      }
+      if (changed) savePeople(); }
     const char *lv = pLn.getValue();
     if (lv && strchr(lv, '@')) {
       strncpy(lnAddrBuf, lv, 63); lnAddrBuf[63] = 0;
@@ -8969,7 +9527,7 @@ public:
 
   // ---------------- alarms ----------------
   enum { EV_BLOCK = 1, EV_FEE = 2, EV_CONF = 4, EV_PAY = 8, EV_CURIO = 16,
-         EV_RETG = 32, EV_HALV = 64 };
+         EV_RETG = 32, EV_HALV = 64, EV_AGE = 128 };
   enum { TRACK_NONE = 0, TRACK_RESOLVE = 1, TRACK_ON = 2 };
 
   bool alarmsArmed() { return alarmHeight > 0 || feeAlarm > 0; }
@@ -9266,7 +9824,7 @@ public:
     Serial.printf("[alarm] fired %u (queue %u)\n", bit, evQueue);
     // each its own pattern, so the wrist knows which before the eyes do.
     // Through buzz(): an odd vibMotor length leaves the motor running.
-    if (bit == EV_PAY || bit == EV_CURIO || bit == EV_RETG || bit == EV_HALV) {
+    if (bit == EV_PAY || bit == EV_CURIO || bit == EV_RETG || bit == EV_HALV || bit == EV_AGE) {
       // silent here (a curiosity buzzes in its own animation): whoever saw it land has already played the payment
       // pattern, the same one the wallet face has always used
     } else if (bit == EV_BLOCK) {
@@ -9321,6 +9879,7 @@ public:
   // filled tag on the watch), what happened, one big number, context, and
   // the one thing to do about it.
   void drawEventScreen(uint8_t ev) {
+    if (ev == EV_AGE)  { drawAgeCard(); return; }
     if (ev == EV_RETG) { drawRetarget(heldRetarget(), 4); return; }
     if (ev == EV_HALV) { drawHalving(heldHalving(), 4); return; }
     if (ev == EV_CURIO) {
@@ -9416,7 +9975,7 @@ public:
     drawEventScreen(ev);
     evShown = ev;
     // the curiosity is black whatever the theme: a flip either way goes full
-    bool dark = (ev == EV_CURIO || ev == EV_RETG || ev == EV_HALV) ? true : themeDark;
+    bool dark = (ev == EV_CURIO || ev == EV_RETG || ev == EV_HALV || ev == EV_AGE) ? true : themeDark;
     if (timerWake && !inDocked) {                 // first sight: a full
       displayFull();                     // refresh, then sleep
       paintedDark = dark;
@@ -9884,6 +10443,7 @@ public:
       case 4: optionsScreen(OPT_HAPTICS); break;        // block, price buzz
       case 5: optionsScreen(OPT_BATTERY); break;        // fetch cadence
       case 6: optionsScreen(OPT_PRIVACY); break;        // wallet balance
+      case 7: birthdaysScreen(); break;                 // people, in blocks
     } else switch (menuIndex) {
       case 0: setTime();   myShowMenu(menuIndex, false); break;
       case 1: showTimezone(); break;                    // ends in our menu
@@ -10021,6 +10581,7 @@ public:
             if (buzzBlock) vibMotor(75, 4);
             Serial.printf("[dock] block %ld\n", h);
             if (markMoments()) redraw = true;   // a curiosity, here too
+            checkAges();                        // and a block birthday
             extrasWant = true;     // fetch reward/miner AFTER the
             lastExtrasTry = 0;     // extras indexer catches up — an
                                    // instant fetch reads block N-1
@@ -10226,7 +10787,7 @@ public:
             lastWalletMin = (wakeMin > walletEveryMin())
                               ? wakeMin - walletEveryMin() : 0;
         } else if (dispMode == M_JOE) {
-          joeReveal = !joeReveal;      // the chain, for one glance
+          joeAdvance();                // the chain, people, the watch
         } else if (dispMode == M_WALT) walletToggleView();
         else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
@@ -10408,7 +10969,7 @@ public:
             lastWalletMin = (wakeMin > walletEveryMin())
                               ? wakeMin - walletEveryMin() : 0;
         } else if (dispMode == M_JOE) {
-          joeReveal = !joeReveal;      // the chain, for one glance
+          joeAdvance();                // the chain, people, the watch
         } else if (dispMode == M_WALT) walletToggleView();   // balance <-> QR
         else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
@@ -10510,7 +11071,7 @@ public:
             lastWalletMin = (wakeMin > walletEveryMin())
                               ? wakeMin - walletEveryMin() : 0;
         } else if (dispMode == M_JOE) {
-          joeReveal = !joeReveal;      // the chain, for one glance
+          joeAdvance();                // the chain, people, the watch
         } else if (dispMode == M_WALT) walletToggleView();
             else {
           if (dispMode == M_PRICE || dispMode == M_SATS ||
