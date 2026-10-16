@@ -3557,7 +3557,49 @@ public:
   }
 
   // SUP: the road to 21M, and the pace along it
+  // SUP's second view (UP, with BTC REMAINING): how hot the issuance still
+  // is. A block's "temperature" is its new coins over all coins mined: 1 at
+  // genesis (50 of 50), cooling toward 0 in 2140. On a log scale it steps
+  // down one notch per halving. The line under it says the same in words:
+  // one new coin for every N already mined, and N goes up by exactly one
+  // every block (each block adds its reward to the total) until a halving
+  // doubles it.
+  void drawSupCooling() {
+    display.setFont(NULL); display.setTextColor(fg());
+    long h = estHeight();
+    int era = (int)(h / 210000L);
+    double sub = subsidySats(era) / 1e8, all = supplyBTC(h);
+    lowAt("GENESIS: HOT", 8, 100); lowRight("2140: COLD", 100);
+    const int x0 = 12, x1 = 188, y = 114;
+    const double CMAX = 15.5;                  // the last 1-sat era: 10^-15.3
+    auto X = [&](double c) { return x0 + 8 + (int)(c / CMAX * (x1 - x0 - 10)); };
+    display.drawRoundRect(x0, y, x1 - x0, 10, 5, fg());
+    display.fillCircle(x0 + 4, y + 5, 7, fg());                 // the bulb
+    for (int k = 1; k <= LAST_HALVING; k++) {                   // a notch per halving
+      double ck = -log10((subsidySats(k) / 1e8) / supplyBTC(210000L * k));
+      display.drawFastVLine(X(ck), y + 11, (k % 4 == 0) ? 4 : 2, fg());
+    }
+    int mx;
+    if (sub > 0 && all > 0) mx = X(-log10(sub / all));
+    else mx = x1 - 3;                                            // cold
+    display.fillRect(x0 + 4, y + 3, mx - x0 - 4, 4, fg());       // the mercury
+    display.fillTriangle(mx - 3, y - 6, mx + 3, y - 6, mx, y - 1, fg());
+    lowAt("NOW", constrain(mx - 9, 2, 176), y + 17);
+    display.drawFastHLine(6, 142, 188, fg());
+    if (sub > 0) {
+      char g[16], a[34];
+      grouped(g, 16, (long long)(all / sub + 0.5));
+      centerSmall("1 NEW COIN FOR EVERY", 148);
+      snprintf(a, 34, "%s ALREADY MINED", g);
+      centerSmall(a, 159);
+    } else {
+      centerSmall("NO NEW COINS ANY MORE", 148);
+      centerSmall("COLD: FEES ONLY", 159);
+    }
+  }
+
   void drawSupLower() {
+    if (cellSel[M_SUPL] % 2) { drawSupCooling(); return; }   // with REMAINING
     display.setFont(NULL); display.setTextColor(fg());
     long h = estHeight();
     double cap = supplyCapBTC(), issued = supplyBTC(h);
@@ -4378,7 +4420,7 @@ public:
     display.setFont(NULL); display.setTextColor(fg());
     // how long since the tip, against the ten minutes (bar: 0-20 min).
     // Old data: it is the last block SEEN; later ones almost surely exist
-    lowAt(memOld() ? "LAST BLOCK SEEN" : "LAST BLOCK", 8, 103);
+    lowAt(memOld() ? "LAST BLOCK SEEN" : "LAST BLOCK", 8, 101);
     long ago = -1;
     if (tipBlockTime > 0) {
       // the RTC keeps UTC plus the fixed gmtOffset (the zone is applied on
@@ -4391,13 +4433,33 @@ public:
     if (ago < 0) strcpy(t, "----");
     else if (ago < 120) snprintf(t, 24, "%ld MIN AGO", ago);
     else snprintf(t, 24, "%ldH AGO", ago / 60);
-    lowRight(t, 103);
-    int x0 = 8, W = 184, y = 113;
-    display.drawRect(x0, y, W, 8, fg());
-    if (ago > 0) display.fillRect(x0, y, (int)(W * (ago > 20 ? 20 : ago) / 20), 8, fg());
-    display.drawFastVLine(x0 + W / 2, y - 3, 14, fg());
+    lowRight(t, 101);
+    int x0 = 8, W = 184, y = 111;
+    display.drawRect(x0, y, W, 6, fg());
+    if (ago > 0) display.fillRect(x0, y, (int)(W * (ago > 20 ? 20 : ago) / 20), 6, fg());
+    display.drawFastVLine(x0 + W / 2, y - 3, 10, fg());
+    // the work done since it: hashrate x time, "~5.4x10^23 HASHES SINCE IT".
+    // Every one a guess at the next block; the count resets when one lands.
+    if (ago >= 0 && tipBlockTime > 0 && netHashEH > 0 && !memOld()) {
+      time_t nowUtc = makeTime(currentTime) - settings.gmtOffset;
+      double sec = (double)((long)nowUtc - (long)tipBlockTime);
+      if (sec < 1) sec = 1;
+      double hs = netHashEH * 1e18 * sec;
+      int e = (int)floor(log10(hs));
+      double m = hs / pow(10.0, e);
+      if (m >= 9.95) { m /= 10; e++; }
+      char ms[12], es[6];
+      snprintf(ms, 12, "~%.1fx10", m);
+      snprintf(es, 6, "%d", e);
+      const char *tail = " HASHES SINCE IT";
+      int w = (strlen(ms) + strlen(es) + strlen(tail)) * 6;
+      int tx = (200 - w) / 2, ty = 122;
+      lowAt(ms, tx, ty); tx += strlen(ms) * 6;
+      lowAt(es, tx, ty - 4); tx += strlen(es) * 6;             // the exponent, raised
+      lowAt(tail, tx, ty);
+    }
 
-    const int w = 21, h = 19, dp = 4, gap = 6, cy = 142;
+    const int w = 21, h = 19, dp = 4, gap = 6, cy = 145;   // under the hash line
     int x = 100 - 7 - (3 * (w + dp) + 2 * gap);
     // waiting: furthest left, the next block nearest the line
     for (int i = 0; i < 3; i++) {
