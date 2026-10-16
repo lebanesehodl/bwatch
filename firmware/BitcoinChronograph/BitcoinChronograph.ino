@@ -6146,6 +6146,47 @@ public:
   // chain as it was last heard, and AS OF when that was. The tag sits where
   // LIVE does, and the strip that normally steers between modes says the one
   // thing anyone picking it up needs to know.
+  // What the chain will do before night ends: up to two lines for the night
+  // face, "~02:10  RETARGET ~-1.9%". All worked out from the height and the
+  // measured pace, no radio; times are estimates. Returns how many.
+  int nightAhead(char out[2][34]) {
+    long h0 = estHeight();
+    if (h0 <= 0) return 0;
+    long windowSec = (long)minutesUntilHour(nightTo) * 60L;
+    struct Ev { long h; char t[26]; } ev[6]; int n = 0;
+    long r = (h0 / 2016L + 1) * 2016L;                       // retarget
+    snprintf(ev[n].t, 26, diffChangeEst != 0 ? "RETARGET ~%+.1f%%" : "RETARGET",
+             diffChangeEst);
+    ev[n++].h = r;
+    long hv = (h0 / 210000L + 1) * 210000L;                  // halving
+    if (hv <= 6930000L) { snprintf(ev[n].t, 26, "HALVING"); ev[n++].h = hv; }
+    if (h0 < 1000000L) { snprintf(ev[n].t, 26, "BLOCK 1,000,000"); ev[n++].h = 1000000L; }
+    { long best = -1; int bk = 0;                            // curiosities
+      for (int k = 0; k < 3; k++) {
+        long c = curioNext(k, h0);
+        if (c > 0 && (best < 0 || c < best)) { best = c; bk = k; }
+      }
+      if (best > 0 && best != 1000000L) {
+        static const char *K[3] = {"PALINDROME", "TWIN", "REPDIGIT"};
+        char g[16]; grouped(g, 16, best);
+        snprintf(ev[n].t, 26, "%s %s", K[bk], g); ev[n++].h = best;
+      } }
+    if (alarmHeight > h0) {                                  // the radio is off:
+      snprintf(ev[n].t, 26, "ALARM, RINGS %02d:00", nightTo); // it rings on the
+      ev[n++].h = alarmHeight;                                // morning fetch
+    }
+    for (int i = 1; i < n; i++)                              // soonest first
+      for (int j = i; j > 0 && ev[j].h < ev[j - 1].h; j--) { Ev t = ev[j]; ev[j] = ev[j - 1]; ev[j - 1] = t; }
+    int shown = 0, now = localMinuteOfDay();
+    for (int i = 0; i < n && shown < 2; i++) {
+      double sec = secondsUntil(ev[i].h);
+      if (sec <= 0 || sec > windowSec) continue;
+      int m = (now + (int)(sec / 60.0 + 0.5)) % 1440;
+      snprintf(out[shown++], 34, "~%02d:%02d  %s", m / 60, m % 60, ev[i].t);
+    }
+    return shown;
+  }
+
   void drawRestFace() {
     qrDrawnIdx = -1;
     bool night = (restState == REST_NIGHT);
@@ -6204,6 +6245,13 @@ public:
     if (night) {
       snprintf(line, 26, "RADIO OFF TO %02d:00", nightTo);
       centerSmall(line, 146);
+      // and what the chain does while you sleep (the cards wait for morning)
+      char ahead[2][34];
+      int na = nightAhead(ahead);
+      if (na > 0) {
+        display.drawFastHLine(40, 157, 120, fg());
+        for (int i = 0; i < na; i++) centerSmall(ahead[i], 162 + i * 11);
+      }
     }
 
     display.drawRect(5, 186, 190, 13, fg());       // where the mode strip was
