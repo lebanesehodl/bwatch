@@ -3510,6 +3510,34 @@ public:
   // Built-in font throughout; y 100-173, between the dials and the divider.
   void lowAt(const char *t, int x, int y) { display.setCursor(x, y); display.print(t); }
   void lowRight(const char *t, int y) { lowAt(t, 194 - (int)strlen(t) * 6, y); }
+  // A 3 x 5 pixel font for lines that must fit between others: 4 px a
+  // character. Digits, capitals and a few signs; lowercase x is a small
+  // times sign. Each glyph is five 3-bit rows, top row in the high bits.
+  static uint16_t tinyGlyph(char c) {
+    static const uint16_t dig[10] = {
+      0x7B6F, 0x2C97, 0x73E7, 0x72CF, 0x5BC9, 0x79CF, 0x79EF, 0x7292, 0x7BEF, 0x7BCF };
+    static const uint16_t cap[26] = {
+      0x2BED, 0x6BAE, 0x3923, 0x6B6E, 0x79A7, 0x79A4, 0x396B, 0x5BED, 0x7497, 0x126A,
+      0x5BAD, 0x4927, 0x5FED, 0x6B6D, 0x2B6A, 0x6BA4, 0x2B7B, 0x6BAD, 0x388E, 0x7492,
+      0x5B6F, 0x5B6A, 0x5BFD, 0x5AAD, 0x5A92, 0x72A7 };
+    if (c >= '0' && c <= '9') return dig[c - '0'];
+    if (c >= 'A' && c <= 'Z') return cap[c - 'A'];
+    switch (c) {
+      case 'x': return 0x0AA8; case '~': return 0x0780; case '.': return 0x0002;
+      case ',': return 0x0014; case '-': return 0x01C0; case ':': return 0x0410;
+      case '%': return 0x52A5; case '/': return 0x12A4; case '+': return 0x05D0;
+    }
+    return 0;
+  }
+  int tinyAt(const char *t, int x, int y) {        // y = top row; returns the end x
+    for (; *t; t++, x += 4) {
+      uint16_t g = tinyGlyph(*t);
+      for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 3; c++)
+          if (g & (1 << (14 - r * 3 - c))) display.drawPixel(x + c, y + r, fg());
+    }
+    return x;
+  }
 
   // a price in the chosen currency, with cents when it is small
   void fiatSmall(char *o, size_t n, double v) {
@@ -4438,7 +4466,7 @@ public:
     display.drawRect(x0, y, W, 6, fg());
     if (ago > 0) display.fillRect(x0, y, (int)(W * (ago > 20 ? 20 : ago) / 20), 6, fg());
     display.drawFastVLine(x0 + W / 2, y - 3, 10, fg());
-    // the work done since it: hashrate x time, "~5.4x10^23 HASHES SINCE IT".
+    // the work done since it: hashrate x time, "~5.4x10^23 HASHES SINCE".
     // Every one a guess at the next block; the count resets when one lands.
     if (ago >= 0 && tipBlockTime > 0 && netHashEH > 0 && !memOld()) {
       time_t nowUtc = makeTime(currentTime) - settings.gmtOffset;
@@ -4451,12 +4479,13 @@ public:
       char ms[12], es[6];
       snprintf(ms, 12, "~%.1fx10", m);
       snprintf(es, 6, "%d", e);
-      const char *tail = " HASHES SINCE IT";
-      int w = (strlen(ms) + strlen(es) + strlen(tail)) * 6;
-      int tx = (200 - w) / 2, ty = 122;
-      lowAt(ms, tx, ty); tx += strlen(ms) * 6;
-      lowAt(es, tx, ty - 4); tx += strlen(es) * 6;             // the exponent, raised
-      lowAt(tail, tx, ty);
+      const char *tail = " HASHES SINCE";
+      // the 3 x 5 font, snug between the bar and the blocks' heights
+      int w = (strlen(ms) + strlen(es) + strlen(tail)) * 4;
+      int tx = (200 - w) / 2, ty = 123;
+      tx = tinyAt(ms, tx, ty);
+      tx = tinyAt(es, tx, ty - 2);                             // the exponent, raised
+      tinyAt(tail, tx, ty);
     }
 
     const int w = 21, h = 19, dp = 4, gap = 6, cy = 145;   // under the hash line
