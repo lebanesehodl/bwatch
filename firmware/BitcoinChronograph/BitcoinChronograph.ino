@@ -2455,6 +2455,7 @@ public:
     buttonWake = true;
     drawWatchFace();
     display.display(true);
+    offIfFull();
     return false;
   }
 
@@ -2503,6 +2504,7 @@ public:
               buttonWake = true;
               drawWatchFace();                     // fresh invoice QR, or
               display.display(true);               // the PAY screen
+              offIfFull();
               break;
             }
           } else {
@@ -2541,6 +2543,7 @@ public:
                   buttonWake = true;
                   drawWatchFace();
                   display.display(true);
+                  offIfFull();
                   break;
                 }
               }
@@ -6216,8 +6219,20 @@ public:
   // nothing within a couple of seconds. Off costs one re-power on the next
   // refresh, ~0.1 s.
   void displayFull() { display.display(false); display.powerOff(); }
-  // inside a face draw: the caller's closing refresh becomes the full one
-  void fullOnClose() { EpdFull::arm(display.epd2); }
+  // inside a face draw: the caller's closing refresh becomes the full one.
+  // That refresh arrives as display(true), which (unlike display(false))
+  // never turns the panel's high voltage off: left on while the watch stays
+  // awake, the fresh image fades within seconds (see displayFull). So it is
+  // remembered, and whoever sent it powers the panel off straight after.
+  bool fullArmed = false;
+  void fullOnClose() { EpdFull::arm(display.epd2); fullArmed = true; }
+  void offIfFull() { if (fullArmed) { display.powerOff(); fullArmed = false; } }
+  // our own calls get the power-off; the library's minute tick calls its own
+  // version and goes straight to deep sleep, which hibernates the panel
+  void showWatchFace(bool partialRefresh) {
+    Watchy::showWatchFace(partialRefresh);
+    offIfFull();
+  }
   void showFaceFull() { showWatchFace(false); display.powerOff(); }
 
   void centerSmall(const char *s, int y) {          // built-in 6x8 font
@@ -7053,6 +7068,7 @@ public:
       scanCancelled = -1;
       watchButtonsDuringScan(true);
       display.display(true);              // instant frame, tag = SCAN
+      offIfFull();                        // the scan keeps it awake
       bool ok = fetchWallet();
       watchButtonsDuringScan(false);       // disarm on EVERY path out, or the
                                            // handlers stay live and fire
@@ -10139,6 +10155,7 @@ public:
         buttonWake = true;
         drawWatchFace();
         display.display(true);
+        offIfFull();
         delay(50);
         continue;
       }
@@ -10195,6 +10212,7 @@ public:
         // docked it redraws for hours on partials: clean it the same way
         if (++facePartials >= PARTIALS_BEFORE_FULL) { facePartials = 0; display.display(false); }
         else display.display(true);
+        offIfFull();                          // docked: awake for hours
       }
       delay(50);
     }
