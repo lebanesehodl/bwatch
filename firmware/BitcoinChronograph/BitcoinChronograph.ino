@@ -10526,43 +10526,45 @@ public:
     display.setTextSize(2); display.setCursor(150, 170); display.print(t);
     display.setTextSize(1);
   }
+  // one test: a black card held a while, back to light (as the watch does
+  // it: displayFull, doubled), then a light-to-light full done the test's
+  // way, then a minute-style partial. That is the sequence seen on the wrist.
+  bool labPre(const char *id) {
+    labDark(); labTick('A', id, 0); labFull();
+    char m[64]; snprintf(m, 64, "%s-1 black card. Wait ~30 s, then press", id);
+    if (!labStep(m)) return false;
+    labLight(); labTick('B', id, 0); displayFull();
+    snprintf(m, 64, "%s-2 back to light (double full). Press", id);
+    return labStep(m);
+  }
+  bool labPost(const char *id) {
+    labLight(); labTick('B', id, 2); labPartial(); panelOff();
+    char m[72]; snprintf(m, 72, "%s-4 minute partial after it. Watch 30 s: fade?", id);
+    return labStep(m);
+  }
   void labRun() {
     EpdFull::diag(display.epd2);
-    Serial.println("\n[lab] ===== DISPLAY LAB 3: light full, then a minute's partial =====");
-    // Each test: a LIGHT card by a full refresh, then (after your press) a
-    // partial that changes only a small number, like the minute tick. Watch
-    // ~20 s after each partial: does the card fade?
-    labLight();
-    // P0 control: partials only, no full
-    labTick('A', "P0", 1); labPartial(); panelOff();
-    if (!labStep("P0a light card by PARTIAL (control)")) return;
-    labTick('A', "P0", 2); labPartial(); panelOff();
-    if (!labStep("P0b minute partial. Watch 20 s: fade?")) return;
-    // P1: the watch today: full (0xF4 + off), then the minute's partial
-    labTick('A', "P1", 1); labFull();
-    if (!labStep("P1a light card: full as the watch does it")) return;
-    labTick('A', "P1", 2); labPartial(); panelOff();
-    if (!labStep("P1b minute partial after it. Watch 20 s: fade?")) return;
-    // P2: full sent twice, then the partial
-    labTick('A', "P2", 1); labFull(); labFull();
-    if (!labStep("P2a light card: full x2")) return;
-    labTick('A', "P2", 2); labPartial(); panelOff();
-    if (!labStep("P2b minute partial. Watch 20 s: fade?")) return;
-    // P3: full with the panel's normal soft-start
-    labTick('A', "P3", 1); labFullManual(true, false);
-    if (!labStep("P3a light card: full, STOCK booster")) return;
-    labTick('A', "P3", 2); labPartial(); panelOff();
-    if (!labStep("P3b minute partial. Watch 20 s: fade?")) return;
-    // P4: full ending the stock way (0xF7)
-    labTick('A', "P4", 1); labFullManual(false, true);
-    if (!labStep("P4a light card: full ending 0xF7")) return;
-    labTick('A', "P4", 2); labPartial(); panelOff();
-    if (!labStep("P4b minute partial. Watch 20 s: fade?")) return;
-    // P5: both, the stock driver's full exactly
-    labTick('A', "P5", 1); labFullManual(true, true);
-    if (!labStep("P5a light card: STOCK booster + 0xF7")) return;
-    labTick('A', "P5", 2); labPartial(); panelOff();
-    if (!labStep("P5b minute partial. Watch 20 s: fade?")) return;
+    Serial.println("\n[lab] ===== DISPLAY LAB 3b: black card, light, a light full, a minute =====");
+    // P1: the watch today
+    if (!labPre("P1")) return;
+    labLight(); labTick('B', "P1", 1); labFull();
+    if (!labStep("P1-3 light full as the watch does it (the 30-min clean). Press")) return;
+    if (!labPost("P1")) return;
+    // P3: the light full with the panel's normal soft-start
+    if (!labPre("P3")) return;
+    labLight(); labTick('B', "P3", 1); labFullManual(true, false);
+    if (!labStep("P3-3 light full, STOCK booster. Press")) return;
+    if (!labPost("P3")) return;
+    // P4: the light full ending the stock way (0xF7)
+    if (!labPre("P4")) return;
+    labLight(); labTick('B', "P4", 1); labFullManual(false, true);
+    if (!labStep("P4-3 light full ending 0xF7. Press")) return;
+    if (!labPost("P4")) return;
+    // P5: both: the stock driver's full
+    if (!labPre("P5")) return;
+    labLight(); labTick('B', "P5", 1); labFullManual(true, true);
+    if (!labStep("P5-3 light full, STOCK booster + 0xF7. Press")) return;
+    if (!labPost("P5")) return;
     Serial.println("[lab] ===== done =====");
   }
 
