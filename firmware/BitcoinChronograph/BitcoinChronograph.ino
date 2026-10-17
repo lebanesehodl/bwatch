@@ -10573,6 +10573,17 @@ public:
     labTick('B', "P6", 1); labFull();
     if (!labStep("P6-3 light full as the watch does it. Press")) return;
     if (!labPost("P6")) return;
+    // P7: a clearing cycle on the way back to light: all black, all white,
+    // then the image (the manufacturer's "clear before drawing")
+    labDark(); labTick('A', "P7", 0); labFull();
+    if (!labStep("P7-1 black card. Wait ~30 s, then press")) return;
+    display.fillScreen(GxEPD_BLACK); labFull();
+    display.fillScreen(GxEPD_WHITE); labFull();
+    labLight(); labTick('B', "P7", 0); labFull();
+    if (!labStep("P7-2 back to light by CLEARING CYCLE (black, white, image). Press")) return;
+    labTick('B', "P7", 1); labFull();
+    if (!labStep("P7-3 light full as the watch does it. Press")) return;
+    if (!labPost("P7")) return;
     Serial.println("[lab] ===== done =====");
   }
 
