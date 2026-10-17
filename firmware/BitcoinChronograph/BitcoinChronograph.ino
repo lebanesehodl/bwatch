@@ -7806,7 +7806,7 @@ public:
     // partial: the entry flash annoyed the owner, and the menu shares the
     // face's palette, so normally nothing flips. If the panel is the other
     // way round (the theme changed since it was painted), full, once.
-    if (themeDark == paintedDark) display.display(true);
+    if (themeDark == paintedDark) { display.display(true); panelOff(); }   // the menu waits 5 s awake
     else displayFull();                    // full, then the voltage off
     paintedDark = themeDark;
     guiState = MAIN_MENU_STATE;
