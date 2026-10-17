@@ -933,6 +933,9 @@ struct EpdFull : WatchyDisplay {
   // driver thinks "off", powerOff() returns without a word, the voltage stays
   // up and the fresh image fades within seconds. Tell it the truth first.
   static void markOn(WatchyDisplay &e) { e.*(&EpdFull::_power_is_on) = true; }
+  // the driver's own timing print: every busy wait logs "_Update_Full : us"
+  static void diag(WatchyDisplay &e) { e.*(&EpdFull::_diag_enabled) = true; }
+  static bool isOn(WatchyDisplay &e) { return e.*(&EpdFull::_power_is_on); }
 };
 
 class BitcoinChrono : public Watchy {
@@ -6371,8 +6374,26 @@ public:
   // nothing within a couple of seconds. Off costs one re-power on the next
   // refresh, ~0.1 s.
   // every power-off goes through here: forced, so it is never skipped
-  void panelOff() { EpdFull::markOn(display.epd2); display.powerOff(); }
-  void displayFull() { display.display(false); panelOff(); }
+  // DIAGNOSTIC (Oct 16): every refresh and power-off is logged with a
+  // millis() stamp, the radio state and the driver's busy timings, to find
+  // why fresh images fade on the glass
+  void epdLog(const char *what) {
+    EpdFull::diag(display.epd2);
+    Serial.printf("[epd] %7lu %s  wifi=%d dock=%d on=%d\n", millis(), what,
+                  WiFi.status() == WL_CONNECTED, inDocked,
+                  EpdFull::isOn(display.epd2));
+  }
+  void panelOff() {
+    unsigned long t = millis();
+    EpdFull::markOn(display.epd2); display.powerOff();
+    Serial.printf("[epd] %7lu off (%lu ms)\n", millis(), millis() - t);
+  }
+  void displayFull() {
+    epdLog("FULL start");
+    display.display(false);
+    epdLog("FULL done");
+    panelOff();
+  }
   // inside a face draw: the caller's closing refresh becomes the full one.
   // That refresh arrives as display(true), which (unlike display(false))
   // never turns the panel's high voltage off: left on while the watch stays
@@ -6395,6 +6416,7 @@ public:
   // our own calls get the power-off; the library's minute tick calls its own
   // version and goes straight to deep sleep, which hibernates the panel
   void showWatchFace(bool partialRefresh) {
+    epdLog(partialRefresh ? "face (partial)" : "face (full)");
     Watchy::showWatchFace(partialRefresh);
     offIfFull();
   }
@@ -6826,6 +6848,7 @@ public:
   // to dark there came out as a grey partial). The one nested draw that must
   // not send is the FTCH pre-paint, and it says so with prePaint.
   void drawWatchFace() override {
+    EpdFull::diag(display.epd2);
     drawFaceBody();
     if (!prePaint && fullArmed) {
       fullArmed = false;
@@ -7764,6 +7787,7 @@ public:
   }
 
   void myShowMenu(byte idx, bool partial) {
+    epdLog("menu");
     qrDrawnIdx = -1;                    // the menu covers any QR
     const int len = menuLen();
     const char *const *items = menuLevel == 1 ? MY_ITEMS
