@@ -2786,7 +2786,11 @@ public:
   bool darkNow() {
     if (themeMode == 1) return true;
     if (themeMode == 2) {
-      time_t lt = makeTime(currentTime);
+      // the clock itself, not currentTime: a button wake straight into the
+      // menu has not read the RTC yet, so currentTime is still zero (00:00,
+      // inside the dark hours) and AUTO put a dark menu up at noon
+      tmElements_t nowT; RTC.read(nowT);
+      time_t lt = makeTime(nowT);
       time_t utc = lt - settings.gmtOffset;
       lt = utc + tzOffsetSec(tzIndex, utc);
       tmElements_t dt; breakTime(lt, dt);
