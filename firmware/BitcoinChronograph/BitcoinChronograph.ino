@@ -6816,13 +6816,14 @@ public:
     }
   }
 
-  int drawDepth = 0;
-  bool callerFull = false;                   // the FTCH pre-paint draws inside a draw
+  bool callerFull = false;
+  // Not depth-counted: the dock loop runs INSIDE a draw and redraws by calling
+  // this again, so "outermost only" skipped every full while docked (a flip
+  // to dark there came out as a grey partial). The one nested draw that must
+  // not send is the FTCH pre-paint, and it says so with prePaint.
   void drawWatchFace() override {
-    drawDepth++;
     drawFaceBody();
-    drawDepth--;
-    if (drawDepth == 0 && fullArmed) {
+    if (!prePaint && fullArmed) {
       fullArmed = false;
       if (!callerFull) displayFull();  // showFaceFull sends a full anyway
     }
@@ -10971,7 +10972,7 @@ public:
         buttonWake = true;                    // don't double-count wakes
         drawWatchFace();                      // inDocked guard: no recursion
         // docked it redraws for hours on partials: clean it the same way
-        if (++facePartials >= PARTIALS_BEFORE_FULL) { facePartials = 0; display.display(false); }
+        if (++facePartials >= PARTIALS_BEFORE_FULL) { facePartials = 0; displayFull(); }
         else display.display(true);
         offIfFull();                          // docked: awake for hours
       }
