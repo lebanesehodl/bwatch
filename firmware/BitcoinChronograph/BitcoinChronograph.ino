@@ -947,6 +947,11 @@ struct EpdFull : WatchyDisplay {
   // the driver's own timing print: every busy wait logs "_Update_Full : us"
   static void diag(WatchyDisplay &e) { e.*(&EpdFull::_diag_enabled) = true; }
   static bool isOn(WatchyDisplay &e) { return e.*(&EpdFull::_power_is_on); }
+  // raw controller access, for the display lab only
+  static void cmd(WatchyDisplay &e, uint8_t c) { (e.*(&EpdFull::_writeCommand))(c); }
+  static void dat(WatchyDisplay &e, uint8_t d) {
+    void (GxEPD2_EPD::*f)(uint8_t) = &EpdFull::_writeData; (e.*f)(d);
+  }
 };
 
 class BitcoinChrono : public Watchy {
@@ -10404,6 +10409,108 @@ public:
     }
   }
 
+
+  // ---------------- DISPLAY LAB (Oct 17) ----------------
+  // About, short DOWN. Scripted refresh sequences on test cards, logged over
+  // serial, to MEASURE why images fade and ghost instead of guessing. Each
+  // step buzzes and waits for a press (BACK leaves the lab). Photograph the
+  // glass at each prompt and ~5 s later.
+  void labCard(char v, const char *id) {
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.setFont(NULL); display.setTextSize(3);
+    display.setCursor(8, 8); display.print(id);
+    display.setTextSize(1);
+    if (v == 'A') {
+      display.fillCircle(100, 110, 42, GxEPD_WHITE);
+      display.fillRect(20, 170, 160, 12, GxEPD_WHITE);
+      display.setCursor(150, 12); display.print("CARD A");
+    } else if (v == 'B') {
+      display.fillRect(30, 60, 140, 70, GxEPD_WHITE);
+      display.fillCircle(160, 165, 18, GxEPD_WHITE);
+      display.setCursor(150, 12); display.print("CARD B");
+    } else {
+      display.fillTriangle(100, 50, 30, 170, 170, 170, GxEPD_WHITE);
+      for (int y = 60; y < 120; y += 12) display.fillRect(8, y, 30, 5, GxEPD_WHITE);
+      display.setCursor(150, 12); display.print("CARD C");
+    }
+  }
+  // a prompt: log, buzz, wait. false = BACK (leave the lab)
+  bool labStep(const char *msg) {
+    Serial.printf("[lab] %7lu %s  -> press any button (BACK ends)\n", millis(), msg);
+    Serial.flush();
+    buzz(30, 2);
+    waitAllRelease();
+    int p = waitForPress(180000);
+    if (p < 0 || p == BACK_BTN_PIN) { waitAllRelease(); return false; }
+    waitAllRelease();
+    return true;
+  }
+  uint8_t *labBuf() { return display.*epdGet(EpdBufTag()); }
+  // full refresh without the library's power-off at the end
+  void labFullKeepOn() {
+    display.epd2.writeImageForFullRefresh(labBuf(), 0, 0, 200, 200);
+    display.epd2.refresh(false);
+    display.epd2.writeImageAgain(labBuf(), 0, 0, 200, 200);
+  }
+  void labFull()    { display.display(false); panelOff(); }
+  void labPartial() { display.display(true); }        // Watchy's own partial
+  void labRun() {
+    EpdFull::diag(display.epd2);
+    Serial.println("\n[lab] ===== DISPLAY LAB =====");
+    // L1: full, power off, then an IDENTICAL partial (after the full, both
+    // memories already hold the image: this isolates the waveform itself)
+    labCard('A', "L1"); labFull();
+    if (!labStep("L1a full + off. Crisp?")) return;
+    labPartial();
+    if (!labStep("L1b identical partial sent. Watch 5 s: does it grey?")) return;
+    // L2: same, but the panel is NOT powered off between full and partial
+    labCard('A', "L2"); labFullKeepOn();
+    labPartial();
+    if (!labStep("L2 full (no off) + identical partial at once. Grey?")) return;
+    // L3: no partial at all. Does voltage alone fade a full?
+    labCard('A', "L3"); labFull();
+    if (!labStep("L3a full + OFF. Watch 30 s: does it fade?")) return;
+    labCard('A', "L3"); labFullKeepOn();
+    if (!labStep("L3b full, voltage left ON. Watch 30 s: does it fade?")) return;
+    panelOff();
+    // L4: card to card by partials, with and without the memory sync
+    labCard('A', "L4"); labFull();
+    if (!labStep("L4a card A full")) return;
+    labCard('B', "L4"); labPartial();
+    if (!labStep("L4b A->B partial, NO sync. Any A left?")) return;
+    labCard('C', "L4"); labPartial();
+    if (!labStep("L4c B->C partial, NO sync. Any A or B left?")) return;
+    labCard('A', "L4s"); labFull();
+    if (!labStep("L4d card A full (sync run)")) return;
+    labCard('B', "L4s"); labPartial(); syncPrev();
+    if (!labStep("L4e A->B partial + sync. Any A left?")) return;
+    labCard('C', "L4s"); labPartial(); syncPrev();
+    if (!labStep("L4f B->C partial + sync. Any A or B left?")) return;
+    panelOff();
+    // L5: L1 with the stock booster timing for the partial
+    labCard('A', "L5"); labFull();
+    if (!labStep("L5a full + off")) return;
+    display.epd2.writeImage(labBuf(), 0, 0, 200, 200);   // re-inits (short booster)
+    EpdFull::cmd(display.epd2, 0x0C);                     // then stock soft start
+    EpdFull::dat(display.epd2, 0x8B); EpdFull::dat(display.epd2, 0x9C);
+    EpdFull::dat(display.epd2, 0x96); EpdFull::dat(display.epd2, 0x0F);
+    display.epd2.refresh(true);
+    display.epd2.writeImageAgain(labBuf(), 0, 0, 200, 200);
+    if (!labStep("L5b identical partial, STOCK booster. Grey?")) return;
+    panelOff();
+    // L6: L1 with the panel-busy light sleep switched off
+    labCard('A', "L6"); labFull();
+    if (!labStep("L6a full + off")) return;
+    display.epd2.setBusyCallback(0);
+    labPartial();
+    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+    if (!labStep("L6b identical partial, NO light sleep. Grey?")) return;
+    panelOff();
+    Serial.println("[lab] ===== done =====");
+  }
+
   void myShowAbout() {
     // FreeMonoBold9pt7b advances 11 px, so a 200 px panel fits 18 characters
     // per line. Every label below is budgeted against that; the closing note
@@ -10509,8 +10616,14 @@ public:
       if (p == DOWN_BTN_PIN) {
         if (heldFor(DOWN_BTN_PIN, 700)) {
           dumpVlog(); buzz(30, 2); waitAllRelease();
+          continue;
         }
-        continue;                       // a short press does nothing, as before
+        // a short press: the display lab
+        labRun();
+        guiState = WATCHFACE_STATE;
+        RTC.read(currentTime);
+        showFaceFull();
+        return;
       }
       if (p == UP_BTN_PIN && heldFor(UP_BTN_PIN, 900)) {
         // teach the watch what a terminated charge reads on this board
