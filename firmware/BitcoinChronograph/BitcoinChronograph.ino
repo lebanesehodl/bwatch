@@ -10415,24 +10415,25 @@ public:
   // serial, to MEASURE why images fade and ghost instead of guessing. Each
   // step buzzes and waits for a press (BACK leaves the lab). Photograph the
   // glass at each prompt and ~5 s later.
+  uint16_t labBg = GxEPD_BLACK, labFg = GxEPD_WHITE;   // L7+: light cards too
   void labCard(char v, const char *id) {
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(labBg);
+    display.setTextColor(labFg);
     display.setFont(NULL); display.setTextSize(3);
     display.setCursor(8, 8); display.print(id);
     display.setTextSize(1);
     if (v == 'A') {
-      display.fillCircle(100, 110, 42, GxEPD_WHITE);
-      display.fillRect(20, 170, 160, 12, GxEPD_WHITE);
+      display.fillCircle(100, 110, 42, labFg);
+      display.fillRect(20, 170, 160, 12, labFg);
       display.setCursor(150, 12); display.print("CARD A");
     } else if (v == 'B') {
-      display.fillRect(30, 60, 140, 70, GxEPD_WHITE);
-      display.fillCircle(160, 165, 18, GxEPD_WHITE);
+      display.fillRect(30, 60, 140, 70, labFg);
+      display.fillCircle(160, 165, 18, labFg);
       display.setCursor(150, 12); display.print("CARD B");
     } else {
-      display.fillTriangle(100, 50, 30, 170, 170, 170, GxEPD_WHITE);
-      for (int y = 60; y < 120; y += 12) display.fillRect(8, y, 30, 5, GxEPD_WHITE);
+      display.fillTriangle(100, 50, 30, 170, 170, 170, labFg);
+      for (int y = 60; y < 120; y += 12) display.fillRect(8, y, 30, 5, labFg);
       display.setCursor(150, 12); display.print("CARD C");
     }
   }
@@ -10456,58 +10457,50 @@ public:
   }
   void labFull()    { display.display(false); panelOff(); }
   void labPartial() { display.display(true); }        // Watchy's own partial
+  void labDark()  { labBg = GxEPD_BLACK; labFg = GxEPD_WHITE; }
+  void labLight() { labBg = GxEPD_WHITE; labFg = GxEPD_BLACK; }
   void labRun() {
     EpdFull::diag(display.epd2);
-    Serial.println("\n[lab] ===== DISPLAY LAB =====");
-    // L1: full, power off, then an IDENTICAL partial (after the full, both
-    // memories already hold the image: this isolates the waveform itself)
-    labCard('A', "L1"); labFull();
-    if (!labStep("L1a full + off. Crisp?")) return;
-    labPartial();
-    if (!labStep("L1b identical partial sent. Watch 5 s: does it grey?")) return;
-    // L2: same, but the panel is NOT powered off between full and partial
-    labCard('A', "L2"); labFullKeepOn();
-    labPartial();
-    if (!labStep("L2 full (no off) + identical partial at once. Grey?")) return;
-    // L3: no partial at all. Does voltage alone fade a full?
-    labCard('A', "L3"); labFull();
-    if (!labStep("L3a full + OFF. Watch 30 s: does it fade?")) return;
-    labCard('A', "L3"); labFullKeepOn();
-    if (!labStep("L3b full, voltage left ON. Watch 30 s: does it fade?")) return;
+    Serial.println("\n[lab] ===== DISPLAY LAB 2: dark to light =====");
+    // Lab 1 (L1-L6, black cards) all ran clean. The fade shows going from a
+    // DARK screen to a LIGHT one. Each test: a black card, then a light card
+    // sent a different way. Watch the light card for ~10 s each time.
+    // M1: plain full + forced off (lab 1's way)
+    labDark();  labCard('A', "M1"); labFull();
+    if (!labStep("M1a black card")) return;
+    labLight(); labCard('B', "M1"); labFull();
+    if (!labStep("M1b LIGHT card: full + off. Watch 10 s: fade?")) return;
+    // M2: the watch's real path: displayFull() (full, memory sync, off)
+    labDark();  labCard('A', "M2"); labFull();
+    if (!labStep("M2a black card")) return;
+    labLight(); labCard('B', "M2"); displayFull();
+    if (!labStep("M2b LIGHT card: displayFull (with sync). Watch 10 s: fade?")) return;
+    // M3: full with only the library's own power-off
+    labDark();  labCard('A', "M3"); labFull();
+    if (!labStep("M3a black card")) return;
+    labLight(); labCard('B', "M3"); display.display(false);
+    if (!labStep("M3b LIGHT card: full, library off only. Watch 10 s: fade?")) return;
     panelOff();
-    // L4: card to card by partials, with and without the memory sync
-    labCard('A', "L4"); labFull();
-    if (!labStep("L4a card A full")) return;
-    labCard('B', "L4"); labPartial();
-    if (!labStep("L4b A->B partial, NO sync. Any A left?")) return;
-    labCard('C', "L4"); labPartial();
-    if (!labStep("L4c B->C partial, NO sync. Any A or B left?")) return;
-    labCard('A', "L4s"); labFull();
-    if (!labStep("L4d card A full (sync run)")) return;
-    labCard('B', "L4s"); labPartial(); syncPrev();
-    if (!labStep("L4e A->B partial + sync. Any A left?")) return;
-    labCard('C', "L4s"); labPartial(); syncPrev();
-    if (!labStep("L4f B->C partial + sync. Any A or B left?")) return;
+    // M4: full, voltage left ON
+    labDark();  labCard('A', "M4"); labFull();
+    if (!labStep("M4a black card")) return;
+    labLight(); labCard('B', "M4"); labFullKeepOn();
+    if (!labStep("M4b LIGHT card: full, voltage ON. Watch 10 s: fade?")) return;
     panelOff();
-    // L5: L1 with the stock booster timing for the partial
-    labCard('A', "L5"); labFull();
-    if (!labStep("L5a full + off")) return;
-    display.epd2.writeImage(labBuf(), 0, 0, 200, 200);   // re-inits (short booster)
-    EpdFull::cmd(display.epd2, 0x0C);                     // then stock soft start
-    EpdFull::dat(display.epd2, 0x8B); EpdFull::dat(display.epd2, 0x9C);
-    EpdFull::dat(display.epd2, 0x96); EpdFull::dat(display.epd2, 0x0F);
-    display.epd2.refresh(true);
-    display.epd2.writeImageAgain(labBuf(), 0, 0, 200, 200);
-    if (!labStep("L5b identical partial, STOCK booster. Grey?")) return;
-    panelOff();
-    // L6: L1 with the panel-busy light sleep switched off
-    labCard('A', "L6"); labFull();
-    if (!labStep("L6a full + off")) return;
-    display.epd2.setBusyCallback(0);
-    labPartial();
-    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
-    if (!labStep("L6b identical partial, NO light sleep. Grey?")) return;
-    panelOff();
+    // M5: the reverse, light to dark, the watch's real path
+    labLight(); labCard('A', "M5"); labFull();
+    if (!labStep("M5a light card")) return;
+    labDark();  labCard('B', "M5"); displayFull();
+    if (!labStep("M5b BLACK card: displayFull. Watch 10 s: fade?")) return;
+    // M6: the real face, dark then light, through the real button path
+    {
+      uint8_t keep = themeMode;
+      themeMode = 1; buttonWake = true; showWatchFace(true);
+      if (!labStep("M6a the real face, DARK")) { themeMode = keep; return; }
+      themeMode = 0; buttonWake = true; showWatchFace(true);
+      if (!labStep("M6b the real face, LIGHT via the button path. Watch 10 s: fade?")) { themeMode = keep; return; }
+      themeMode = keep;
+    }
     Serial.println("[lab] ===== done =====");
   }
 
