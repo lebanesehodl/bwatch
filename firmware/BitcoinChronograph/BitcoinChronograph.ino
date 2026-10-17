@@ -926,15 +926,6 @@ static const int DESC_TEXT_MAX = 2200;  // ~145 characters a key: 15 keys fit
 // that one closing refresh the full one instead. (A pointer to a protected
 // member, taken through a derived class, is the standard way to reach it.)
 struct EpdFull : WatchyDisplay {
-  // Armed the way the library's own first refresh is: _initial_write too, so
-  // the image write first clears BOTH controller memories to white. Without
-  // it the "previous" memory still held the old face, and the full waveform
-  // drove only part of a big change: a light-to-dark flip came out grey and
-  // patchy (the 30-minute cleans changed a few digits, so it never showed).
-  static void arm(WatchyDisplay &e) {
-    e.*(&EpdFull::_initial_refresh) = true;
-    e.*(&EpdFull::_initial_write) = true;
-  }
   // The driver only sends its power-off when it believes the panel is on,
   // and it believes that only after its own power-on. A full refresh right
   // after a power-off skips that (refresh(false) re-inits only from partial
@@ -6388,15 +6379,24 @@ public:
   // awake, the fresh image fades within seconds (see displayFull). So it is
   // remembered, and whoever sent it powers the panel off straight after.
   bool fullArmed = false;
-  void fullOnClose() { EpdFull::arm(display.epd2); fullArmed = true; }
-  void offIfFull() { if (fullArmed) { panelOff(); fullArmed = false; } }
+  // Turning the caller's partial into a full (the driver's "first refresh"
+  // flag) drove light faces fine but not big black ones: a flip to dark came
+  // out grey and faded. The black cards, sent by displayFull(), were always
+  // crisp. So a face that wants a full now gets exactly that, from the end
+  // of drawWatchFace(): displayFull(), then the caller's own partial lands
+  // on an identical image and changes nothing.
+  void fullOnClose() { fullArmed = true; }
+  void offIfFull() {}                  // kept for the call sites: the full is
+                                       // already sent and powered off
   // our own calls get the power-off; the library's minute tick calls its own
   // version and goes straight to deep sleep, which hibernates the panel
   void showWatchFace(bool partialRefresh) {
     Watchy::showWatchFace(partialRefresh);
     offIfFull();
   }
-  void showFaceFull() { showWatchFace(false); panelOff(); }
+  void showFaceFull() {
+    callerFull = true; showWatchFace(false); callerFull = false; panelOff();
+  }
 
   void centerSmall(const char *s, int y) {          // built-in 6x8 font
     display.setCursor((200 - (int)strlen(s) * 6) / 2, y);
@@ -6816,7 +6816,18 @@ public:
     }
   }
 
+  int drawDepth = 0;
+  bool callerFull = false;                   // the FTCH pre-paint draws inside a draw
   void drawWatchFace() override {
+    drawDepth++;
+    drawFaceBody();
+    drawDepth--;
+    if (drawDepth == 0 && fullArmed) {
+      fullArmed = false;
+      if (!callerFull) displayFull();  // showFaceFull sends a full anyway
+    }
+  }
+  void drawFaceBody() {
     sanitizeState();
     if (shipMode) {                     // USB in: out of the box. Anything else
       if (usbPresent()) { leaveShipMode("usb"); bootGenesis(); firstStartWifi(); }
