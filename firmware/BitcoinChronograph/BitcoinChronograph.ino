@@ -10565,6 +10565,14 @@ public:
     labLight(); labTick('B', "P5", 1); labFullManual(true, true);
     if (!labStep("P5-3 light full, STOCK booster + 0xF7. Press")) return;
     if (!labPost("P5")) return;
+    // P6: today's full, but back to light with THREE fulls instead of two
+    labDark(); labTick('A', "P6", 0); labFull();
+    if (!labStep("P6-1 black card. Wait ~30 s, then press")) return;
+    labLight(); labTick('B', "P6", 0); labFull(); labFull(); labFull();
+    if (!labStep("P6-2 back to light with THREE fulls. Press")) return;
+    labTick('B', "P6", 1); labFull();
+    if (!labStep("P6-3 light full as the watch does it. Press")) return;
+    if (!labPost("P6")) return;
     Serial.println("[lab] ===== done =====");
   }
 
