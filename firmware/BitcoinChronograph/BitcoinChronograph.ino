@@ -927,13 +927,6 @@ static const int DESC_TEXT_MAX = 2200;  // ~145 characters a key: 15 keys fit
 // member, taken through a derived class, is the standard way to reach it.)
 struct EpdFull : WatchyDisplay {
   static void arm(WatchyDisplay &e) { e.*(&EpdFull::_initial_refresh) = true; }
-  // The driver only sends its power-off when it believes the panel is on,
-  // and it believes that only after its own power-on. A full refresh right
-  // after a power-off skips that (refresh(false) re-inits only from partial
-  // mode), yet its 0xF4 sequence turns the high voltage on anyway: the
-  // driver thinks "off", powerOff() returns without a word, the voltage stays
-  // up and the fresh image fades within seconds. Tell it the truth first.
-  static void markOn(WatchyDisplay &e) { e.*(&EpdFull::_power_is_on) = true; }
 };
 
 class BitcoinChrono : public Watchy {
@@ -6371,9 +6364,7 @@ public:
   // payment vigil, the dock) the freshly driven image faded to almost
   // nothing within a couple of seconds. Off costs one re-power on the next
   // refresh, ~0.1 s.
-  // every power-off goes through here: forced, so it is never skipped
-  void panelOff() { EpdFull::markOn(display.epd2); display.powerOff(); }
-  void displayFull() { display.display(false); panelOff(); }
+  void displayFull() { display.display(false); display.powerOff(); }
   // inside a face draw: the caller's closing refresh becomes the full one.
   // That refresh arrives as display(true), which (unlike display(false))
   // never turns the panel's high voltage off: left on while the watch stays
@@ -6381,14 +6372,14 @@ public:
   // remembered, and whoever sent it powers the panel off straight after.
   bool fullArmed = false;
   void fullOnClose() { EpdFull::arm(display.epd2); fullArmed = true; }
-  void offIfFull() { if (fullArmed) { panelOff(); fullArmed = false; } }
+  void offIfFull() { if (fullArmed) { display.powerOff(); fullArmed = false; } }
   // our own calls get the power-off; the library's minute tick calls its own
   // version and goes straight to deep sleep, which hibernates the panel
   void showWatchFace(bool partialRefresh) {
     Watchy::showWatchFace(partialRefresh);
     offIfFull();
   }
-  void showFaceFull() { showWatchFace(false); panelOff(); }
+  void showFaceFull() { showWatchFace(false); display.powerOff(); }
 
   void centerSmall(const char *s, int y) {          // built-in 6x8 font
     display.setCursor((200 - (int)strlen(s) * 6) / 2, y);
@@ -6945,8 +6936,7 @@ public:
       drawWatchFace();                // corner reads FTCH; no fetch inside
       // partial: fast, the full comes after. Unless it flips the panel:
       // then partial is exactly what fades, so this frame goes full
-      if (themeDark == paintedDark) display.display(true);
-      else displayFull();             // a flip is full, and full needs its off
+      display.display(themeDark == paintedDark);
       paintedDark = themeDark;
       prePaint = false;
     }
@@ -7782,8 +7772,7 @@ public:
     // partial: the entry flash annoyed the owner, and the menu shares the
     // face's palette, so normally nothing flips. If the panel is the other
     // way round (the theme changed since it was painted), full, once.
-    if (themeDark == paintedDark) display.display(true);
-    else displayFull();                    // full, then the voltage off
+    display.display(themeDark == paintedDark);
     paintedDark = themeDark;
     guiState = MAIN_MENU_STATE;
     alreadyInMenu = false;
