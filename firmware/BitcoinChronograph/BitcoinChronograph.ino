@@ -925,6 +925,17 @@ static const int DESC_TEXT_MAX = 2200;  // ~145 characters a key: 15 keys fit
 // fades"). Arming the driver's own "first refresh must be full" flag makes
 // that one closing refresh the full one instead. (A pointer to a protected
 // member, taken through a derived class, is the standard way to reach it.)
+// The frame buffer is private to GxEPD2_BW; this is the standard, legal way
+// to name a private member (explicit instantiation may take its address).
+template<typename Tag, typename Tag::type M>
+struct EpdRob { friend typename Tag::type epdGet(Tag) { return M; } };
+struct EpdBufTag {
+  typedef uint8_t (GxEPD2_BW<WatchyDisplay, WatchyDisplay::HEIGHT>::*type)
+      [(WatchyDisplay::WIDTH / 8) * WatchyDisplay::HEIGHT];
+  friend type epdGet(EpdBufTag);
+};
+template struct EpdRob<EpdBufTag, &GxEPD2_BW<WatchyDisplay, WatchyDisplay::HEIGHT>::_buffer>;
+
 struct EpdFull : WatchyDisplay {
   // The driver only sends its power-off when it believes the panel is on,
   // and it believes that only after its own power-on. A full refresh right
@@ -6388,13 +6399,26 @@ public:
     EpdFull::markOn(display.epd2); display.powerOff();
     Serial.printf("[epd] %7lu off (%lu ms)\n", millis(), millis() - t);
   }
+  // The controller diffs a partial against its "previous" memory. The stock
+  // driver for this panel rewrites that memory with the shown image after
+  // every refresh; the Watchy driver writes only "current". So "previous"
+  // drifted from what was on the glass: a partial right after a full greyed
+  // black areas, and card after card kept bits of the cards before. After
+  // every refresh of ours, both memories get the image on the glass.
+  void syncPrev() {
+    uint8_t *fb = display.*epdGet(EpdBufTag());
+    display.epd2.writeImageForFullRefresh(fb, 0, 0, WatchyDisplay::WIDTH,
+                                          WatchyDisplay::HEIGHT);
+  }
   void displayFull() {
     epdLog("FULL start");
     display.display(false);
+    syncPrev();
     epdLog("FULL done");
     panelOff();
     justFull = true;
   }
+  void partialSync() { display.display(true); syncPrev(); }
   // THE FADE (found with the serial log, Oct 16): a full refresh came out
   // crisp, and the partial refresh sent ~0.5 s later on the SAME image greyed
   // its black areas within half a second. So after a full, the identical
@@ -6403,7 +6427,7 @@ public:
   bool justFull = false;
   void partialRefresh() {
     if (justFull) { justFull = false; epdLog("partial skipped: just full"); return; }
-    display.display(true);
+    partialSync();
   }
   // inside a face draw: the caller's closing refresh becomes the full one.
   // That refresh arrives as display(true), which (unlike display(false))
@@ -6438,7 +6462,7 @@ public:
     ownShow = false;
     if (partial) partialRefresh();
     else if (justFull) justFull = false;      // the draw already sent it full
-    else { display.display(false); justFull = true; }
+    else { display.display(false); syncPrev(); justFull = true; }
     guiState = WATCHFACE_STATE;
     offIfFull();
   }
@@ -6870,6 +6894,7 @@ public:
   // to dark there came out as a grey partial). The one nested draw that must
   // not send is the FTCH pre-paint, and it says so with prePaint.
   int drawDepth = 0;
+  bool menuOnGlass = false;            // the menu timed out on a minute tick
   void drawWatchFace() override {
     EpdFull::diag(display.epd2);
     justFull = false;                  // a new image: its partial is real
@@ -6879,18 +6904,24 @@ public:
     drawDepth++;
     drawFaceBody();
     drawDepth--;
+    esp_sleep_wakeup_cause_t why = esp_sleep_get_wakeup_cause();
+    if (libTick && !prePaint &&
+        (why == ESP_SLEEP_WAKEUP_TIMER || why == ESP_SLEEP_WAKEUP_EXT0)) {
+      // the library's minute tick (or USB plug): it would now send its own
+      // partial, without the "previous" sync. Send ours and sleep instead,
+      // exactly as it would have right after it.
+      bool full = fullArmed || menuOnGlass;
+      fullArmed = false; menuOnGlass = false;
+      if (full) displayFull();
+      else if (!justFull) partialSync();   // a rest face may have gone full
+      Serial.flush();
+      deepSleep();
+    }
     if (!prePaint && fullArmed) {
       fullArmed = false;
       if (!callerFull) displayFull();  // showFaceFull sends a full anyway
-      esp_sleep_wakeup_cause_t why = esp_sleep_get_wakeup_cause();
-      if (libTick && (why == ESP_SLEEP_WAKEUP_TIMER || why == ESP_SLEEP_WAKEUP_EXT0)) {
-        // the library would now send its partial on top: sleep instead,
-        // exactly as it would have right after it
-        epdLog("library tick: full sent, sleeping");
-        Serial.flush();
-        deepSleep();
-      }
     }
+    if (!prePaint) menuOnGlass = false;
   }
   void drawFaceBody() {
     sanitizeState();
@@ -7825,6 +7856,7 @@ public:
 
   void myShowMenu(byte idx, bool partial) {
     epdLog("menu");
+    menuOnGlass = true;
     qrDrawnIdx = -1;                    // the menu covers any QR
     const int len = menuLen();
     const char *const *items = menuLevel == 1 ? MY_ITEMS
@@ -7867,7 +7899,8 @@ public:
     // partial: the entry flash annoyed the owner, and the menu shares the
     // face's palette, so normally nothing flips. If the panel is the other
     // way round (the theme changed since it was painted), full, once.
-    if (themeDark == paintedDark) { display.display(true); panelOff(); }   // the menu waits 5 s awake
+    justFull = false;
+    if (themeDark == paintedDark) { partialSync(); panelOff(); }   // the menu waits 5 s awake
     else displayFull();                    // full, then the voltage off
     paintedDark = themeDark;
     guiState = MAIN_MENU_STATE;
