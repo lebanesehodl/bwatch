@@ -6386,8 +6386,12 @@ public:
   // of drawWatchFace(): displayFull(), then the caller's own partial lands
   // on an identical image and changes nothing.
   void fullOnClose() { fullArmed = true; }
-  void offIfFull() {}                  // kept for the call sites: the full is
-                                       // already sent and powered off
+  // After ANY refresh while the watch stays awake (button loop, dock, payment
+  // vigil, wallet scan): the panel's high voltage off. A partial leaves it on
+  // too, and on the dock the LN QR, freshly drawn, faded to grey in ~15 s.
+  // Before deep sleep it does not matter (the panel's sleep cuts it); awake,
+  // it does. ~150 ms, and the next refresh powers back up by itself.
+  void offIfFull() { panelOff(); }
   // our own calls get the power-off; the library's minute tick calls its own
   // version and goes straight to deep sleep, which hibernates the panel
   void showWatchFace(bool partialRefresh) {
