@@ -2469,7 +2469,7 @@ public:
     }
     buttonWake = true;
     drawWatchFace();
-    display.display(true);
+    partialRefresh();
     offIfFull();
     return false;
   }
@@ -2518,7 +2518,7 @@ public:
               }
               buttonWake = true;
               drawWatchFace();                     // fresh invoice QR, or
-              display.display(true);               // the PAY screen
+              partialRefresh();                    // the PAY screen
               offIfFull();
               break;
             }
@@ -2557,7 +2557,7 @@ public:
                   }
                   buttonWake = true;
                   drawWatchFace();
-                  display.display(true);
+                  partialRefresh();
                   offIfFull();
                   break;
                 }
@@ -6393,6 +6393,17 @@ public:
     display.display(false);
     epdLog("FULL done");
     panelOff();
+    justFull = true;
+  }
+  // THE FADE (found with the serial log, Oct 16): a full refresh came out
+  // crisp, and the partial refresh sent ~0.5 s later on the SAME image greyed
+  // its black areas within half a second. So after a full, the identical
+  // partial that would follow is not sent. justFull is cleared at the start
+  // of every draw, so a later partial with real changes still goes out.
+  bool justFull = false;
+  void partialRefresh() {
+    if (justFull) { justFull = false; epdLog("partial skipped: just full"); return; }
+    display.display(true);
   }
   // inside a face draw: the caller's closing refresh becomes the full one.
   // That refresh arrives as display(true), which (unlike display(false))
@@ -6415,9 +6426,20 @@ public:
   void offIfFull() { panelOff(); }
   // our own calls get the power-off; the library's minute tick calls its own
   // version and goes straight to deep sleep, which hibernates the panel
-  void showWatchFace(bool partialRefresh) {
-    epdLog(partialRefresh ? "face (partial)" : "face (full)");
-    Watchy::showWatchFace(partialRefresh);
+  // The library's version, with our refreshes: no identical partial after a
+  // full, and the panel off after (we stay awake for more presses)
+  bool ownShow = false;
+  void showWatchFace(bool partial) {
+    epdLog(partial ? "face (partial)" : "face (full)");
+    display.setFullWindow();
+    display.epd2.asyncPowerOn();
+    ownShow = true;
+    drawWatchFace();
+    ownShow = false;
+    if (partial) partialRefresh();
+    else if (justFull) justFull = false;      // the draw already sent it full
+    else { display.display(false); justFull = true; }
+    guiState = WATCHFACE_STATE;
     offIfFull();
   }
   void showFaceFull() {
@@ -6847,12 +6869,27 @@ public:
   // this again, so "outermost only" skipped every full while docked (a flip
   // to dark there came out as a grey partial). The one nested draw that must
   // not send is the FTCH pre-paint, and it says so with prePaint.
+  int drawDepth = 0;
   void drawWatchFace() override {
     EpdFull::diag(display.epd2);
+    justFull = false;                  // a new image: its partial is real
+    // the library's own minute tick (or USB plug) draws through here and then
+    // sends a partial we cannot stop: nobody else is calling
+    bool libTick = drawDepth == 0 && !ownShow && !inDocked && !inVigil;
+    drawDepth++;
     drawFaceBody();
+    drawDepth--;
     if (!prePaint && fullArmed) {
       fullArmed = false;
       if (!callerFull) displayFull();  // showFaceFull sends a full anyway
+      esp_sleep_wakeup_cause_t why = esp_sleep_get_wakeup_cause();
+      if (libTick && (why == ESP_SLEEP_WAKEUP_TIMER || why == ESP_SLEEP_WAKEUP_EXT0)) {
+        // the library would now send its partial on top: sleep instead,
+        // exactly as it would have right after it
+        epdLog("library tick: full sent, sleeping");
+        Serial.flush();
+        deepSleep();
+      }
     }
   }
   void drawFaceBody() {
@@ -10678,7 +10715,7 @@ public:
 
     inDocked = true;
     Serial.println("[dock] enter (fast-poll transport)");
-    display.display(true);                 // show the face already drawn
+    partialRefresh();                      // show the face already drawn
     if (!myConnectWiFi()) {
       Serial.println("[dock] wifi FAIL");
       inDocked = false; return;
@@ -10944,7 +10981,7 @@ public:
         waitAllRelease();
         buttonWake = true;
         drawWatchFace();
-        display.display(true);
+        partialRefresh();
         offIfFull();
         delay(50);
         continue;
@@ -11000,8 +11037,9 @@ public:
         buttonWake = true;                    // don't double-count wakes
         drawWatchFace();                      // inDocked guard: no recursion
         // docked it redraws for hours on partials: clean it the same way
-        if (++facePartials >= PARTIALS_BEFORE_FULL) { facePartials = 0; displayFull(); }
-        else display.display(true);
+        if (justFull) partialRefresh();       // the draw sent it full: skip
+        else if (++facePartials >= PARTIALS_BEFORE_FULL) { facePartials = 0; displayFull(); }
+        else partialRefresh();
         offIfFull();                          // docked: awake for hours
       }
       delay(50);
