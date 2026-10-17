@@ -6404,12 +6404,14 @@ public:
     EpdFull::markOn(display.epd2); display.powerOff();
     Serial.printf("[epd] %7lu off (%lu ms)\n", millis(), millis() - t);
   }
-  // The controller diffs a partial against its "previous" memory. The stock
-  // driver for this panel rewrites that memory with the shown image after
-  // every refresh; the Watchy driver writes only "current". So "previous"
-  // drifted from what was on the glass: a partial right after a full greyed
-  // black areas, and card after card kept bits of the cards before. After
-  // every refresh of ours, both memories get the image on the glass.
+  // THE RULE (display lab, Oct 17): after a full refresh the panel must stay
+  // powered OFF until the next real refresh. A light image that has just
+  // replaced a dark one fades within seconds if the panel's voltage comes
+  // back on (lab M2: a memory write re-powered it) or is left on (M4).
+  // Black images do not show it (L3), which is why it hid for so long.
+  // syncPrev() wrote both memories after each refresh; the lab showed the
+  // panel keeps "previous" right by itself (L4), and the write re-powered
+  // the panel after a full. It is no longer called.
   void syncPrev() {
     uint8_t *fb = display.*epdGet(EpdBufTag());
     display.epd2.writeImageForFullRefresh(fb, 0, 0, WatchyDisplay::WIDTH,
@@ -6418,12 +6420,11 @@ public:
   void displayFull() {
     epdLog("FULL start");
     display.display(false);
-    syncPrev();
     epdLog("FULL done");
     panelOff();
     justFull = true;
   }
-  void partialSync() { display.display(true); syncPrev(); }
+  void partialSync() { display.display(true); }
   // THE FADE (found with the serial log, Oct 16): a full refresh came out
   // crisp, and the partial refresh sent ~0.5 s later on the SAME image greyed
   // its black areas within half a second. So after a full, the identical
@@ -6467,7 +6468,7 @@ public:
     ownShow = false;
     if (partial) partialRefresh();
     else if (justFull) justFull = false;      // the draw already sent it full
-    else { display.display(false); syncPrev(); justFull = true; }
+    else { display.display(false); justFull = true; }
     guiState = WATCHFACE_STATE;
     offIfFull();
   }
