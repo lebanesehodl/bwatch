@@ -6417,14 +6417,36 @@ public:
     display.epd2.writeImageForFullRefresh(fb, 0, 0, WatchyDisplay::WIDTH,
                                           WatchyDisplay::HEIGHT);
   }
+  // Dark to light (Oct 17, on the wrist): one full refresh turns a black
+  // screen white, but those pixels are not settled: the first partial after
+  // it (the next minute) faded the whole light face in ~18 s. A second full
+  // on the light image settles them. So a full that takes the glass from
+  // mostly black to mostly white is sent twice. Light to dark needs nothing
+  // (lab M5, L3). "Mostly black" is read from the frame itself, so cards,
+  // the night face and the theme all count without their own flags.
+  int8_t glass = -1;                   // glass mostly black? -1: not known yet
+  bool frameDark() {
+    const uint8_t *fb = display.*epdGet(EpdBufTag());
+    uint32_t white = 0;
+    for (int i = 0; i < (WatchyDisplay::WIDTH / 8) * WatchyDisplay::HEIGHT; i++)
+      white += __builtin_popcount(fb[i]);
+    return white < (uint32_t)WatchyDisplay::WIDTH * WatchyDisplay::HEIGHT / 2;
+  }
   void displayFull() {
+    bool now = frameDark();
+    bool was = glass < 0 ? paintedAtStart : glass == 1;
     epdLog("FULL start");
     display.display(false);
+    if (was && !now) {                 // black to white: settle it
+      epdLog("FULL dark->light: second full");
+      display.display(false);
+    }
     epdLog("FULL done");
     panelOff();
     justFull = true;
+    glass = now ? 1 : 0;
   }
-  void partialSync() { display.display(true); }
+  void partialSync() { display.display(true); glass = frameDark() ? 1 : 0; }
   // THE FADE (found with the serial log, Oct 16): a full refresh came out
   // crisp, and the partial refresh sent ~0.5 s later on the SAME image greyed
   // its black areas within half a second. So after a full, the identical
@@ -6900,10 +6922,12 @@ public:
   // to dark there came out as a grey partial). The one nested draw that must
   // not send is the FTCH pre-paint, and it says so with prePaint.
   int drawDepth = 0;
+  bool paintedAtStart = false;         // polarity on the glass before this draw
   bool menuOnGlass = false;            // the menu timed out on a minute tick
   void drawWatchFace() override {
     EpdFull::diag(display.epd2);
     justFull = false;                  // a new image: its partial is real
+    if (drawDepth == 0) paintedAtStart = paintedDark;   // what the glass was
     // the library's own minute tick (or USB plug) draws through here and then
     // sends a partial we cannot stop: nobody else is calling
     bool libTick = drawDepth == 0 && !ownShow && !inDocked && !inVigil;
