@@ -952,6 +952,9 @@ struct EpdFull : WatchyDisplay {
   static void dat(WatchyDisplay &e, uint8_t d) {
     void (GxEPD2_EPD::*f)(uint8_t) = &EpdFull::_writeData; (e.*f)(d);
   }
+  static void busy(WatchyDisplay &e, const char *c, uint16_t t) {
+    (e.*(&EpdFull::_waitWhileBusy))(c, t);
+  }
 };
 
 class BitcoinChrono : public Watchy {
@@ -10498,48 +10501,68 @@ public:
   void labPartial() { display.display(true); }        // Watchy's own partial
   void labDark()  { labBg = GxEPD_BLACK; labFg = GxEPD_WHITE; }
   void labLight() { labBg = GxEPD_WHITE; labFg = GxEPD_BLACK; }
+  // a full refresh done by hand, to vary what the Watchy driver fixes:
+  // stockBooster: the panel's normal soft-start instead of the shortened one;
+  // endOff: end with 0xF7 (voltage off as part of the update, as the stock
+  // driver does) instead of 0xF4 + a separate power-off
+  void labFullManual(bool stockBooster, bool endOff) {
+    display.epd2.writeImageForFullRefresh(labBuf(), 0, 0, 200, 200);  // inits
+    if (stockBooster) {
+      EpdFull::cmd(display.epd2, 0x0C);
+      EpdFull::dat(display.epd2, 0x8B); EpdFull::dat(display.epd2, 0x9C);
+      EpdFull::dat(display.epd2, 0x96); EpdFull::dat(display.epd2, 0x0F);
+    }
+    EpdFull::cmd(display.epd2, 0x22);
+    EpdFull::dat(display.epd2, endOff ? 0xF7 : 0xF4);
+    EpdFull::cmd(display.epd2, 0x20);
+    EpdFull::busy(display.epd2, "_lab_Full", 2600);
+    EpdFull::markOn(display.epd2);       // the driver did not see a power-on
+    panelOff();                          // (a second off after 0xF7: harmless)
+  }
+  // the minute's change: same card, a different small label
+  void labTick(char v, const char *id, int n) {
+    labCard(v, id);
+    char t[8]; snprintf(t, 8, "%02d", n);
+    display.setTextSize(2); display.setCursor(150, 170); display.print(t);
+    display.setTextSize(1);
+  }
   void labRun() {
     EpdFull::diag(display.epd2);
-    Serial.println("\n[lab] ===== DISPLAY LAB 2: dark to light =====");
-    // Lab 1 (L1-L6, black cards) all ran clean. The fade shows going from a
-    // DARK screen to a LIGHT one. Each test: a black card, then a light card
-    // sent a different way. Watch the light card for ~10 s each time.
-    // M1: plain full + forced off (lab 1's way)
-    labDark();  labCard('A', "M1"); labFull();
-    if (!labStep("M1a black card")) return;
-    labLight(); labCard('B', "M1"); labFull();
-    if (!labStep("M1b LIGHT card: full + off. Watch 10 s: fade?")) return;
-    // M2: the watch's real path: displayFull() (full, memory sync, off)
-    labDark();  labCard('A', "M2"); labFull();
-    if (!labStep("M2a black card")) return;
-    labLight(); labCard('B', "M2"); displayFull();
-    if (!labStep("M2b LIGHT card: displayFull (with sync). Watch 10 s: fade?")) return;
-    // M3: full with only the library's own power-off
-    labDark();  labCard('A', "M3"); labFull();
-    if (!labStep("M3a black card")) return;
-    labLight(); labCard('B', "M3"); display.display(false);
-    if (!labStep("M3b LIGHT card: full, library off only. Watch 10 s: fade?")) return;
-    panelOff();
-    // M4: full, voltage left ON
-    labDark();  labCard('A', "M4"); labFull();
-    if (!labStep("M4a black card")) return;
-    labLight(); labCard('B', "M4"); labFullKeepOn();
-    if (!labStep("M4b LIGHT card: full, voltage ON. Watch 10 s: fade?")) return;
-    panelOff();
-    // M5: the reverse, light to dark, the watch's real path
-    labLight(); labCard('A', "M5"); labFull();
-    if (!labStep("M5a light card")) return;
-    labDark();  labCard('B', "M5"); displayFull();
-    if (!labStep("M5b BLACK card: displayFull. Watch 10 s: fade?")) return;
-    // M6: the real face, dark then light, through the real button path
-    {
-      uint8_t keep = themeMode;
-      themeMode = 1; buttonWake = true; showWatchFace(true);
-      if (!labStep("M6a the real face, DARK")) { themeMode = keep; return; }
-      themeMode = 0; buttonWake = true; showWatchFace(true);
-      if (!labStep("M6b the real face, LIGHT via the button path. Watch 10 s: fade?")) { themeMode = keep; return; }
-      themeMode = keep;
-    }
+    Serial.println("\n[lab] ===== DISPLAY LAB 3: light full, then a minute's partial =====");
+    // Each test: a LIGHT card by a full refresh, then (after your press) a
+    // partial that changes only a small number, like the minute tick. Watch
+    // ~20 s after each partial: does the card fade?
+    labLight();
+    // P0 control: partials only, no full
+    labTick('A', "P0", 1); labPartial(); panelOff();
+    if (!labStep("P0a light card by PARTIAL (control)")) return;
+    labTick('A', "P0", 2); labPartial(); panelOff();
+    if (!labStep("P0b minute partial. Watch 20 s: fade?")) return;
+    // P1: the watch today: full (0xF4 + off), then the minute's partial
+    labTick('A', "P1", 1); labFull();
+    if (!labStep("P1a light card: full as the watch does it")) return;
+    labTick('A', "P1", 2); labPartial(); panelOff();
+    if (!labStep("P1b minute partial after it. Watch 20 s: fade?")) return;
+    // P2: full sent twice, then the partial
+    labTick('A', "P2", 1); labFull(); labFull();
+    if (!labStep("P2a light card: full x2")) return;
+    labTick('A', "P2", 2); labPartial(); panelOff();
+    if (!labStep("P2b minute partial. Watch 20 s: fade?")) return;
+    // P3: full with the panel's normal soft-start
+    labTick('A', "P3", 1); labFullManual(true, false);
+    if (!labStep("P3a light card: full, STOCK booster")) return;
+    labTick('A', "P3", 2); labPartial(); panelOff();
+    if (!labStep("P3b minute partial. Watch 20 s: fade?")) return;
+    // P4: full ending the stock way (0xF7)
+    labTick('A', "P4", 1); labFullManual(false, true);
+    if (!labStep("P4a light card: full ending 0xF7")) return;
+    labTick('A', "P4", 2); labPartial(); panelOff();
+    if (!labStep("P4b minute partial. Watch 20 s: fade?")) return;
+    // P5: both, the stock driver's full exactly
+    labTick('A', "P5", 1); labFullManual(true, true);
+    if (!labStep("P5a light card: STOCK booster + 0xF7")) return;
+    labTick('A', "P5", 2); labPartial(); panelOff();
+    if (!labStep("P5b minute partial. Watch 20 s: fade?")) return;
     Serial.println("[lab] ===== done =====");
   }
 
