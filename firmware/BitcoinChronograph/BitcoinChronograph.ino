@@ -926,7 +926,15 @@ static const int DESC_TEXT_MAX = 2200;  // ~145 characters a key: 15 keys fit
 // that one closing refresh the full one instead. (A pointer to a protected
 // member, taken through a derived class, is the standard way to reach it.)
 struct EpdFull : WatchyDisplay {
-  static void arm(WatchyDisplay &e) { e.*(&EpdFull::_initial_refresh) = true; }
+  // Armed the way the library's own first refresh is: _initial_write too, so
+  // the image write first clears BOTH controller memories to white. Without
+  // it the "previous" memory still held the old face, and the full waveform
+  // drove only part of a big change: a light-to-dark flip came out grey and
+  // patchy (the 30-minute cleans changed a few digits, so it never showed).
+  static void arm(WatchyDisplay &e) {
+    e.*(&EpdFull::_initial_refresh) = true;
+    e.*(&EpdFull::_initial_write) = true;
+  }
   // The driver only sends its power-off when it believes the panel is on,
   // and it believes that only after its own power-on. A full refresh right
   // after a power-off skips that (refresh(false) re-inits only from partial
