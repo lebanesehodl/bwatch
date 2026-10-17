@@ -10542,48 +10542,74 @@ public:
     char m[72]; snprintf(m, 72, "%s-4 minute partial after it. Watch 30 s: fade?", id);
     return labStep(m);
   }
+  // The manufacturer's own partial refresh for this panel (Waveshare 1.54"
+  // V2 = GDEH0154D67, epd1in54_V2.cpp): a host-loaded waveform instead of the
+  // one in the panel's OTP. Unlike the OTP one, its unchanged-pixel rows carry
+  // drive pulses, it sets VCOM and the voltages itself, turns on RAM ping-pong
+  // and ends with the voltage off (0xCF).
+  void wsPartial() {
+    static const uint8_t WF_PART[159] = {
+      0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x80,0x80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x40,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x80,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0xF,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x1,0x1,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+      0x22,0x22,0x22,0x22,0x22,0x22,0x0,0x0,0x0,
+      0x02,0x17,0x41,0xB0,0x32,0x28 };
+    WatchyDisplay &e = display.epd2;
+    e.writeImage(labBuf(), 0, 0, 200, 200);   // RAM 0x24 (inits the panel)
+    EpdFull::cmd(e, 0x32);                    // the waveform
+    for (int i = 0; i < 153; i++) EpdFull::dat(e, WF_PART[i]);
+    EpdFull::busy(e, "_ws_lut", 100);
+    EpdFull::cmd(e, 0x3F); EpdFull::dat(e, WF_PART[153]);
+    EpdFull::cmd(e, 0x03); EpdFull::dat(e, WF_PART[154]);
+    EpdFull::cmd(e, 0x04); EpdFull::dat(e, WF_PART[155]);
+    EpdFull::dat(e, WF_PART[156]); EpdFull::dat(e, WF_PART[157]);
+    EpdFull::cmd(e, 0x2C); EpdFull::dat(e, WF_PART[158]);
+    EpdFull::cmd(e, 0x37);                    // display option: RAM ping-pong
+    const uint8_t opt[10] = {0,0,0,0,0,0x40,0,0,0,0};
+    for (int i = 0; i < 10; i++) EpdFull::dat(e, opt[i]);
+    EpdFull::cmd(e, 0x3C); EpdFull::dat(e, 0x80);   // border follows VCOM
+    EpdFull::cmd(e, 0x22); EpdFull::dat(e, 0xCF);   // mode 2, display, then off
+    EpdFull::cmd(e, 0x20);
+    EpdFull::busy(e, "_ws_Part", 1000);
+    EpdFull::markOn(e); panelOff();           // driver state: off, re-init next
+  }
   void labRun() {
     EpdFull::diag(display.epd2);
-    Serial.println("\n[lab] ===== DISPLAY LAB 3b: black card, light, a light full, a minute =====");
-    // P1: the watch today
-    if (!labPre("P1")) return;
-    labLight(); labTick('B', "P1", 1); labFull();
-    if (!labStep("P1-3 light full as the watch does it (the 30-min clean). Press")) return;
-    if (!labPost("P1")) return;
-    // P3: the light full with the panel's normal soft-start
-    if (!labPre("P3")) return;
-    labLight(); labTick('B', "P3", 1); labFullManual(true, false);
-    if (!labStep("P3-3 light full, STOCK booster. Press")) return;
-    if (!labPost("P3")) return;
-    // P4: the light full ending the stock way (0xF7)
-    if (!labPre("P4")) return;
-    labLight(); labTick('B', "P4", 1); labFullManual(false, true);
-    if (!labStep("P4-3 light full ending 0xF7. Press")) return;
-    if (!labPost("P4")) return;
-    // P5: both: the stock driver's full
-    if (!labPre("P5")) return;
-    labLight(); labTick('B', "P5", 1); labFullManual(true, true);
-    if (!labStep("P5-3 light full, STOCK booster + 0xF7. Press")) return;
-    if (!labPost("P5")) return;
-    // P6: today's full, but back to light with THREE fulls instead of two
-    labDark(); labTick('A', "P6", 0); labFull();
-    if (!labStep("P6-1 black card. Wait ~30 s, then press")) return;
-    labLight(); labTick('B', "P6", 0); labFull(); labFull(); labFull();
-    if (!labStep("P6-2 back to light with THREE fulls. Press")) return;
-    labTick('B', "P6", 1); labFull();
-    if (!labStep("P6-3 light full as the watch does it. Press")) return;
-    if (!labPost("P6")) return;
-    // P7: a clearing cycle on the way back to light: all black, all white,
-    // then the image (the manufacturer's "clear before drawing")
-    labDark(); labTick('A', "P7", 0); labFull();
-    if (!labStep("P7-1 black card. Wait ~30 s, then press")) return;
-    display.fillScreen(GxEPD_BLACK); labFull();
-    display.fillScreen(GxEPD_WHITE); labFull();
-    labLight(); labTick('B', "P7", 0); labFull();
-    if (!labStep("P7-2 back to light by CLEARING CYCLE (black, white, image). Press")) return;
-    labTick('B', "P7", 1); labFull();
-    if (!labStep("P7-3 light full as the watch does it. Press")) return;
-    if (!labPost("P7")) return;
+    Serial.println("\n[lab] ===== DISPLAY LAB 4: the manufacturer's partial =====");
+    // Q1: P1 again, as the control in this session
+    if (!labPre("Q1")) return;
+    labLight(); labTick('B', "Q1", 1); labFull();
+    if (!labStep("Q1-3 light full as the watch does it. Press")) return;
+    if (!labPost("Q1")) return;
+    // Q2: the same, but the minute's partial uses the manufacturer's waveform
+    if (!labPre("Q2")) return;
+    labLight(); labTick('B', "Q2", 1); labFull();
+    if (!labStep("Q2-3 light full as the watch does it. Press")) return;
+    labTick('B', "Q2", 2); wsPartial();
+    if (!labStep("Q2-4 MANUFACTURER partial. Watch 30 s: fade?")) return;
+    labTick('B', "Q2", 3); wsPartial();
+    if (!labStep("Q2-5 another one (next minute). Still crisp? Number right?")) return;
+    labTick('B', "Q2", 4); wsPartial();
+    if (!labStep("Q2-6 and another. Any ghost of 2 or 3 around the number?")) return;
+    // Q3: manufacturer partials on a BLACK card too (the JOE case)
+    labDark(); labTick('A', "Q3", 1); labFull();
+    if (!labStep("Q3-1 black card full. Press")) return;
+    labTick('A', "Q3", 2); wsPartial();
+    if (!labStep("Q3-2 MANUFACTURER partial on black. Fade? Number right?")) return;
     Serial.println("[lab] ===== done =====");
   }
 
