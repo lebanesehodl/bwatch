@@ -6425,6 +6425,7 @@ public:
   // (lab M5, L3). "Mostly black" is read from the frame itself, so cards,
   // the night face and the theme all count without their own flags.
   int8_t glass = -1;                   // glass mostly black? -1: not known yet
+  static const uint8_t FACE_SETTLE = 254;
   bool frameDark() {
     const uint8_t *fb = display.*epdGet(EpdBufTag());
     uint32_t white = 0;
@@ -6445,6 +6446,7 @@ public:
     panelOff();
     justFull = true;
     glass = now ? 1 : 0;
+    if (was && !now) facePartials = FACE_SETTLE;   // and once more next minute
   }
   void partialSync() { display.display(true); glass = frameDark() ? 1 : 0; }
   // THE FADE (found with the serial log, Oct 16): a full refresh came out
@@ -6490,7 +6492,7 @@ public:
     ownShow = false;
     if (partial) partialRefresh();
     else if (justFull) justFull = false;      // the draw already sent it full
-    else { display.display(false); justFull = true; }
+    else displayFull();                       // the same rules: double, settle
     guiState = WATCHFACE_STATE;
     offIfFull();
   }
@@ -7769,7 +7771,15 @@ public:
     // menu) the face goes grey and earlier screens show through. So every
     // PARTIALS_BEFORE_FULL minute ticks, the tick is a full refresh instead.
     // Only on a timer wake: never in the middle of someone pressing buttons.
-    if (!prePaint && timerWake && facePartials < 255) facePartials++;
+    // SETTLE: the minute after a dark-to-light switch, a full again (the double
+    // full alone still left a slight fade at that first partial). Marked by
+    // FACE_SETTLE in facePartials, so no new RTC variable; it overrides the
+    // press grace on purpose: that partial is the one that fades.
+    if (!prePaint && timerWake && facePartials == FACE_SETTLE) {
+      restExitFull = true;
+      epdLog("settle: full on the minute after dark->light");
+    }
+    if (!prePaint && timerWake && facePartials < FACE_SETTLE) facePartials++;
     if (!prePaint && timerWake && facePartials >= PARTIALS_BEFORE_FULL &&
         wakeMin >= awakeTill)                     // not while being looked at
       restExitFull = true;
