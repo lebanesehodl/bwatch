@@ -10729,7 +10729,17 @@ public:
   void labRun() {
     EpdFull::diag(display.epd2);
     Serial.println("\n[lab] ===== DISPLAY LAB 5: dark mode, OTP vs WS partial =====");
-    if (labDarkRun("W1", false) && labDarkRun("W2", true)) {}
+    // W3: light after black, the case that fades on the wrist (after JOE's
+    // cards, a switch to light, or a clearing cycle, whose black frames count
+    // too): lab 3b's sequence, with the minute partial done the WS way. In 3b
+    // every OTP variant (P1-P7) faded at that partial.
+    if (labDarkRun("W1", false) && labDarkRun("W2", true) && labPre("W3")) {
+      labLight(); labTick('B', "W3", 1); labFull(); labKeep();
+      if (labStep("W3-3 light full as the watch does it. Press")) {
+        labTick('B', "W3", 2); wsPartial();
+        labStep("W3-4 minute tick by WS partial. Watch 30 s: fade?");
+      }
+    }
     // whatever ran, put the controller back as the watch expects it
     cleanScreen();
     Serial.println("[lab] ===== done =====");
