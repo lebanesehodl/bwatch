@@ -6440,6 +6440,18 @@ public:
       white += __builtin_popcount(fb[i]);
     return white < (uint32_t)WatchyDisplay::WIDTH * WatchyDisplay::HEIGHT / 2;
   }
+  // HOLD MENU on a face: clean the screen. A tap still opens the menu (on
+  // release now). BACK stays the face button; a held BACK means nothing new.
+  bool menuHoldClean() {
+    pinMode(MENU_BTN_PIN, INPUT);
+    if (!heldFor(MENU_BTN_PIN, 800)) return false;
+    buzz(30, 2);
+    cleanScreen();
+    waitAllRelease();
+    guiState = WATCHFACE_STATE;
+    buttonWake = true;
+    return true;
+  }
   // a clearing cycle, then the next face draw goes up full
   void cleanScreen() {
     epdLog("clean: clearing cycle");
@@ -11277,8 +11289,10 @@ public:
         redraw = true; waitRelease(DOWN_BTN_PIN);
       }
       if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
-        waitRelease(MENU_BTN_PIN);
-        dockMenuSession();                    // powered, immortal menu
+        if (!menuHoldClean()) {              // held: clean (then redraw)
+          waitRelease(MENU_BTN_PIN);
+          dockMenuSession();                  // powered, immortal menu
+        }
         redraw = true;                        // repaint the face after
       }
 
@@ -11313,14 +11327,7 @@ public:
       cleanScreen();                  // and a clean glass to come home to
       return true;
     }
-    // HOLD BACK (not travelling): clean the screen. Black, white, black,
-    // white, then the face by a full refresh. For whenever the glass looks
-    // grey or ghosted; the caller's redraw is the full one.
-    if (!travelActive && heldFor(BACK_BTN_PIN, 800)) {
-      buzz(30, 2);
-      cleanScreen();
-      return true;
-    }
+
     dispMode = nextFace(dispMode);
     walletPeek = false;               // leaving the wallet ends a peek
     return false;
@@ -11432,7 +11439,8 @@ public:
     }
     if (guiState == WATCHFACE_STATE) {
       if (wake & MENU_BTN_MASK) {
-        openMenu();
+        if (menuHoldClean()) { RTC.read(currentTime); showWatchFace(true); }
+        else openMenu();
       } else if (wake & BACK_BTN_MASK) {
         backPressed();
         RTC.read(currentTime); showWatchFace(true);
@@ -11515,8 +11523,8 @@ public:
           lastTimeout = millis();
           if (guiState == MAIN_MENU_STATE) dispatchMenu();
           else if (guiState == WATCHFACE_STATE) {
-            buttonWake = true;
-            openMenu();
+            if (menuHoldClean()) { RTC.read(currentTime); showWatchFace(true); }
+            else { buttonWake = true; openMenu(); }
           }
           waitRelease(MENU_BTN_PIN);
         } else if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) {
