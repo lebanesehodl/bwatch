@@ -6523,12 +6523,12 @@ public:
   // of drawWatchFace(): displayFull(), then the caller's own partial lands
   // on an identical image and changes nothing.
   void fullOnClose() { fullArmed = true; }
-  // After ANY refresh while the watch stays awake (button loop, dock, payment
-  // vigil, wallet scan): the panel's high voltage off. A partial leaves it on
-  // too, and on the dock the LN QR, freshly drawn, faded to grey in ~15 s.
-  // Before deep sleep it does not matter (the panel's sleep cuts it); awake,
-  // it does. ~150 ms, and the next refresh powers back up by itself.
-  void offIfFull() { panelOff(); }
+  // No power-off after a PARTIAL any more (Oct 17). Card-to-card ghosting on
+  // JOE began with 0aa0e2c, which powered the panel off after every awake
+  // refresh; lab L4 (partials A->B->C with no power-off between) ran clean.
+  // The LN QR fade that prompted 0aa0e2c was the identical partial after a
+  // full, which is skipped now. Fulls still power off (displayFull).
+  void offIfFull() {}
   // our own calls get the power-off; the library's minute tick calls its own
   // version and goes straight to deep sleep, which hibernates the panel
   // The library's version, with our refreshes: no identical partial after a
@@ -7992,7 +7992,7 @@ public:
     // face's palette, so normally nothing flips. If the panel is the other
     // way round (the theme changed since it was painted), full, once.
     justFull = false;
-    if (themeDark == paintedDark) { partialSync(); panelOff(); }   // the menu waits 5 s awake
+    if (themeDark == paintedDark) partialSync();   // the menu waits 5 s awake
     else displayFull();                    // full, then the voltage off
     paintedDark = themeDark;
     guiState = MAIN_MENU_STATE;
@@ -8133,7 +8133,7 @@ public:
         centerSmall("UP/DOWN: PICK", 170);
         centerSmall(sel == 2 ? "MENU: NEXT (HOURS)   BACK: CANCEL"
                              : "MENU: SET   BACK: CANCEL", 182);
-        partialSync(); panelOff();
+        partialSync();
       }
       delay(40);
     }
