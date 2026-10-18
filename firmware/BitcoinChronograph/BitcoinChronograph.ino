@@ -587,8 +587,9 @@ RTC_DATA_ATTR uint32_t awakeTill     = 0;      // wakeMin the last press lasts t
 RTC_DATA_ATTR uint8_t  joeStep       = 0;      // JOE's BACK cycle: 0 time, then
                                                // each person, then the watch;
                                                // a minute tick resets
-RTC_DATA_ATTR bool     joeCardsSeen  = false;  // a card was up since entering
-                                               // JOE: leaving it is a full
+RTC_DATA_ATTR bool     joeCardsSeen  = false;  // a card is on the glass: leaving
+                                               // JOE from it is a full
+RTC_DATA_ATTR uint8_t  joeLastStep   = 0;      // the JOE step last drawn
 RTC_DATA_ATTR int8_t   evAgeWho      = -1;     // a block birthday waiting on the
 RTC_DATA_ATTR uint32_t evAgeN        = 0;      // glass: who (4 = the watch), age
 RTC_DATA_ATTR bool     captivePortal = false;  // associated to WiFi, but a
@@ -6059,12 +6060,11 @@ public:
   // everything, BACK comes home from a trip (or, on WAL, hides the balance /
   // verifies the receive address), MENU cleans the screen. The theme lives
   // in My Watch > Theme.
-  // Leaving JOE after the cards were cycled: the partials between cards
-  // leave traces of each other, so the next face goes on with a full.
+  // Leaving JOE with a card on the glass: the next face goes on with a full.
   void leaveFace(int to) {
-    if (dispMode == M_JOE && to != M_JOE && joeCardsSeen) {
-      joeCardsSeen = false;
-      fullOnClose();
+    if (dispMode == M_JOE && to != M_JOE) {
+      if (joeCardsSeen) fullOnClose();
+      joeCardsSeen = false; joeStep = 0; joeLastStep = 0;
     }
     dispMode = to;
     walletPeek = false;               // leaving the wallet ends a peek
@@ -6184,7 +6184,7 @@ public:
     // MIN/BLK readout are computed from it, so a garbage value moves the
     // 2028 halving by months without anything looking obviously broken.
     avgBlockSec = 600;
-    joeCardsSeen = false; captivePortal = false; resting = false;
+    joeCardsSeen = false; joeLastStep = 0; captivePortal = false; resting = false;
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
     restState = 0; restPose = 0; sleptSince = 0; stillRun = 0;
     candleWake = 0; goldWake = 0; slowWake = 0; fngWake = 0; dayAgoUsd = 0;
@@ -6919,9 +6919,16 @@ public:
   void drawJoeFace() {
     if (!buttonWake) joeStep = 0;                          // one glance only
     if (joeStep >= joeSteps()) joeStep = 0;
+    // Any change that puts a card up or takes one down is a full refresh.
+    // The OTP partial waveform leaves the last card's lines in the black
+    // (card 2 showed card 1, card 3 showed both), and a card change is a
+    // press the wearer made, so the flash answers it rather than surprises.
+    if (!prePaint && joeStep != joeLastStep && (joeStep >= 1 || joeLastStep >= 1))
+      fullOnClose();
+    if (!prePaint) joeLastStep = joeStep;
+    joeCardsSeen = (joeStep >= 1);
     if (joeStep >= 1) {                                    // a person, or the watch
       int k = joeStep - 1, n = peopleCount();
-      joeCardsSeen = true;
       if (k < n) drawPersonCard(personAt(k), k + 1, n);
       else drawWatchCard();
       if (!paintedDark) fullOnClose();                     // black card: a flip
