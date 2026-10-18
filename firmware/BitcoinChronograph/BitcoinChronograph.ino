@@ -6440,6 +6440,19 @@ public:
       white += __builtin_popcount(fb[i]);
     return white < (uint32_t)WatchyDisplay::WIDTH * WatchyDisplay::HEIGHT / 2;
   }
+  // a clearing cycle, then the next face draw goes up full
+  void cleanScreen() {
+    epdLog("clean: clearing cycle");
+    display.setFullWindow();
+    for (int i = 0; i < 2; i++) {
+      display.fillScreen(GxEPD_BLACK); display.display(false);
+      display.fillScreen(GxEPD_WHITE); display.display(false);
+    }
+    panelOff();
+    glass = 0;                         // white on the glass now
+    restExitFull = true;               // the face that follows: full
+    facePartials = 0;
+  }
   void displayFull() {
     bool now = frameDark();
     bool was = glass < 0 ? paintedAtStart : glass == 1;
@@ -10595,21 +10608,9 @@ public:
     labLight(); labTick('B', "Q1", 1); labFull();
     if (!labStep("Q1-3 light full as the watch does it. Press")) return;
     if (!labPost("Q1")) return;
-    // Q2: the same, but the minute's partial uses the manufacturer's waveform
-    if (!labPre("Q2")) return;
-    labLight(); labTick('B', "Q2", 1); labFull();
-    if (!labStep("Q2-3 light full as the watch does it. Press")) return;
-    labTick('B', "Q2", 2); wsPartial();
-    if (!labStep("Q2-4 MANUFACTURER partial. Watch 30 s: fade?")) return;
-    labTick('B', "Q2", 3); wsPartial();
-    if (!labStep("Q2-5 another one (next minute). Still crisp? Number right?")) return;
-    labTick('B', "Q2", 4); wsPartial();
-    if (!labStep("Q2-6 and another. Any ghost of 2 or 3 around the number?")) return;
-    // Q3: manufacturer partials on a BLACK card too (the JOE case)
-    labDark(); labTick('A', "Q3", 1); labFull();
-    if (!labStep("Q3-1 black card full. Press")) return;
-    labTick('A', "Q3", 2); wsPartial();
-    if (!labStep("Q3-2 MANUFACTURER partial on black. Fade? Number right?")) return;
+    // (Q2/Q3, the manufacturer's host-loaded partial, were removed: without
+    // the module reset before each partial its RAM ping-pong desynced and
+    // ghosted the whole panel, Oct 17)
     Serial.println("[lab] ===== done =====");
   }
 
@@ -11309,6 +11310,15 @@ public:
       travelActive = false;
       buzz(40, 2);
       Serial.println("[travel] home");
+      cleanScreen();                  // and a clean glass to come home to
+      return true;
+    }
+    // HOLD BACK (not travelling): clean the screen. Black, white, black,
+    // white, then the face by a full refresh. For whenever the glass looks
+    // grey or ghosted; the caller's redraw is the full one.
+    if (!travelActive && heldFor(BACK_BTN_PIN, 800)) {
+      buzz(30, 2);
+      cleanScreen();
       return true;
     }
     dispMode = nextFace(dispMode);
