@@ -584,14 +584,13 @@ RTC_DATA_ATTR uint32_t sleptSince    = 0;      // RTC epoch a long sleep began,
                                                // so wakeMin can catch up
 RTC_DATA_ATTR uint16_t stillRun      = 0;      // consecutive flat dead-still wakes
 RTC_DATA_ATTR uint32_t awakeTill     = 0;      // wakeMin the last press lasts to
-RTC_DATA_ATTR uint8_t  joeStep       = 0;      // JOE's UP cycle: 0 time, 1 the
-                                               // chain, then each person, then
-                                               // the watch; a minute tick resets
+RTC_DATA_ATTR uint8_t  joeStep       = 0;      // JOE's BACK cycle: 0 time, then
+                                               // each person, then the watch;
+                                               // a minute tick resets
+RTC_DATA_ATTR bool     joeCardsSeen  = false;  // a card was up since entering
+                                               // JOE: leaving it is a full
 RTC_DATA_ATTR int8_t   evAgeWho      = -1;     // a block birthday waiting on the
 RTC_DATA_ATTR uint32_t evAgeN        = 0;      // glass: who (4 = the watch), age
-RTC_DATA_ATTR bool     joeReveal     = false;  // tap UP in JOE and the date
-                                               // line shows the block height
-                                               // for one refresh
 RTC_DATA_ATTR bool     captivePortal = false;  // associated to WiFi, but a
                                                // portal is intercepting: the
                                                // watch cannot accept terms,
@@ -6060,9 +6059,19 @@ public:
   // everything, BACK comes home from a trip (or, on WAL, hides the balance /
   // verifies the receive address), MENU cleans the screen. The theme lives
   // in My Watch > Theme.
-  void downPressed() {
-    dispMode = prevFace(dispMode);
+  // Leaving JOE after the cards were cycled: the partials between cards
+  // leave traces of each other, so the next face goes on with a full.
+  void leaveFace(int to) {
+    if (dispMode == M_JOE && to != M_JOE && joeCardsSeen) {
+      joeCardsSeen = false;
+      fullOnClose();
+    }
+    dispMode = to;
     walletPeek = false;               // leaving the wallet ends a peek
+  }
+
+  void downPressed() {
+    leaveFace(prevFace(dispMode));
   }
   void upPressed() {
     pinMode(UP_BTN_PIN, INPUT);
@@ -6075,8 +6084,7 @@ public:
                           ? wakeMin - walletEveryMin() : 0;
       return;
     }
-    dispMode = nextFace(dispMode);
-    walletPeek = false;
+    leaveFace(nextFace(dispMode));
   }
 
   // Below 10 sat/vB the decimals are the whole story — 0.25 and 0.9 are
@@ -6176,7 +6184,7 @@ public:
     // MIN/BLK readout are computed from it, so a garbage value moves the
     // 2028 halving by months without anything looking obviously broken.
     avgBlockSec = 600;
-    joeReveal = false; captivePortal = false; resting = false;
+    joeCardsSeen = false; captivePortal = false; resting = false;
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
     restState = 0; restPose = 0; sleptSince = 0; stillRun = 0;
     candleWake = 0; goldWake = 0; slowWake = 0; fngWake = 0; dayAgoUsd = 0;
@@ -6821,10 +6829,9 @@ public:
     drawStatCard(top, "BWATCH", a, a < 0 ? "BLOCKS UNTIL UNBOXED" : "BLOCKS WITNESSED", l2, l3);
   }
   // how many steps JOE's UP cycle has: time, chain, people, watch
-  int joeSteps() { return 2 + peopleCount() + (watchSince() > 0 ? 1 : 0); }
+  int joeSteps() { return 1 + peopleCount() + (watchSince() > 0 ? 1 : 0); }
   void joeAdvance() {
     joeStep = (joeStep + 1) % joeSteps();
-    joeReveal = (joeStep == 1);
   }
 
   // the block-birthday card (an event, waiting on the glass)
@@ -6910,10 +6917,11 @@ public:
   }
 
   void drawJoeFace() {
-    if (!buttonWake) { joeStep = 0; joeReveal = false; }   // one glance only
+    if (!buttonWake) joeStep = 0;                          // one glance only
     if (joeStep >= joeSteps()) joeStep = 0;
-    if (joeStep >= 2) {                                    // a person, or the watch
-      int k = joeStep - 2, n = peopleCount();
+    if (joeStep >= 1) {                                    // a person, or the watch
+      int k = joeStep - 1, n = peopleCount();
+      joeCardsSeen = true;
       if (k < n) drawPersonCard(personAt(k), k + 1, n);
       else drawWatchCard();
       if (!paintedDark) fullOnClose();                     // black card: a flip
@@ -6958,15 +6966,6 @@ public:
     int bp = batteryPctShown();
     int fw = (bp >= 0) ? (int)(46.0f * bp / 100.0f + 0.5f) : 0;
     if (fw > 0) display.fillRect(78, SY + 5, fw, 5, fg());
-
-    char right[16];
-    if (joeReveal) snprintf(right, 16, "%ld", estHeight());
-    else           snprintf(right, 16, "%s", "");
-    if (right[0]) {
-      int16_t x1, y1; uint16_t w, h;
-      display.getTextBounds(right, 0, 0, &x1, &y1, &w, &h);
-      display.setCursor(198 - w, SY + 3); display.print(right);
-    }
   }
 
   bool callerFull = false;
@@ -7034,7 +7033,6 @@ public:
     if (!buttonWake) {
       wakeMin += carried > 1 ? carried : 1;   // one tick per minute-wake,
                                               // or as many as were slept
-      joeReveal = false;               // the reveal lasts one glance only
       // and so does a peek at the balance (not on the re-render after a wallet
       // sweep, which also arrives here without a button: that would undo
       // the peek the wearer just asked for)
