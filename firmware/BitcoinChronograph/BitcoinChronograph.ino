@@ -10652,11 +10652,20 @@ public:
     char m[72]; snprintf(m, 72, "%s-4 minute partial after it. Watch 30 s: fade?", id);
     return labStep(m);
   }
-  // The manufacturer's own partial refresh for this panel (Waveshare 1.54"
-  // V2 = GDEH0154D67, epd1in54_V2.cpp): a host-loaded waveform instead of the
-  // one in the panel's OTP. Unlike the OTP one, its unchanged-pixel rows carry
-  // drive pulses, it sets VCOM and the voltages itself, turns on RAM ping-pong
-  // and ends with the voltage off (0xCF).
+  // The manufacturer's own partial waveform for this panel (Waveshare 1.54"
+  // V2 = GDEH0154D67, epd1in54_V2.cpp WF_PARTIAL_1IN54_0), loaded by the
+  // host instead of the panel's OTP one. The difference that matters: its
+  // unchanged-pixel rows carry a holding pulse (black-to-black gets one frame
+  // toward black, white-to-white one toward white). The OTP waveform leaves
+  // unchanged pixels undriven, and undriven black drifts grey.
+  //
+  // Lab 4 tried it with Waveshare's RAM ping-pong and ghosted the panel. This
+  // time: NO ping-pong (0x37 untouched), and the old/new RAMs written by us
+  // every time (0x26 = what is on the glass, 0x24 = the new frame), so the
+  // controller compares exactly what it should. The waveform is written before
+  // every partial: a full refresh (0xF4) reloads the OTP one over it.
+  uint8_t labPrev[5000];                         // what is on the glass
+  void labKeep() { memcpy(labPrev, labBuf(), 5000); }
   void wsPartial() {
     static const uint8_t WF_PART[159] = {
       0x0,0x40,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,
@@ -10679,35 +10688,50 @@ public:
       0x22,0x22,0x22,0x22,0x22,0x22,0x0,0x0,0x0,
       0x02,0x17,0x41,0xB0,0x32,0x28 };
     WatchyDisplay &e = display.epd2;
-    e.writeImage(labBuf(), 0, 0, 200, 200);   // RAM 0x24 (inits the panel)
-    EpdFull::cmd(e, 0x32);                    // the waveform
+    e.writeImageForFullRefresh(labPrev, 0, 0, 200, 200);  // 0x26 (and 0x24) = old
+    e.writeImage(labBuf(), 0, 0, 200, 200);                // 0x24 = new
+    EpdFull::cmd(e, 0x32);                                 // the waveform
     for (int i = 0; i < 153; i++) EpdFull::dat(e, WF_PART[i]);
-    EpdFull::busy(e, "_ws_lut", 100);
     EpdFull::cmd(e, 0x3F); EpdFull::dat(e, WF_PART[153]);
     EpdFull::cmd(e, 0x03); EpdFull::dat(e, WF_PART[154]);
     EpdFull::cmd(e, 0x04); EpdFull::dat(e, WF_PART[155]);
     EpdFull::dat(e, WF_PART[156]); EpdFull::dat(e, WF_PART[157]);
     EpdFull::cmd(e, 0x2C); EpdFull::dat(e, WF_PART[158]);
-    EpdFull::cmd(e, 0x37);                    // display option: RAM ping-pong
-    const uint8_t opt[10] = {0,0,0,0,0,0x40,0,0,0,0};
-    for (int i = 0; i < 10; i++) EpdFull::dat(e, opt[i]);
-    EpdFull::cmd(e, 0x3C); EpdFull::dat(e, 0x80);   // border follows VCOM
-    EpdFull::cmd(e, 0x22); EpdFull::dat(e, 0xCF);   // mode 2, display, then off
+    EpdFull::cmd(e, 0x22); EpdFull::dat(e, 0xCF);   // mode 2, no OTP load, off after
     EpdFull::cmd(e, 0x20);
     EpdFull::busy(e, "_ws_Part", 1000);
-    EpdFull::markOn(e); panelOff();           // driver state: off, re-init next
+    EpdFull::markOn(e); panelOff();                 // driver state: off, re-init next
+    labKeep();
+  }
+  void otpPartial() { display.display(true); labKeep(); }   // what the watch does
+  // Dark mode, as worn: a dark full, then a run of mode switches by partial,
+  // then a minute tick. The same script with the panel's own (OTP) partial
+  // and with the manufacturer's loaded one.
+  bool labDarkRun(const char *id, bool ws) {
+    char m[80];
+    labDark(); labTick('A', id, 0); displayFull(); labKeep();
+    snprintf(m, 80, "%s-1 dark full. Watch 30 s: does it fade by itself?", id);
+    if (!labStep(m)) return false;
+    const char seq[8] = {'B','C','A','B','C','A','B','C'};
+    for (int i = 0; i < 8; i++) {
+      labTick(seq[i], id, 0);
+      if (ws) wsPartial(); else otpPartial();
+      delay(1200);
+    }
+    if (!ws) panelOff();
+    snprintf(m, 80, "%s-2 eight switches by %s partial. Grey? ghosts?", id, ws ? "WS" : "OTP");
+    if (!labStep(m)) return false;
+    labTick('C', id, 1);
+    if (ws) wsPartial(); else { otpPartial(); panelOff(); }
+    snprintf(m, 80, "%s-3 a minute tick. Watch 30 s: fade?", id);
+    return labStep(m);
   }
   void labRun() {
     EpdFull::diag(display.epd2);
-    Serial.println("\n[lab] ===== DISPLAY LAB 4: the manufacturer's partial =====");
-    // Q1: P1 again, as the control in this session
-    if (!labPre("Q1")) return;
-    labLight(); labTick('B', "Q1", 1); labFull();
-    if (!labStep("Q1-3 light full as the watch does it. Press")) return;
-    if (!labPost("Q1")) return;
-    // (Q2/Q3, the manufacturer's host-loaded partial, were removed: without
-    // the module reset before each partial its RAM ping-pong desynced and
-    // ghosted the whole panel, Oct 17)
+    Serial.println("\n[lab] ===== DISPLAY LAB 5: dark mode, OTP vs WS partial =====");
+    if (labDarkRun("W1", false) && labDarkRun("W2", true)) {}
+    // whatever ran, put the controller back as the watch expects it
+    cleanScreen();
     Serial.println("[lab] ===== done =====");
   }
 
