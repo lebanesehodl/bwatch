@@ -2480,8 +2480,8 @@ public:
       backPressed();                 // test the hold BEFORE releasing:
       waitRelease(BACK_BTN_PIN);     // afterwards there is nothing to measure
     } else if (p == UP_BTN_PIN) {
+      upPressed();
       waitRelease(UP_BTN_PIN);
-      upShortPress();
     } else {
       downPressed();
       waitRelease(DOWN_BTN_PIN);
@@ -4842,8 +4842,8 @@ public:
     display.setCursor(14, oy + qs + 8);  display.print(shortAddr);
     display.setCursor(14, oy + qs + 17);
     display.print("RECV #"); display.print(recvIndex);
-    display.print(lnConfigured() ? " UP:LN" : " UP:BAL");
-    display.print(" DOWN:VERIFY");
+    display.print(lnConfigured() ? " BACK:LN" : " BACK:BAL");
+    display.print(" HOLD:VERIFY");
     drawModeStrip();
   }
 
@@ -6050,29 +6050,28 @@ public:
   //   shown balance   hold: hide it (and keep it hidden: the privacy setting)
   // Hiding is quick, for the moment someone looks over a shoulder; showing
   // it for good again is deliberate, in My Watch > Privacy.
+  // BUTTONS ON A FACE (Oct 17): UP next face, DOWN previous face, BACK the
+  // face's own action (box, currency, JOE, WAL views). Held: UP fetches
+  // everything, BACK comes home from a trip (or, on WAL, hides the balance /
+  // verifies the receive address), MENU cleans the screen. The theme lives
+  // in My Watch > Theme.
   void downPressed() {
-    if (dispMode == M_WALT && walletView == 0) {
-      bool hidden = walletPrivate && !walletPeek;
-      bool held = heldFor(DOWN_BTN_PIN, 700);
-      if (held) {
-        if (!hidden) {
-          walletPrivate = true; walletPeek = false;
-          savePrefs();
-          buzz(40, 2);
-          Serial.println("[wal] balance hidden");
-        }
-        return;                        // held on a hidden balance: nothing
-      }
-      if (hidden) { walletPeek = true; return; }
-      // a tap on a shown balance: the theme, as everywhere
-    }
-    if (dispMode == M_WALT && walletView == 1 && !isDemoWallet()) {
-      verifyScreen();                  // the receive QR: check it, by eye
+    dispMode = prevFace(dispMode);
+    walletPeek = false;               // leaving the wallet ends a peek
+  }
+  void upPressed() {
+    pinMode(UP_BTN_PIN, INPUT);
+    if (heldFor(UP_BTN_PIN, 600)) {   // LONG UP, any face: fetch
+      buzz(40, 2);                    // EVERYTHING now
+      forceFetch = true;
+      fetchPending = true;            // and the corner reports it
+      if (dispMode == M_WALT)         // (in WAL: rescan too)
+        lastWalletMin = (wakeMin > walletEveryMin())
+                          ? wakeMin - walletEveryMin() : 0;
       return;
     }
-    themeMode = (themeMode + 1) % 3;
-    savePrefs();
-    showThemeName = true;
+    dispMode = nextFace(dispMode);
+    walletPeek = false;
   }
 
   // Below 10 sat/vB the decimals are the whole story — 0.25 and 0.9 are
@@ -6764,7 +6763,7 @@ public:
     char top[34], l1[34], l2[34], l3[34], g[16];
     long h = ctxHeight(); int64_t t = ctxUtc();
     if (travelActive) { grouped(g, 16, h); snprintf(top, 34, "AT BLOCK %s", g); }
-    else snprintf(top, 34, "%d OF %d - UP FOR NEXT", k, n);
+    else snprintf(top, 34, "%d OF %d - BACK FOR NEXT", k, n);
     long long a = ageOf(i, h, t);
     l3[0] = 0;
     if (bornBefore(i)) {
@@ -7780,8 +7779,8 @@ public:
     const char *title = travelActive     ? destLine
                       : showThemeName    ? THEME_NAMES[themeMode]
                       : (dispMode == M_WALT && walletPrivate && !walletPeek &&
-                         walletView == 0) ? "DOWN = PEEK"
-                      : (dispMode == M_WALT) ? "UP = RECEIVE QR"
+                         walletView == 0) ? "BACK = PEEK"
+                      : (dispMode == M_WALT) ? "BACK = RECEIVE QR"
                       : (dispMode == M_MEMP) ? memTitle()
                                              : "TICK TOCK NEXT BLOCK";
     showThemeName = false;
@@ -7860,7 +7859,7 @@ public:
           backPressed();                           // next instrument, or home
           lastWalletMin = wakeMin;                 // do not immediately rescan
         } else if (btn == UP_BTN_PIN) {
-          walletToggleView();
+          upPressed();
         } else if (btn == DOWN_BTN_PIN) {
           downPressed();
         } else if (btn == MENU_BTN_PIN) {
@@ -7898,7 +7897,7 @@ public:
     "Alarms", "Time Travel", "My Watch  >", "Setup Wallet", "Settings  >",
     "About BWATCH"};
   const char *const MY_ITEMS[MY_LEN] = {
-    "Faces", "Currency", "Dark Hours", "Night Hours", "Haptics", "Battery",
+    "Faces", "Currency", "Theme", "Night Hours", "Haptics", "Battery",
     "Privacy", "Birthdays"};
   const char *const SET_ITEMS[SET_LEN] = {
     "Set Time", "Set Timezone", "Sync NTP", "Setup WiFi", "Networks",
@@ -8061,6 +8060,66 @@ public:
   // (kind 1). From = To is no window at all. UP/DOWN change the hour, MENU
   // moves From -> To -> save, BACK leaves without changing anything (so does
   // 30 s of nothing).
+  // My Watch > Theme: LIGHT, DARK or AUTO (AUTO goes on to its hours)
+  void themeScreen() {
+    guiState = APP_STATE;
+    pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
+    waitAllRelease();
+    static const char *NAMES[3] = { "LIGHT", "DARK", "AUTO" };
+    int sel = themeMode < 3 ? themeMode : 0;
+    bool redraw = true;
+    unsigned long last = millis();
+    display.setFullWindow();
+    while (1) {
+      if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) break;
+      if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        themeMode = sel;
+        savePrefs();
+        themeDark = darkNow();
+        buzz(30, 2);
+        Serial.printf("[theme] %s\n", NAMES[sel]);
+        waitAllRelease();
+        if (sel == 2) { hourWindowScreen(1); return; }   // AUTO: its hours
+        break;
+      }
+      if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + 2) % 3; redraw = true; last = millis(); waitRelease(UP_BTN_PIN); }
+      if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
+        sel = (sel + 1) % 3; redraw = true; last = millis(); waitRelease(DOWN_BTN_PIN); }
+      if (millis() - last > 30000) break;
+      if (redraw) {
+        redraw = false;
+        display.fillScreen(bg());
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setTextColor(fg());
+        display.setCursor(0, 22); display.println("Theme");
+        for (int i = 0; i < 3; i++) {
+          int y = 60 + i * 30;
+          display.setCursor(16, y);
+          if (i == sel) {
+            display.fillRect(8, y - 15, 184, 21, fg());
+            display.setTextColor(bg());
+          } else display.setTextColor(fg());
+          display.println(NAMES[i]);
+          display.setTextColor(fg());
+        }
+        display.setFont(NULL);
+        char a[34];
+        if (sel == 2) snprintf(a, 34, "DARK %02d:00 TO %02d:00", darkFrom, darkTo);
+        else snprintf(a, 34, "%s", sel ? "BLACK FACE, ALL DAY" : "WHITE FACE, ALL DAY");
+        centerSmall(a, 150);
+        centerSmall("UP/DOWN: PICK", 170);
+        centerSmall(sel == 2 ? "MENU: NEXT (HOURS)   BACK: CANCEL"
+                             : "MENU: SET   BACK: CANCEL", 182);
+        partialSync(); panelOff();
+      }
+      delay(40);
+    }
+    waitAllRelease();
+    myShowMenu(menuIndex, false);
+  }
+
   void hourWindowScreen(int kind) {
     guiState = APP_STATE;
     pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
@@ -8113,7 +8172,7 @@ public:
           if (hrs == 0) snprintf(a, 34, "AUTO THEME NEVER DARK");
           else          snprintf(a, 34, "%d H OF DARK FACE", hrs);
           snprintf(b, 34, themeMode == 2 ? "THEME IS AUTO: APPLIES NOW"
-                                         : "DOWN ON FACE: THEME AUTO");
+                                         : "MY WATCH > THEME: AUTO");
         }
         centerSmall(a, 118);
         centerSmall(b, 130);
@@ -8342,11 +8401,11 @@ public:
           }
         } else {
           if (val[0] == 1) {
-            snprintf(a, 34, "BALANCE HIDDEN: DOWN PEEKS");
+            snprintf(a, 34, "BALANCE HIDDEN: BACK PEEKS");
             snprintf(b, 34, "QR VIEWS STAY USABLE");
           } else {
             snprintf(a, 34, "BALANCE ON THE WAL FACE");
-            snprintf(b, 34, "HOLD DOWN ON WAL: HIDE");
+            snprintf(b, 34, "HOLD BACK ON WAL: HIDE");
           }
         }
         int iy = rows == 2 ? 118 : 96;
@@ -10917,7 +10976,7 @@ public:
     } else if (menuLevel == 1) switch (menuIndex) {
       case 0: facesScreen(); break;                     // which faces cycle
       case 1: currencyScreen(); break;                  // the fiat it speaks
-      case 2: hourWindowScreen(1); break;               // AUTO theme hours
+      case 2: themeScreen(); break;                     // light/dark/auto
       case 3: hourWindowScreen(0); break;               // the wearer's night
       case 4: optionsScreen(OPT_HAPTICS); break;        // block, price buzz
       case 5: optionsScreen(OPT_BATTERY); break;        // fetch cadence
@@ -11258,30 +11317,7 @@ public:
       }
       if (digitalRead(UP_BTN_PIN) == BTN_ACTIVE) {
         pinMode(UP_BTN_PIN, INPUT);
-        if (heldFor(UP_BTN_PIN, 600)) {    // LONG UP, any mode: fetch
-          buzz(40, 2);                 // EVERYTHING now — the wrist
-          forceFetch = true;               // shouldn't wait 15 minutes
-          fetchPending = true;             // and the corner reports it
-          if (dispMode == M_WALT)          // (in WAL: rescan too)
-            lastWalletMin = (wakeMin > walletEveryMin())
-                              ? wakeMin - walletEveryMin() : 0;
-        } else if (dispMode == M_JOE) {
-          joeAdvance();                // the chain, people, the watch
-        } else if (dispMode == M_WALT) walletToggleView();
-        else {
-          if (dispMode == M_PRICE || dispMode == M_SATS ||
-              dispMode == M_MCAP) {        // the CURRENCY dial: SATS
-            curIdx = nextCur(curIdx);      // and MCAP inherit whatever
-            applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
-                                           // rates are already cached
-          } else if (dispMode == M_HALV) { // HLV: six epochs of emission
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          } else if (dispMode == M_HGHT) { // HGT: cellStops() decides
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          } else {                         // FEE tiers / SAT-CAP box
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          }
-        }
+        upPressed();                   // next face; held: fetch everything
         redraw = true; waitRelease(UP_BTN_PIN);
       }
       if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) {
@@ -11328,8 +11364,28 @@ public:
       return true;
     }
 
-    dispMode = nextFace(dispMode);
-    walletPeek = false;               // leaving the wallet ends a peek
+    if (dispMode == M_WALT) {
+      if (walletView == 0) {          // the balance
+        bool hidden = walletPrivate && !walletPeek;
+        if (heldFor(BACK_BTN_PIN, 700)) {
+          if (!hidden) {
+            walletPrivate = true; walletPeek = false;
+            savePrefs();
+            buzz(40, 2);
+            Serial.println("[wal] balance hidden");
+          }
+          return false;
+        }
+        if (hidden) { walletPeek = true; return false; }
+      } else if (walletView == 1 && !isDemoWallet() &&
+                 heldFor(BACK_BTN_PIN, 700)) {
+        verifyScreen();               // the receive QR: check it, by eye
+        return false;
+      }
+      walletToggleView();             // balance -> receive QR -> LN
+      return false;
+    }
+    upShortPress();                   // box, currency, JOE
     return false;
   }
 
@@ -11338,6 +11394,13 @@ public:
   bool faceShown(int m) {
     if (m == M_MEMP && travelActive) return false;   // no mempool then, or yet
     return !((faceHide >> m) & 1);
+  }
+  int prevFace(int from) {
+    for (int k = 1; k <= NUM_MODES; k++) {
+      int m = (from - k + 2 * NUM_MODES) % NUM_MODES;
+      if (faceShown(m)) return m;
+    }
+    return M_HGHT;
   }
   int nextFace(int from) {
     for (int k = 1; k <= NUM_MODES; k++) {
@@ -11446,30 +11509,7 @@ public:
         RTC.read(currentTime); showWatchFace(true);
       } else if (wake & UP_BTN_MASK) {
         pinMode(UP_BTN_PIN, INPUT);
-        if (heldFor(UP_BTN_PIN, 600)) {    // LONG UP, any mode: fetch
-          buzz(40, 2);                 // EVERYTHING now — the wrist
-          forceFetch = true;               // shouldn't wait 15 minutes
-          fetchPending = true;             // and the corner reports it
-          if (dispMode == M_WALT)          // (in WAL: rescan too)
-            lastWalletMin = (wakeMin > walletEveryMin())
-                              ? wakeMin - walletEveryMin() : 0;
-        } else if (dispMode == M_JOE) {
-          joeAdvance();                // the chain, people, the watch
-        } else if (dispMode == M_WALT) walletToggleView();   // balance <-> QR
-        else {
-          if (dispMode == M_PRICE || dispMode == M_SATS ||
-              dispMode == M_MCAP) {        // the CURRENCY dial: SATS
-            curIdx = nextCur(curIdx);      // and MCAP inherit whatever
-            applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
-                                           // rates are already cached
-          } else if (dispMode == M_HALV) { // HLV: six epochs of emission
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          } else if (dispMode == M_HGHT) { // HGT: cellStops() decides
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          } else {                         // FEE tiers / SAT-CAP box
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          }
-        }                          // force refresh
+        upPressed();                   // next face; held: fetch everything
         RTC.read(currentTime); showWatchFace(true);
       } else if (wake & DOWN_BTN_MASK) {
         downPressed();
@@ -11547,31 +11587,7 @@ public:
             menuStep(-1);
           } else if (guiState == WATCHFACE_STATE) {
             buttonWake = true;
-            pinMode(UP_BTN_PIN, INPUT);
-        if (heldFor(UP_BTN_PIN, 600)) {    // LONG UP, any mode: fetch
-          buzz(40, 2);                 // EVERYTHING now — the wrist
-          forceFetch = true;               // shouldn't wait 15 minutes
-          fetchPending = true;             // and the corner reports it
-          if (dispMode == M_WALT)          // (in WAL: rescan too)
-            lastWalletMin = (wakeMin > walletEveryMin())
-                              ? wakeMin - walletEveryMin() : 0;
-        } else if (dispMode == M_JOE) {
-          joeAdvance();                // the chain, people, the watch
-        } else if (dispMode == M_WALT) walletToggleView();
-            else {
-          if (dispMode == M_PRICE || dispMode == M_SATS ||
-              dispMode == M_MCAP) {        // the CURRENCY dial: SATS
-            curIdx = nextCur(curIdx);      // and MCAP inherit whatever
-            applyCurrency(); saveCurrency(); // PRICE speaks. Instant: the
-                                           // rates are already cached
-          } else if (dispMode == M_HALV) { // HLV: six epochs of emission
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          } else if (dispMode == M_HGHT) { // HGT: cellStops() decides
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          } else {                         // FEE tiers / SAT-CAP box
-            cellSel[dispMode] = (cellSel[dispMode] + 1) % cellStops(dispMode);
-          }
-        }
+            upPressed();               // next face; held: fetch everything
             RTC.read(currentTime); showWatchFace(true);
           }
           waitRelease(UP_BTN_PIN);
