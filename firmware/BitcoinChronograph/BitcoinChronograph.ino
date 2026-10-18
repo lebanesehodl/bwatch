@@ -955,6 +955,11 @@ struct EpdFull : WatchyDisplay {
   static void busy(WatchyDisplay &e, const char *c, uint16_t t) {
     (e.*(&EpdFull::_waitWhileBusy))(c, t);
   }
+  // after a soft reset: the driver must re-init and re-power on next use
+  static void forget(WatchyDisplay &e) {
+    e.*(&EpdFull::_using_partial_mode) = false;
+    e.*(&EpdFull::_power_is_on) = false;
+  }
 };
 
 class BitcoinChrono : public Watchy {
@@ -6451,9 +6456,24 @@ public:
     buttonWake = true;
     return true;
   }
+  // SOFT RESET of the panel controller (0x12): every register back to its
+  // power-on default. The stock and manufacturer drivers do this in every
+  // init; the Watchy driver relies on the hardware reset line instead. After
+  // lab 4 wrote VCOM, voltages and RAM ping-pong into the controller, the
+  // ghosting survived even a reflash: the panel never loses power, and its
+  // hardware reset evidently did not clear them. This does.
+  void panelReset() {
+    WatchyDisplay &e = display.epd2;
+    EpdFull::cmd(e, 0x12);
+    delay(10);
+    EpdFull::busy(e, "_SWReset", 20);
+    EpdFull::forget(e);
+    epdLog("panel soft reset");
+  }
   // a clearing cycle, then the next face draw goes up full
   void cleanScreen() {
     epdLog("clean: clearing cycle");
+    panelReset();
     display.setFullWindow();
     for (int i = 0; i < 2; i++) {
       display.fillScreen(GxEPD_BLACK); display.display(false);
@@ -7073,6 +7093,7 @@ public:
     // but never on the once-a-minute deep-sleep wake. Reset reason has
     // real semantics; a sticky RTC flag survives too many resets.
     if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {
+      panelReset();                   // every true boot: registers clean
       bootAnimation();
       paintedDark = true;             // every boot sequence ends on black
       qrDrawnIdx = -1;                // and nothing it drew is a QR
