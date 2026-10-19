@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C014C
+#define RTC_LAYOUT_MAGIC 0xB17C014D
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -644,6 +644,9 @@ RTC_DATA_ATTR float    fiBskHalv[5][4] = {{0}}; // price at each halving, USD
 RTC_DATA_ATTR uint32_t fiBskDate[5]    = {0};   // yyyymmdd of the latest
 RTC_DATA_ATTR float    fiCpiYoy        = 0;     // CPI, % in a year
 RTC_DATA_ATTR uint32_t fiBskWake       = 0;     // wakeMin of the basket fetch
+RTC_DATA_ATTR bool     fiatAsk         = false; // fetch the FIAT data at the next
+                                                // chance: after a boot, or a FIAT
+                                                // face just turned on
 RTC_DATA_ATTR uint8_t  battProfile   = 0;      // 0 Live, 1 Balanced, 2 Saver
 RTC_DATA_ATTR bool     walletPeek    = false;  // privacy: shown for one glance
 RTC_DATA_ATTR bool     cleanNext     = false;  // a fast partial wake left a
@@ -2141,7 +2144,8 @@ public:
         alarmHeight - blockHeight <= ALARM_NEAR_BLOCKS && every > ALARM_NEAR_EVERY)
       every = ALARM_NEAR_EVERY;
     bool due = forceFetch || !haveData ||
-               (wakeMin - lastFetchMin >= every);
+               (wakeMin - lastFetchMin >= every) ||
+               (fiatAsk && (faceShown(M_FMKT) || faceShown(M_FBSK)));
     // offline and a press woke it: the retry the backoff allows can wait for
     // the next minute wake, not hold the face up for a 12 s search
     if (pressRun && failCount > 0 && !forceFetch) due = false;
@@ -6377,7 +6381,7 @@ public:
     chgSeenOn = false;
     for (int i = 0; i < 6; i++) { fiMkt[i] = 0; fiMktBase[i] = 0; fiMktDate[i] = 0; }
     fiMktLive = 0; fiLiveWake = 0; fiMktWake = 0; fiBtcBase = 0; fiBtcYearAgo = 0;
-    fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0;
+    fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0; fiatAsk = false;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
@@ -7151,6 +7155,7 @@ public:
   // is on, and each on its own clock: market closes every 6 h, the live
   // quotes every 30 min while NYSE is open, the basket twice a day.
   void fiatStep(bool all) {
+    fiatAsk = false;                  // asked and answered (or tried)
     bool mktOn = faceShown(M_FMKT), bskOn = faceShown(M_FBSK);
     if (!mktOn && !bskOn) return;
     bool closesDue = mktOn && tierDue(fiMktWake, 360, all);
@@ -7722,6 +7727,11 @@ public:
     // real semantics; a sticky RTC flag survives too many resets.
     if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {
       panelReset();                   // every true boot: registers clean
+      // the FIAT faces' data is due on their own slow clocks, which a boot
+      // (a reflash, a flat cell) left hours out: ask for it with the first fetch
+      if (faceShown(M_FMKT) || faceShown(M_FBSK)) {
+        fiMktWake = 0; fiLiveWake = 0; fiBskWake = 0; fiatAsk = true;
+      }
       bootAnimation();
       paintedDark = true;             // every boot sequence ends on black
       qrDrawnIdx = -1;                // and nothing it drew is a QR
@@ -9246,6 +9256,9 @@ public:
       delay(40);
     }
     if (hide != faceHide) {
+      // a FIAT face just turned on: fetch its data at the next wake, not in 6 h
+      if (((faceHide >> M_FMKT) & 1) && !((hide >> M_FMKT) & 1)) { fiMktWake = 0; fiLiveWake = 0; fiatAsk = true; }
+      if (((faceHide >> M_FBSK) & 1) && !((hide >> M_FBSK) & 1)) { fiBskWake = 0; fiatAsk = true; }
       faceHide = hide;
       if (!faceShown(dispMode)) dispMode = nextFace(dispMode);
       savePrefs();
