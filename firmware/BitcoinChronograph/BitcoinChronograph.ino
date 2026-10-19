@@ -7422,10 +7422,12 @@ public:
     centerSmall(radioBackedOff() ? "OFFLINE" : "FETCHED WITH THE NEXT UPDATE", 134);
   }
 
-  // Two periods, two bars each from a shared zero line: the USD bar
-  // (hatched) and the BTC bar (solid). Up is a gain, down a loss, the value
-  // at the bar's end. The zero line sits where the gains and losses leave it
-  // room: low when everything is up, high when everything is down.
+  // Two columns, one per period, each headed by its name: a USD bar
+  // (hatched) and a BTC bar (solid) from a shared zero line, named under the
+  // chart like an axis. Up is a gain, down a loss. A gain's value sits on the
+  // bar; a loss's sits just above the zero line, so nothing collides with
+  // the names below. The zero line is placed by the data: low when all is
+  // up, high when all is down. Both columns share one scale.
   void fiHistBar(int x, int w, int zy, float v, float scale, bool solid) {
     if (isnan(v)) return;
     int h = (int)(fabsf(v) * scale + 0.5f); if (h < 1) h = 1;
@@ -7438,7 +7440,7 @@ public:
     }
     char s[10];
     if (fabsf(v) < 10) snprintf(s, 10, "%+.1f", v); else snprintf(s, 10, "%+.0f", v);
-    display.setCursor(x + (w - (int)strlen(s) * 6) / 2, v >= 0 ? y - 9 : y + h + 2);
+    display.setCursor(x + (w - (int)strlen(s) * 6) / 2, (v >= 0 ? y : zy) - 9);
     display.print(s);
   }
   void fiKey(int y) {                // a hatched swatch for USD, solid for BTC
@@ -7449,32 +7451,29 @@ public:
     display.fillRect(kx + 34, y, 7, 7, fg());
     display.setCursor(kx + 44, y); display.print("BTC");
   }
-  void fiHist(const char *title, const char *g1, const char *g2,
-              float u1, float b1, float u2, float b2) {
-    display.setCursor(8, 102); display.print(title);
-    fiKey(102);
+  void fiHist(const char *g1, const char *g2, float u1, float b1, float u2, float b2) {
     float v[4] = {u1, b1, u2, b2}, up = 0, dn = 0;
     for (int k = 0; k < 4; k++) if (!isnan(v[k])) {
       if (v[k] > up) up = v[k];
       if (-v[k] > dn) dn = -v[k];
     }
-    // bars between y 122 and 160, labels clear of the title row and the
-    // divider line under the face
-    const int top = 122, bot = 160;
+    // headers on 102; bars between 122 and 156; names on 163
+    const int top = 122, bot = 156;
     float span = up + dn; if (span <= 0) span = 1;
     float scale = (bot - top) / span;
     int zy = top + (int)(up * scale + 0.5f);
-    display.drawFastHLine(6, zy, 188, fg());
-    const int bw = 26, gap = 4, c[2] = {68, 132};
+    const int cx[2] = {52, 148}, bw = 26, gap = 6;
+    const char *g[2] = {g1, g2};
+    display.drawFastVLine(100, 101, 69, fg());          // the column rule
     for (int k = 0; k < 2; k++) {
-      int x = c[k] - bw - gap / 2;
+      display.setCursor(cx[k] - (int)strlen(g[k]) * 3, 102); display.print(g[k]);
+      display.drawFastHLine(cx[k] - 44, zy, 88, fg());  // this column's zero
+      int x = cx[k] - bw - gap / 2;
       fiHistBar(x, bw, zy, v[2 * k], scale, false);
       fiHistBar(x + bw + gap, bw, zy, v[2 * k + 1], scale, true);
+      display.setCursor(x + (bw - 18) / 2, 163); display.print("USD");
+      display.setCursor(x + bw + gap + (bw - 18) / 2, 163); display.print("BTC");
     }
-    // the periods' names at the two ends of the zero line, clear of the bars
-    int ly = (zy - 9 < top - 2) ? zy + 3 : zy - 9;
-    display.setCursor(8, ly); display.print(g1);
-    display.setCursor(194 - (int)strlen(g2) * 6, ly); display.print(g2);
   }
   // NEW MONEY: dollars printed against bitcoin mined, each a % of what
   // already exists, at each halving and now. Bitcoin's steps down by half
@@ -7560,12 +7559,11 @@ public:
     // long can disagree, and that is often the point (Ahmed, Oct 18).
     // The 10Y: holding the bond bought back then (its yield then,
     // compounded), in dollars and in bitcoin.
-    static const char *NAME[6] = {"S&P 500", "NASDAQ 100", "DOW", "OIL",
-                                  "10Y BOND, HELD", "THE DOLLAR"};
     float u12, u5;
     if (i == 4) { u12 = fiHeld(fiMktBase[4], 1); u5 = fiHeld(fiMkt5[4], 5); }
     else { u12 = fiChg(fiMkt[i], fiMktBase[i]); u5 = fiChg(fiMkt[i], fiMkt5[i]); }
-    fiHist(NAME[i], "12 MO", "5 YRS", u12, fiInBtc(u12, btc12), u5, fiInBtc(u5, btc5));
+    if (i == 4) fiHist("HELD 12 MO", "HELD 5 YRS", u12, fiInBtc(u12, btc12), u5, fiInBtc(u5, btc5));
+    else        fiHist("12 MONTHS", "5 YEARS", u12, fiInBtc(u12, btc12), u5, fiInBtc(u5, btc5));
   }
 
   void drawFiatBasket() {
