@@ -2035,12 +2035,27 @@ public:
     if (blockHeight > 0 && blockHeight > curioSeen) {
       long from = curioSeen > 0 ? curioSeen + 1 : blockHeight;
       if (blockHeight - from > 300) from = blockHeight - 300;
-      for (long h = blockHeight; h >= from; h--) {
+      // A supply milestone anywhere in the gap outranks any curiosity in it
+      // (a palindrome a few blocks later must not bury "UNDER 900K"). It is
+      // checked by height, so it fires once, when the tip first passes it.
+      for (int i = 0; i < N_SUPMS && !shown; i++) {
+        long mh = supMsHeight(i);
+        if (mh < from || mh > blockHeight || mh <= lastCurio) continue;
+        if ((evQueue & EV_CURIO) && evCurioH == 1000000L) break;
+        lastCurio = blockHeight;      // the gap's curiosities give way to it
+        supplyScreen(i);
+        evCurioH = mh;
+        fireEvent(EV_CURIO);
+        evShown = EV_CURIO;
+        shown = true;
+      }
+      for (long h = blockHeight; h >= from && !shown; h--) {
         if (h <= lastCurio) break;
         const char *why = curiosity(h);
-        if (why && (evQueue & EV_CURIO) && evCurioH == 1000000L) {
-          lastCurio = h;      // block 1,000,000 is still waiting to be seen:
-          break;              // 1,000,001 (a palindrome) must not replace it
+        if (why && (evQueue & EV_CURIO) &&
+            (evCurioH == 1000000L || supMsAt(evCurioH) >= 0)) {
+          lastCurio = h;      // a milestone is still waiting to be seen:
+          break;              // a curiosity after it must not replace it
         }
         if (why) {
           lastCurio = h;
@@ -5535,11 +5550,140 @@ public:
     Serial.printf("[curio] %ld — %s\n", h, why);
   }
 
+  // ---- supply milestones: the coins left to mine passing a round number ----
+  // Each is a height worked out from the schedule (no API): the first block
+  // after which fewer than L coins remain, measured against the real cap
+  // (20,999,999.9769). 900K lands on 971,999, 800K on 1,003,999.
+  static const int N_SUPMS = 13;
+  long supMsLeft(int i) {
+    static const long L[N_SUPMS] = {900000, 800000, 700000, 600000, 500000,
+                                    400000, 300000, 200000, 100000, 50000,
+                                    10000, 5000, 1000};
+    return L[i];
+  }
+  long supMsHeight(int i) {
+    static long H[N_SUPMS] = {0};
+    if (!H[i]) {
+      double cap = supplyCapBTC(), want = (double)supMsLeft(i);
+      long lo = 0, hi = 6930000L;
+      while (lo < hi) {
+        long m = (lo + hi) / 2;
+        if (cap - supplyBTC(m) < want) hi = m; else lo = m + 1;
+      }
+      H[i] = lo;
+    }
+    return H[i];
+  }
+  int supMsAt(long h) {                       // which milestone h is, or -1
+    for (int i = 0; i < N_SUPMS; i++) if (supMsHeight(i) == h) return i;
+    return -1;
+  }
+  void kShort(char *o, size_t n, long v) {    // 900000 -> 900K, 5000 -> 5K
+    if (v >= 1000 && v % 1000 == 0) snprintf(o, n, "%ldK", v / 1000);
+    else snprintf(o, n, "%ld", v);
+  }
+  // stage 0..3: the odometer counting down to the line, 4: the card
+  void drawSupplyCard(int i, int stage) {
+    long h = supMsHeight(i), L = supMsLeft(i);
+    char line[34], k[10], g[16];
+    double cap = supplyCapBTC();
+    long leftNow = (long)(cap - supplyBTC(h));          // 899,999
+    long leftWas = (long)(cap - supplyBTC(h - 1));      // 900,003
+    long shown = stage >= 4 ? leftNow
+               : leftWas - (long)((leftWas - leftNow) * stage / 4.0 + 0.5);
+    if (stage == 3) shown = L;                          // 900,000: the line
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+    display.setTextWrap(false);
+    display.setFont(NULL); display.setTextSize(1);
+    curioWhen(line, 34, h);
+    centerSmall(line, 14);
+    // the title: UNDER 900K
+    kShort(k, 10, L);
+    char t[16]; snprintf(t, 16, "UNDER %s", k);
+    int tl = strlen(t), sz = tl <= 10 ? 3 : 2;
+    display.setTextSize(sz);
+    display.setCursor((200 - tl * 6 * sz) / 2, 34);
+    display.print(t);
+    display.setTextSize(1);
+    centerSmall("BITCOIN LEFT TO MINE", 62);
+    // the count, digits with pixel commas
+    char s[16]; snprintf(s, 16, "%ld", shown);
+    const GFXfont *F = strlen(s) > 6 ? &DSEG7_Classic_Bold_25 : &DSEG7_Classic_Bold_32;
+    int n = strlen(s), cw = 6, w = 0;
+    for (int j = 0; j < n; j++) {
+      w += F->glyph[s[j] - F->first].xAdvance;
+      if ((n - 1 - j) % 3 == 0 && j < n - 1) w += cw;
+    }
+    int x = (200 - w) / 2, yb = 108, x0 = x;
+    display.setFont(F);
+    for (int j = 0; j < n; j++) {
+      char c[2] = {s[j], 0};
+      display.setCursor(x, yb); display.print(c);
+      x += F->glyph[s[j] - F->first].xAdvance;
+      if ((n - 1 - j) % 3 == 0 && j < n - 1) {
+        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, GxEPD_WHITE); x += cw;
+      }
+    }
+    display.setFont(NULL);
+    // the last million, ten cells of 100K: each one a milestone, filled as
+    // it is mined (under 100K the last cell drains instead)
+    int inkL = 30, inkR = 170; const int gap = 2;
+    double minedOfLast = 1000000.0 - (cap - supplyBTC(h));
+    for (int c = 0; c < 10; c++) {
+      int a = inkL + (inkR - inkL + gap) * c / 10;
+      int b = inkL + (inkR - inkL + gap) * (c + 1) / 10 - gap;
+      double f = (minedOfLast - c * 100000.0) / 100000.0;
+      if (f >= 0.999) display.fillRect(a, 118, b - a, 7, GxEPD_WHITE);
+      else {
+        display.drawRect(a, 118, b - a, 7, GxEPD_WHITE);
+        if (f > 0) display.fillRect(a, 118, (int)((b - a) * f), 7, GxEPD_WHITE);
+      }
+    }
+    (void)x0;
+    if (stage >= 4) {
+      display.drawFastHLine(30, 136, 140, GxEPD_WHITE);
+      double pct = 100.0 * supplyBTC(h) / cap;
+      snprintf(line, 34, "%.2f%% OF ALL BITCOIN MINED", pct);
+      centerSmall(line, 146);
+      snprintf(line, 34, "BLOCK %s", (grouped(g, 16, h), g));
+      centerSmall(line, 160);
+      if (i + 1 < N_SUPMS) {
+        char eta[20], k2[10];
+        long nh = supMsHeight(i + 1);
+        long from = blockHeight > h ? blockHeight : h;
+        curioEta(eta, 20, nh - from);
+        kShort(k2, 10, supMsLeft(i + 1));
+        snprintf(line, 34, "NEXT: %s %s", k2, eta);
+        centerSmall(line, 178);
+      }
+      display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
+      display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    }
+  }
+
+  // staged in like the curiosities: the count runs down to the line and past
+  // it (900,003 -> 900,000 -> 899,999), then the card settles with a full
+  void supplyScreen(int i) {
+    for (int st = 0; st < 4; st++) {
+      drawSupplyCard(i, st); display.display(true);
+      delay(st == 0 ? 500 : st == 3 ? 420 : 260);
+    }
+    drawSupplyCard(i, 4);
+    displayFull();
+    paintedDark = true;           // white on black, whatever the theme
+    buzz(60, 3);
+    Serial.printf("[supply] under %ld left, block %ld\n", supMsLeft(i), supMsHeight(i));
+  }
+
   // The finished card, whole: the end of the animation, and what an event
   // redraws while it waits to be seen (its time line is worked out again)
   void drawCurioFrame(long h, const char *why) {
     (void)why;
-    if (h == 1000000L) drawMillionCard(2, 1000000L, 10);   // the milestone
+    int sm = supMsAt(h);
+    if (sm >= 0) drawSupplyCard(sm, 4);                    // a supply milestone
+    else if (h == 1000000L) drawMillionCard(2, 1000000L, 10);   // the milestone
     else drawCurioCard(h, 4);
   }
 
