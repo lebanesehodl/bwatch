@@ -7390,23 +7390,31 @@ public:
       if (btc > 0) snprintf(val, 16, "%.0f", 1e8 / btc); else val[0] = 0;
       fiBox(val, "SAT", "1 USD IN SATS");
     }
-    // this year (the 10Y: what a year of holding paid), and new money
+    // The thing's own year, twice: in dollars, and measured in bitcoin. In
+    // bitcoin is the line that answers the face's question: above zero it
+    // beat bitcoin, below zero bitcoin beat it (Ahmed, Oct 18: two rows of
+    // "the thing" and "bitcoin", both in USD, left the reader to divide).
+    // The 10Y: a year of holding the bond, its yield, against the same year
+    // of bitcoin.
+    static const char *HEAD[6] = {"S&P 500 THIS YEAR", "NASDAQ 100 THIS YEAR",
+                                  "DOW THIS YEAR", "OIL THIS YEAR",
+                                  "10Y BOND, HELD 12 MONTHS", "THE DOLLAR THIS YEAR"};
     char a[10], b[10];
+    float inUsd, ref;
     if (i == 4) {
-      float b12 = (btc > 0 && fiBtcYearAgo > 0) ? (btc / fiBtcYearAgo - 1) * 100 : NAN;
-      display.setCursor(8, 102); display.print("HELD FOR 12 MONTHS");
-      float m = fmaxf(fabsf(fiMkt[4]), isnan(b12) ? 0 : fabsf(b12));
-      fiPct(a, 10, fiMkt[4], true); fiPct(b, 10, b12, true);
-      fiBar(FI_MKT_TAG[4], fiMkt[4], m, a, 112, false);
-      fiBar("BTC", b12, m, b, 122, true);
+      inUsd = fiMkt[4];
+      ref = (btc > 0 && fiBtcYearAgo > 0) ? (btc / fiBtcYearAgo - 1) * 100 : NAN;
     } else {
-      float y = fiYtd(i);
-      display.setCursor(8, 102); display.print("THIS YEAR, IN USD");
-      float m = fmaxf(isnan(y) ? 0 : fabsf(y), isnan(btcYtd) ? 0 : fabsf(btcYtd));
-      fiPct(a, 10, y, true); fiPct(b, 10, btcYtd, true);
-      fiBar(FI_MKT_TAG[i], y, m, a, 112, false);
-      fiBar("BTC", btcYtd, m, b, 122, true);
+      inUsd = fiYtd(i);
+      ref = btcYtd;
     }
+    float inBtc = (isnan(inUsd) || isnan(ref)) ? NAN
+                : ((1 + inUsd / 100) / (1 + ref / 100) - 1) * 100;
+    display.setCursor(8, 102); display.print(HEAD[i]);
+    float m = fmaxf(isnan(inUsd) ? 0 : fabsf(inUsd), isnan(inBtc) ? 0 : fabsf(inBtc));
+    fiPct(a, 10, inUsd, true); fiPct(b, 10, inBtc, true);
+    fiBar("USD", inUsd, m, a, 112, false);
+    fiBar("BTC", inBtc, m, b, 122, true);
     display.drawFastHLine(6, 133, 188, fg());
     display.setCursor(8, 138); display.print("NEW MONEY EACH YEAR");
     float iss = fiBtcIssue();
