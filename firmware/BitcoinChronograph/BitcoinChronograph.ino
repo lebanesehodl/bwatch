@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C014F
+#define RTC_LAYOUT_MAGIC 0xB17C0150
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -642,6 +642,8 @@ RTC_DATA_ATTR float    fiBtc5          = 0;     // BTC/USD five years ago
 RTC_DATA_ATTR uint32_t fi5Wake         = 0;     // wakeMin of the 12-month / 5-year
                                                 // bases (they move slowly: weekly)
 RTC_DATA_ATTR float    fiM2Yoy         = 0;     // M2 money supply, % in a year
+RTC_DATA_ATTR float    fiM2Halv[4]     = {0};   // the same, at each halving
+RTC_DATA_ATTR uint32_t fiM2Date        = 0;     // yyyymmdd of the latest M2
 RTC_DATA_ATTR float    fiBsk[5]        = {0};   // latest price, USD
 RTC_DATA_ATTR float    fiBskHalv[5][4] = {{0}}; // price at each halving, USD
 RTC_DATA_ATTR uint32_t fiBskDate[5]    = {0};   // yyyymmdd of the latest
@@ -6313,7 +6315,7 @@ public:
     if (m == M_FEES) return 3;      // high, medium, low
     if (m == M_SUPL) return 2;      // issued, remaining
     if (m == M_FMKT) return 6;      // S&P, Nasdaq, Dow, oil, 10Y, dollar
-    if (m == M_FBSK) return 5;      // home, eggs, gas, milk, coffee
+    if (m == M_FBSK) return 6;      // home, eggs, gas, milk, coffee, new money
     if (m == M_MEMP) return travelActive ? 1 : 7;   // waiting, then the
                                     // last block and the chain's pace
     return 6;                       // halving almanac, currency dials
@@ -6388,7 +6390,8 @@ public:
     for (int i = 0; i < 6; i++) { fiMkt[i] = 0; fiMktBase[i] = 0; fiMktDate[i] = 0; }
     for (int i = 0; i < 6; i++) fiMkt5[i] = 0;
     fiMktLive = 0; fiLiveWake = 0; fiMktWake = 0; fiBtcYearAgo = 0; fiBtc5 = 0; fi5Wake = 0;
-    fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0; fiatAsk = false;
+    fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0; fiatAsk = false; fiM2Date = 0;
+    for (int k = 0; k < 4; k++) fiM2Halv[k] = 0;
     fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
@@ -7188,6 +7191,21 @@ public:
     return (uint32_t)(d.Year + 1970) * 10000 + d.Month * 100 + d.Day;
   }
 
+  // M2, the dollar's money supply: its growth over twelve months now and at
+  // each halving (monthly series, from a year before the first halving)
+  void fiFetchM2(HTTPClient &http, WiFiClientSecure &client, String &body) {
+    if (!fredGet(http, client, "M2SL", 20111001UL, body)) return;
+    uint32_t t[9], a[9]; float v[9];
+    for (int k = 0; k < 4; k++) { t[2 * k] = FI_HALV_DATE[k]; t[2 * k + 1] = FI_HALV_DATE[k] - 10000; }
+    t[8] = 99999999UL;
+    if (fredParse(body.c_str(), t, v, a, 9) == 0) return;
+    for (int k = 0; k < 4; k++)
+      if (v[2 * k] > 0 && v[2 * k + 1] > 0) fiM2Halv[k] = (v[2 * k] / v[2 * k + 1] - 1) * 100;
+    uint32_t at;
+    float m = fredYoy(body.c_str(), &at);
+    if (m != 0) { fiM2Yoy = m; fiM2Date = at; }
+  }
+
   // Called from fetchAll with the radio up. Each part only for a face that
   // is on, and each on its own clock: market closes once per session (after
   // it has ended), the live quotes every 30 min while NYSE is open, nothing
@@ -7239,10 +7257,7 @@ public:
           float b5  = fredAt(http, client, "CBBTCUSD", t5, body);
           if (b12 > 0) fiBtcYearAgo = b12;
           if (b5 > 0) fiBtc5 = b5;
-          if (fredGet(http, client, "M2SL", (y - 2) * 10000 + 101, body)) {
-            float m = fredYoy(body.c_str(), nullptr);
-            if (m != 0) fiM2Yoy = m;
-          }
+          fiFetchM2(http, client, body);
           if (got >= 3) fi5Wake = tierStamp();
         }
         fiMktWake = tierStamp();                     // spaced either way
@@ -7259,6 +7274,7 @@ public:
           fiBsk[i] = v[4]; fiBskDate[i] = at[4];
           got++;
         }
+        fiFetchM2(http, client, body);
         if (fredGet(http, client, "CPIAUCSL", (y - 2) * 10000 + 101, body)) {
           float c = fredYoy(body.c_str(), nullptr);
           if (c != 0) fiCpiYoy = c;
@@ -7329,7 +7345,13 @@ public:
       uint32_t d = fiMktDate[i];
       snprintf(tag, n, "%s %lu", fiMon(d / 100 % 100), (unsigned long)(d % 100));
     } else {
-      i %= 5;
+      i %= 6;
+      if (i == 5) {
+        uint32_t d = fiM2Date;
+        if (!d) { snprintf(tag, n, "NO DATA"); return; }
+        snprintf(tag, n, "%s %lu", fiMon(d / 100 % 100), (unsigned long)(d / 10000));
+        return;
+      }
       uint32_t d = fiBskDate[i];
       if (fiBsk[i] <= 0) { snprintf(tag, n, "NO DATA"); return; }
       if (i == 0) snprintf(tag, n, "Q%lu %lu", (unsigned long)((d / 100 % 100 - 1) / 3 + 1),
@@ -7340,9 +7362,11 @@ public:
   // the line above the mode strip
   const char *fiatTitle() {
     static char t[34];
-    if (dispMode == M_FBSK)
-      return (cellSel[M_FBSK] % 5 == 0) ? "CENSUS MEDIAN SALE PRICE"
-                                         : "BLS AVERAGE, US CITIES";
+    if (dispMode == M_FBSK) {
+      int b = cellSel[M_FBSK] % 6;
+      return b == 0 ? "CENSUS MEDIAN SALE PRICE"
+           : b == 5 ? "FED M2 / BITCOIN ISSUANCE" : "BLS AVERAGE, US CITIES";
+    }
     time_t next; bool open = nyseOpen(nullptr, &next);
     tmElements_t a, b;
     breakTime(localFromUtc(next), a);
@@ -7354,25 +7378,8 @@ public:
                   DN[a.Wday <= 7 ? a.Wday : 0], a.Hour, a.Minute);
     return t;
   }
-  // a bar from a shared zero: hatched for the fiat thing, solid for bitcoin
-  void fiBar(const char *lab, float v, float vmax, const char *txt, int y, bool solid) {
-    display.setCursor(8, y); display.print(lab);
-    if (!isnan(v) && vmax > 0) {
-      const int x0 = 44, W = 112;
-      int w = (int)(W * fabsf(v) / vmax + 0.5f); if (w < 2) w = 2; if (w > W) w = W;
-      if (solid) display.fillRect(x0, y, w, 7, fg());
-      else {
-        display.drawRect(x0, y, w, 7, fg());
-        for (int x = x0 + 2; x < x0 + w - 1; x += 2) display.drawFastVLine(x, y + 2, 3, fg());
-      }
-    }
-    display.setCursor(194 - (int)strlen(txt) * 6, y); display.print(txt);
-  }
-  static void fiPct(char *o, size_t n, float v, bool sign) {
-    if (isnan(v)) snprintf(o, n, "--");
-    else if (fabsf(v) < 10) snprintf(o, n, sign ? "%+.1f%%" : "%.2f%%", v);
-    else snprintf(o, n, sign ? "%+.0f%%" : "%.0f%%", v);
-  }
+
+
   // the item at each halving and now, in bitcoin, log scale: a staircase down
   void fiStairs(const char *title, const double v[5], bool sats) {
     display.setCursor(8, 102); display.print(title);
@@ -7413,6 +7420,95 @@ public:
     display.setFont(NULL);
     centerSmall("WAITING FOR DATA", 120);
     centerSmall(radioBackedOff() ? "OFFLINE" : "FETCHED WITH THE NEXT UPDATE", 134);
+  }
+
+  // Two periods, two bars each from a shared zero line: the USD bar
+  // (hatched) and the BTC bar (solid). Up is a gain, down a loss, the value
+  // at the bar's end. The zero line sits where the gains and losses leave it
+  // room: low when everything is up, high when everything is down.
+  void fiHistBar(int x, int w, int zy, float v, float scale, bool solid) {
+    if (isnan(v)) return;
+    int h = (int)(fabsf(v) * scale + 0.5f); if (h < 1) h = 1;
+    int y = v >= 0 ? zy - h : zy + 1;
+    if (solid) display.fillRect(x, y, w, h, fg());
+    else {
+      display.drawRect(x, y, w, h, fg());
+      for (int xx = x + 2; xx < x + w - 1; xx += 2)
+        if (h > 2) display.drawFastVLine(xx, y + 1, h - 2, fg());
+    }
+    char s[10];
+    if (fabsf(v) < 10) snprintf(s, 10, "%+.1f", v); else snprintf(s, 10, "%+.0f", v);
+    display.setCursor(x + (w - (int)strlen(s) * 6) / 2, v >= 0 ? y - 9 : y + h + 2);
+    display.print(s);
+  }
+  void fiKey(int y) {                // a hatched swatch for USD, solid for BTC
+    int kx = 194 - 66;
+    display.drawRect(kx, y, 7, 7, fg());
+    display.drawFastVLine(kx + 2, y + 1, 5, fg()); display.drawFastVLine(kx + 4, y + 1, 5, fg());
+    display.setCursor(kx + 10, y); display.print("USD");
+    display.fillRect(kx + 34, y, 7, 7, fg());
+    display.setCursor(kx + 44, y); display.print("BTC");
+  }
+  void fiHist(const char *title, const char *g1, const char *g2,
+              float u1, float b1, float u2, float b2) {
+    display.setCursor(8, 102); display.print(title);
+    fiKey(102);
+    float v[4] = {u1, b1, u2, b2}, up = 0, dn = 0;
+    for (int k = 0; k < 4; k++) if (!isnan(v[k])) {
+      if (v[k] > up) up = v[k];
+      if (-v[k] > dn) dn = -v[k];
+    }
+    // bars between y 122 and 160, labels clear of the title row and the
+    // divider line under the face
+    const int top = 122, bot = 160;
+    float span = up + dn; if (span <= 0) span = 1;
+    float scale = (bot - top) / span;
+    int zy = top + (int)(up * scale + 0.5f);
+    display.drawFastHLine(6, zy, 188, fg());
+    const int bw = 26, gap = 4, c[2] = {68, 132};
+    for (int k = 0; k < 2; k++) {
+      int x = c[k] - bw - gap / 2;
+      fiHistBar(x, bw, zy, v[2 * k], scale, false);
+      fiHistBar(x + bw + gap, bw, zy, v[2 * k + 1], scale, true);
+    }
+    // the periods' names at the two ends of the zero line, clear of the bars
+    int ly = (zy - 9 < top - 2) ? zy + 3 : zy - 9;
+    display.setCursor(8, ly); display.print(g1);
+    display.setCursor(194 - (int)strlen(g2) * 6, ly); display.print(g2);
+  }
+  // NEW MONEY: dollars printed against bitcoin mined, each a % of what
+  // already exists, at each halving and now. Bitcoin's steps down by half
+  // every four years; the dollar's goes wherever the Fed takes it.
+  void fiNewMoneyStairs(const float m2[5], const float btc[5]) {
+    display.setCursor(8, 102); display.print("% A YEAR");
+    fiKey(102);
+    static const char *YR[5] = {"2012", "2016", "2020", "2024", "NOW"};
+    float m = 0;
+    for (int k = 0; k < 5; k++) { if (m2[k] > m) m = m2[k]; if (btc[k] > m) m = btc[k]; }
+    const int base = 160, H = 38, bw = 14, gap = 3, slot = 37, x0 = 9;
+    display.drawFastHLine(6, base, 188, fg());
+    for (int k = 0; k < 5; k++) {
+      int x = x0 + k * slot;
+      for (int j = 0; j < 2; j++) {
+        float v = j ? btc[k] : m2[k];
+        int bx = x + j * (bw + gap);
+        if (isnan(v) || m <= 0) continue;
+        int h = v > 0 ? (int)(H * v / m + 0.5f) : 0; if (h < 1) h = 1;
+        if (j) display.fillRect(bx, base - h, bw, h, fg());
+        else {
+          display.drawRect(bx, base - h, bw, h, fg());
+          for (int xx = bx + 2; xx < bx + bw - 1; xx += 2)
+            if (h > 2) display.drawFastVLine(xx, base - h + 1, h - 2, fg());
+        }
+        // two characters fit a bar: 12, 7, .8 (the box has the exact now)
+        char s[6];
+        if (v >= 0.95f) snprintf(s, 6, "%.0f", v);
+        else if (v >= 0) { snprintf(s, 6, "%.1f", v); memmove(s, s + 1, strlen(s)); }
+        else snprintf(s, 6, "-");
+        display.setCursor(bx + (bw - (int)strlen(s) * 6) / 2 + 1, base - h - 9); display.print(s);
+      }
+      display.setCursor(x + (2 * bw + gap - (int)strlen(YR[k]) * 6) / 2, base + 3); display.print(YR[k]);
+    }
   }
 
   void drawFiatMarkets() {
@@ -7458,56 +7554,49 @@ public:
       if (btc > 0) snprintf(val, 16, "%.0f", 1e8 / btc); else val[0] = 0;
       fiBox(val, "SAT", "1 USD IN SATS");
     }
-    // Twelve months and five years, in dollars and measured in bitcoin. In
-    // bitcoin is the row that answers the face's question: above zero the
-    // thing beat bitcoin, below zero bitcoin beat it. Short and long can
-    // disagree, and that is often the point (Ahmed, Oct 18).
-    // The 10Y: the yield back then, and what holding the bond from then
-    // paid, measured in bitcoin.
+    // Twelve months and five years, in dollars and measured in bitcoin, as
+    // bars. In bitcoin is the bar that answers the face's question: up, the
+    // thing beat bitcoin over the period; down, bitcoin beat it. Short and
+    // long can disagree, and that is often the point (Ahmed, Oct 18).
+    // The 10Y: holding the bond bought back then (its yield then,
+    // compounded), in dollars and in bitcoin.
     static const char *NAME[6] = {"S&P 500", "NASDAQ 100", "DOW", "OIL",
-                                  "10Y BOND", "THE DOLLAR"};
-    char c1[10], c2[10];
-    display.setCursor(8, 102); display.print(NAME[i]);
-    display.setCursor(146 - 30, 102); display.print("12 MO");
-    display.setCursor(194 - 30, 102); display.print("5 YRS");
-    auto row = [&](const char *lab, const char *a, const char *b, int y) {
-      display.setCursor(8, y); display.print(lab);
-      display.setCursor(146 - (int)strlen(a) * 6, y); display.print(a);
-      display.setCursor(194 - (int)strlen(b) * 6, y); display.print(b);
-    };
-    if (i == 4) {
-      auto yl = [](char *o, float v) { if (v > 0) snprintf(o, 10, "%.2f%%", v); else snprintf(o, 10, "--"); };
-      yl(c1, fiMktBase[4]); yl(c2, fiMkt5[4]);
-      row("YIELD THEN", c1, c2, 112);
-      fiPct(c1, 10, fiInBtc(fiHeld(fiMktBase[4], 1), btc12), true);
-      fiPct(c2, 10, fiInBtc(fiHeld(fiMkt5[4], 5), btc5), true);
-      row("HELD, IN BTC", c1, c2, 122);
-    } else {
-      float u12 = fiChg(fiMkt[i], fiMktBase[i]), u5 = fiChg(fiMkt[i], fiMkt5[i]);
-      fiPct(c1, 10, u12, true); fiPct(c2, 10, u5, true);
-      row("IN USD", c1, c2, 112);
-      fiPct(c1, 10, fiInBtc(u12, btc12), true); fiPct(c2, 10, fiInBtc(u5, btc5), true);
-      row("IN BTC", c1, c2, 122);
-    }
-    char a[10], b[10];
-    display.drawFastHLine(6, 133, 188, fg());
-    display.setCursor(8, 138); display.print("NEW MONEY EACH YEAR");
-    float iss = fiBtcIssue();
-    float m2 = fiM2Yoy != 0 ? fiM2Yoy : NAN;
-    float mm = fmaxf(isnan(m2) ? 0 : fabsf(m2), isnan(iss) ? 0 : iss);
-    fiPct(a, 10, m2, true); fiPct(b, 10, iss, true);
-    fiBar("USD", m2, mm, a, 148, false);
-    fiBar("BTC", iss, mm, b, 158, true);
+                                  "10Y BOND, HELD", "THE DOLLAR"};
+    float u12, u5;
+    if (i == 4) { u12 = fiHeld(fiMktBase[4], 1); u5 = fiHeld(fiMkt5[4], 5); }
+    else { u12 = fiChg(fiMkt[i], fiMktBase[i]); u5 = fiChg(fiMkt[i], fiMkt5[i]); }
+    fiHist(NAME[i], "12 MO", "5 YRS", u12, fiInBtc(u12, btc12), u5, fiInBtc(u5, btc5));
   }
 
   void drawFiatBasket() {
-    int i = cellSel[M_FBSK] % 5;
+    int i = cellSel[M_FBSK] % 6;
     float btc = fiBtcUsd();
     char mid[8];
     if (fiCpiYoy != 0) snprintf(mid, 8, "%.1f", fiCpiYoy); else snprintf(mid, 8, "--");
     drawSubdial(26, 80, 16, constrain(fiCpiYoy / 10.0f, 0.0f, 1.0f), "CPI", mid);
     long eh = estHeight();
     drawSubdial(174, 80, 16, eh > 0 ? (eh % 210000L) / 210000.0f : 0, "HALV");
+    if (i == 5) {                     // NEW MONEY: dollars printed, bitcoin mined
+      fiCaption("M2 GROWTH, %/YR");
+      if (fiM2Yoy == 0) { fiBox("", "", "NO DATA YET"); fiNoData(); return; }
+      char big[12]; snprintf(big, 12, "%.1f", fiM2Yoy);
+      drawGrouped(big, 46, fitFont(big));
+      display.setFont(NULL);
+      float iss = fiBtcIssue();
+      char val[12]; if (!isnan(iss)) snprintf(val, 12, "%.2f", iss); else val[0] = 0;
+      fiBox(val, "%", "BTC ISSUANCE/YR");
+      // bitcoin's issuance just after each halving: a year of blocks at the
+      // new subsidy, over the supply at that height
+      float m2[5], bt[5];
+      for (int k = 0; k < 4; k++) {
+        long h = 210000L * (k + 1);
+        m2[k] = fiM2Halv[k] != 0 ? fiM2Halv[k] : NAN;
+        bt[k] = (float)(52560.0 * (subsidySats(k + 1) / 1e8) / supplyBTC(h) * 100.0);
+      }
+      m2[4] = fiM2Yoy; bt[4] = iss;
+      fiNewMoneyStairs(m2, bt);
+      return;
+    }
     fiCaption(FI_BSK_CAP[i]);
     if (fiBsk[i] <= 0) { fiBox("", "", "NO DATA YET"); fiNoData(); return; }
     char big[16];
