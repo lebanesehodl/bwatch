@@ -10935,9 +10935,15 @@ public:
     // either the cell is not charging or the ADC is misreading it, and only
     // the raw figure separates those two
     // On the cable the figure is the charger's, not the cell's: say so.
+    // On the cable the voltage is the charger's rail (about 3.92 V whatever
+    // the cell holds), so it says nothing. Show the charge chip's own status
+    // pin instead, raw: CHARGING (pin low) or IDLE (finished, or not charging
+    // at all: a weak port or cable). Reopen About to read it again.
     if (cs == 0) display.printf("Pwr  bat %.2fV", batteryVolts());   // <=17
-    else         display.printf("Pwr %s %.2fV USB",
-                                cs == 1 ? "chg" : "ful", batteryVolts());
+    else {
+      pinMode(CHG_STAT_PIN, INPUT_PULLUP); delayMicroseconds(60);
+      display.print(digitalRead(CHG_STAT_PIN) == LOW ? "USB  CHARGING" : "USB  IDLE");
+    }
 
     y += 18; display.setCursor(0, y);
     if (wifiSsid[0][0]) {
