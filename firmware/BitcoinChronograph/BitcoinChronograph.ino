@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C014D
+#define RTC_LAYOUT_MAGIC 0xB17C014E
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -644,6 +644,9 @@ RTC_DATA_ATTR float    fiBskHalv[5][4] = {{0}}; // price at each halving, USD
 RTC_DATA_ATTR uint32_t fiBskDate[5]    = {0};   // yyyymmdd of the latest
 RTC_DATA_ATTR float    fiCpiYoy        = 0;     // CPI, % in a year
 RTC_DATA_ATTR uint32_t fiBskWake       = 0;     // wakeMin of the basket fetch
+RTC_DATA_ATTR uint32_t fiCloseDate     = 0;     // the newest S&P close FRED has given
+RTC_DATA_ATTR uint32_t fiCloseFor      = 0;     // the session close being waited for
+RTC_DATA_ATTR uint8_t  fiCloseTries    = 0;     // tries for it (a holiday never comes)
 RTC_DATA_ATTR bool     fiatAsk         = false; // fetch the FIAT data at the next
                                                 // chance: after a boot, or a FIAT
                                                 // face just turned on
@@ -6382,6 +6385,7 @@ public:
     for (int i = 0; i < 6; i++) { fiMkt[i] = 0; fiMktBase[i] = 0; fiMktDate[i] = 0; }
     fiMktLive = 0; fiLiveWake = 0; fiMktWake = 0; fiBtcBase = 0; fiBtcYearAgo = 0;
     fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0; fiatAsk = false;
+    fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
@@ -7151,16 +7155,35 @@ public:
     return open;
   }
 
+  // the last NYSE session that has ended (yyyymmdd, New York date):
+  // today after 16:00 on a weekday, else the weekday before
+  uint32_t fiLastSession() {
+    time_t et = etFromUtc((time_t)nowUtc64());
+    tmElements_t t; breakTime(et, t);
+    int back = (t.Wday >= 2 && t.Wday <= 6 && t.Hour * 60 + t.Minute >= 960) ? 0 : 1;
+    tmElements_t d; breakTime(et - back * 86400L, d);
+    while (d.Wday == 1 || d.Wday == 7) { back++; breakTime(et - back * 86400L, d); }
+    return (uint32_t)(d.Year + 1970) * 10000 + d.Month * 100 + d.Day;
+  }
+
   // Called from fetchAll with the radio up. Each part only for a face that
-  // is on, and each on its own clock: market closes every 6 h, the live
-  // quotes every 30 min while NYSE is open, the basket twice a day.
+  // is on, and each on its own clock: market closes once per session (after
+  // it has ended), the live quotes every 30 min while NYSE is open, nothing
+  // while it is closed, and the basket once a day.
   void fiatStep(bool all) {
     fiatAsk = false;                  // asked and answered (or tried)
     bool mktOn = faceShown(M_FMKT), bskOn = faceShown(M_FBSK);
     if (!mktOn && !bskOn) return;
-    bool closesDue = mktOn && tierDue(fiMktWake, 360, all);
+    // Closes change once per session, so they are only asked for when a
+    // session has ended that FRED has not given yet: tried every 3 h (FRED
+    // posts the close late, often the next morning), four times at most (a
+    // holiday's close never comes). Nights and weekends: nothing.
+    uint32_t want = fiLastSession();
+    if (want != fiCloseFor) { fiCloseFor = want; fiCloseTries = 0; }
+    bool closesDue = mktOn && (fiMktWake == 0 || all ||
+                     (fiCloseDate < want && fiCloseTries < 4 && tierDue(fiMktWake, 180, false)));
     bool liveDue   = mktOn && nyseOpen(nullptr, nullptr) && tierDue(fiLiveWake, 30, all);
-    bool bskDue    = bskOn && tierDue(fiBskWake, 720, all);
+    bool bskDue    = bskOn && tierDue(fiBskWake, 1440, all);   // monthly data: daily is plenty
     if (!closesDue && !liveDue && !bskDue) return;
     uint32_t today = fiToday(), y = today / 10000;
     WiFiClientSecure client; client.setInsecure();
@@ -7175,6 +7198,7 @@ public:
           if (!fredGet(http, client, FI_MKT_FRED[i], (y - 1) * 10000 + 1201, body)) continue;
           if (fredParse(body.c_str(), tgt, v, at, 2) == 0 || v[1] <= 0) continue;
           fiMktBase[i] = v[0];
+          if (i == 0) fiCloseDate = at[1];
           if (!((fiMktLive >> i) & 1) || at[1] >= fiMktDate[i]) {
             fiMkt[i] = v[1]; fiMktDate[i] = at[1]; fiMktLive &= ~(1 << i);
           }
@@ -7193,7 +7217,8 @@ public:
           float m = fredYoy(body.c_str(), nullptr);
           if (m != 0) fiM2Yoy = m;
         }
-        if (got >= 3) fiMktWake = tierStamp();      // else again next cycle
+        fiMktWake = tierStamp();                     // spaced either way
+        if (fiCloseDate < want) fiCloseTries++;
       }
       if (bskDue) {
         int got = 0;
