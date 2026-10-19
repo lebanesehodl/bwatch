@@ -490,6 +490,8 @@ RTC_DATA_ATTR float    lowFee        = 0;   // hourFee
 RTC_DATA_ATTR float    lastRewardBtc = 0;   // subsidy + fees, in BTC
 RTC_DATA_ATTR long     lastTxCount   = 0;   // transactions in that block
 RTC_DATA_ATTR float    netHashEH     = 0;   // network hashrate, exahash/s
+RTC_DATA_ATTR bool     chgSeenOn     = false;  // the charge IC said "charging" at
+                                               // least once on this plug-in
 RTC_DATA_ATTR uint32_t usbSeenWake   = 0;    // first wake USB was noticed, so
                                              // a fresh charge is not mistaken
                                              // for a finished one
@@ -603,6 +605,8 @@ RTC_DATA_ATTR uint32_t travelWake    = 0;      // and expires 30 min from here.
                                                // A simulation you can forget
                                                // you are in is a lie waiting
                                                // to happen
+RTC_DATA_ATTR int8_t   supMsDone     = -1;     // the last supply milestone shown
+                                               // (index; NVS, like sawMillion)
 RTC_DATA_ATTR bool     sawMillion    = false;  // block 1,000,000 has been
                                                // met and marked. Stored in
                                                // NVS: it happens once and the
@@ -2035,16 +2039,22 @@ public:
     if (blockHeight > 0 && blockHeight > curioSeen) {
       long from = curioSeen > 0 ? curioSeen + 1 : blockHeight;
       if (blockHeight - from > 300) from = blockHeight - 300;
-      // A supply milestone anywhere in the gap outranks any curiosity in it
-      // (a palindrome a few blocks later must not bury "UNDER 900K"). It is
-      // checked by height, so it fires once, when the tip first passes it.
-      for (int i = 0; i < N_SUPMS && !shown; i++) {
+      // A supply milestone outranks any curiosity. Months apart, so it is
+      // shown late rather than never: one passed while the watch was off,
+      // asleep at night or not yet running this firmware still shows, if it
+      // is under four weeks (4,032 blocks) old. Remembered by index in NVS,
+      // so each one shows once.
+      int ms = -1;
+      for (int i = 0; i < N_SUPMS; i++) {
         long mh = supMsHeight(i);
-        if (mh < from || mh > blockHeight || mh <= lastCurio) continue;
-        if ((evQueue & EV_CURIO) && evCurioH == 1000000L) break;
+        if (mh <= blockHeight && blockHeight - mh <= 4032 && i > supMsDone) ms = i;
+      }
+      if (ms >= 0 && !travelActive &&
+          !((evQueue & EV_CURIO) && evCurioH == 1000000L)) {
+        supMsDone = ms; savePrefs();
         lastCurio = blockHeight;      // the gap's curiosities give way to it
-        supplyScreen(i);
-        evCurioH = mh;
+        supplyScreen(ms);
+        evCurioH = supMsHeight(ms);
         fireEvent(EV_CURIO);
         evShown = EV_CURIO;
         shown = true;
@@ -2183,6 +2193,7 @@ public:
         runH[i] = (v >= 10.0f && v <= 200.0f) ? v : def[i];
       } }
     sawMillion = p.getBool("m1", false);
+    supMsDone = p.getChar("smD", -1);
     alarmHeight = p.getLong("alH", 0);
     feeAlarm    = p.getUShort("alF", 0);
     { int nf = p.getChar("nFrom", NIGHT_FROM_H), nt = p.getChar("nTo", NIGHT_TO_H);
@@ -2258,6 +2269,7 @@ public:
                                            // reflashes and power loss
     p.putFloat("bfv", battFullV);
     p.putBool("m1", sawMillion);
+    p.putChar("smD", supMsDone);
     p.putLong("alH", alarmHeight);
     p.putUShort("alF", feeAlarm);
     p.putChar("nFrom", nightFrom);
@@ -4917,11 +4929,11 @@ public:
   int chargeState() {
     static uint32_t usbSeenMs = 0;        // this boot only; millis() resets
     pinMode(USB_DET_PIN, INPUT);
-    if (digitalRead(USB_DET_PIN) != 1) { usbSeenWake = 0; usbSeenMs = 0; return 0; }
+    if (digitalRead(USB_DET_PIN) != 1) { usbSeenWake = 0; usbSeenMs = 0; chgSeenOn = false; return 0; }
     if (usbSeenWake == 0) { usbSeenWake = wakeMin ? wakeMin : 1; usbSeenMs = millis(); }
     pinMode(CHG_STAT_PIN, INPUT_PULLUP);
     delayMicroseconds(60);
-    if (digitalRead(CHG_STAT_PIN) == LOW) return 1;      // asserted: charging
+    if (digitalRead(CHG_STAT_PIN) == LOW) { chgSeenOn = true; return 1; }   // charging
 
     // CHG_STAT high means "not actively charging", which is true both of a
     // finished charge and of the first moments after plugging in, before the
@@ -4944,7 +4956,12 @@ public:
     uint32_t onMs    = millis() - usbSeenMs;
     if (onWakes < USB_SETTLE_MIN &&
         onMs < USB_SETTLE_MIN * 60UL * 1000UL) return 1;           // too soon
-    return (battVoltsTrue() >= 4.05f) ? 2 : 1;
+    // A chip that was never seen charging on this plug-in has not finished
+    // a charge: it has not started one (a weak cable, a warm cell). Oct 18:
+    // plugged in at 3.70 V (25%), status idle, rail 3.915 V, and the
+    // calibration lifted that just past 4.05: "full" in 3 minutes. Without a
+    // charge seen, only a cell that is really at the top counts as full.
+    return (battVoltsTrue() >= (chgSeenOn ? 4.05f : 4.15f)) ? 2 : 1;
   }
 
   // one ADC sample moves a few points on noise; the median of five drops
@@ -6343,7 +6360,7 @@ public:
     awakeTill = 0;
     lnFetchedWake = 0;      // a stale stamp can make an old invoice
                             // look fresh after a layout change
-    sawMillion = false;
+    sawMillion = false; supMsDone = -1;
     // The log is not cleared here. RTC memory has just been thrown away, but
     // the samples live in flash and are the whole point of collecting them —
     // a layout change or a flat cell should not cost a discharge run. Only
