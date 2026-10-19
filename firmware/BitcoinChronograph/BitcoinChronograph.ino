@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C014E
+#define RTC_LAYOUT_MAGIC 0xB17C014F
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -631,13 +631,16 @@ RTC_DATA_ATTR uint16_t faceHide      = 0;      // bit per face: 1 = left out
 // home, monthly/quarterly, from FRED, with each item's price at the four
 // halvings. All of it free and keyless; fetched only while the face is on.
 RTC_DATA_ATTR float    fiMkt[6]        = {0};   // the value shown, USD (10Y: %)
-RTC_DATA_ATTR float    fiMktBase[6]    = {0};   // last close of the previous year
+RTC_DATA_ATTR float    fiMktBase[6]    = {0};   // the close twelve months ago
+RTC_DATA_ATTR float    fiMkt5[6]       = {0};   // the close five years ago
 RTC_DATA_ATTR uint32_t fiMktDate[6]    = {0};   // yyyymmdd of that value
 RTC_DATA_ATTR uint8_t  fiMktLive       = 0;     // bit per metric: a live quote
 RTC_DATA_ATTR uint32_t fiLiveWake      = 0;     // wakeMin of the live quotes
 RTC_DATA_ATTR uint32_t fiMktWake       = 0;     // wakeMin of the FRED closes
-RTC_DATA_ATTR float    fiBtcBase       = 0;     // BTC/USD at the end of last year
 RTC_DATA_ATTR float    fiBtcYearAgo    = 0;     // BTC/USD twelve months ago
+RTC_DATA_ATTR float    fiBtc5          = 0;     // BTC/USD five years ago
+RTC_DATA_ATTR uint32_t fi5Wake         = 0;     // wakeMin of the 12-month / 5-year
+                                                // bases (they move slowly: weekly)
 RTC_DATA_ATTR float    fiM2Yoy         = 0;     // M2 money supply, % in a year
 RTC_DATA_ATTR float    fiBsk[5]        = {0};   // latest price, USD
 RTC_DATA_ATTR float    fiBskHalv[5][4] = {{0}}; // price at each halving, USD
@@ -6383,7 +6386,8 @@ public:
     joeCardsSeen = false; joeLastStep = 0; captivePortal = false; resting = false;
     chgSeenOn = false;
     for (int i = 0; i < 6; i++) { fiMkt[i] = 0; fiMktBase[i] = 0; fiMktDate[i] = 0; }
-    fiMktLive = 0; fiLiveWake = 0; fiMktWake = 0; fiBtcBase = 0; fiBtcYearAgo = 0;
+    for (int i = 0; i < 6; i++) fiMkt5[i] = 0;
+    fiMktLive = 0; fiLiveWake = 0; fiMktWake = 0; fiBtcYearAgo = 0; fiBtc5 = 0; fi5Wake = 0;
     fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0; fiatAsk = false;
     fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
@@ -7125,12 +7129,30 @@ public:
     return ok;
   }
   bool fredGet(HTTPClient &http, WiFiClientSecure &client, const char *id,
-               uint32_t from, String &body) {
-    char url[150];
-    snprintf(url, 150, "https://fred.stlouisfed.org/graph/fredgraph.csv"
+               uint32_t from, String &body, uint32_t to = 0) {
+    char url[170];
+    int n = snprintf(url, 170, "https://fred.stlouisfed.org/graph/fredgraph.csv"
              "?id=%s&cosd=%04lu-%02lu-%02lu", id, (unsigned long)(from / 10000),
              (unsigned long)(from / 100 % 100), (unsigned long)(from % 100));
+    if (to) snprintf(url + n, 170 - n, "&coed=%04lu-%02lu-%02lu", (unsigned long)(to / 10000),
+                     (unsigned long)(to / 100 % 100), (unsigned long)(to % 100));
     return fiGet(http, client, url, body);
+  }
+  // yyyymmdd arithmetic in days (for the small windows around a past date)
+  uint32_t fiDays(uint32_t ymd, long days) {
+    tmElements_t t; t.Year = ymd / 10000 - 1970; t.Month = ymd / 100 % 100;
+    t.Day = ymd % 100; t.Hour = 12; t.Minute = 0; t.Second = 0;
+    time_t x = makeTime(t) + days * 86400L;
+    breakTime(x, t);
+    return (uint32_t)(t.Year + 1970) * 10000 + t.Month * 100 + t.Day;
+  }
+  // the value on or just before a past date: a two-week window ending there
+  // (a few rows, not years of them). 0 when FRED has nothing.
+  float fredAt(HTTPClient &http, WiFiClientSecure &client, const char *id,
+               uint32_t when, String &body) {
+    if (!fredGet(http, client, id, fiDays(when, -14), body, when)) return 0;
+    uint32_t t[1] = {when}, a[1]; float v[1];
+    return fredParse(body.c_str(), t, v, a, 1) > 0 ? v[0] : 0;
   }
 
   // NYSE hours in New York time (holidays not known: a holiday reads open)
@@ -7192,30 +7214,36 @@ public:
       HTTPClient http; http.setConnectTimeout(5000); http.setTimeout(8000);
       http.setReuse(true); http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
       if (closesDue) {
-        int got = 0;
-        uint32_t tgt[2] = {(y - 1) * 10000 + 1231, 99999999UL}, at[2]; float v[2];
+        // the latest close: the last few weeks only
+        uint32_t tgt[1] = {99999999UL}, at[1]; float v[1];
         for (int i = 0; i < 6; i++) {
-          if (!fredGet(http, client, FI_MKT_FRED[i], (y - 1) * 10000 + 1201, body)) continue;
-          if (fredParse(body.c_str(), tgt, v, at, 2) == 0 || v[1] <= 0) continue;
-          fiMktBase[i] = v[0];
-          if (i == 0) fiCloseDate = at[1];
-          if (!((fiMktLive >> i) & 1) || at[1] >= fiMktDate[i]) {
-            fiMkt[i] = v[1]; fiMktDate[i] = at[1]; fiMktLive &= ~(1 << i);
+          if (!fredGet(http, client, FI_MKT_FRED[i], fiDays(today, -21), body)) continue;
+          if (fredParse(body.c_str(), tgt, v, at, 1) == 0 || v[0] <= 0) continue;
+          if (i == 0) fiCloseDate = at[0];
+          if (!((fiMktLive >> i) & 1) || at[0] >= fiMktDate[i]) {
+            fiMkt[i] = v[0]; fiMktDate[i] = at[0]; fiMktLive &= ~(1 << i);
           }
-          got++;
         }
-        // bitcoin itself, for "this year" and "12 months" (Coinbase's daily)
-        { uint32_t from = (y - 1) * 10000 + (today / 100 % 100) * 100 + 1;   // ~13 months
-          uint32_t t3[2] = {(y - 1) * 10000 + 1231, (y - 1) * 10000 + today % 10000};
-          uint32_t a3[2]; float v3[2];
-          if (fredGet(http, client, "CBBTCUSD", from, body) &&
-              fredParse(body.c_str(), t3, v3, a3, 2) > 0) {
-            if (v3[0] > 0) fiBtcBase = v3[0];
-            if (v3[1] > 0) fiBtcYearAgo = v3[1];
-          } }
-        if (fredGet(http, client, "M2SL", (y - 2) * 10000 + 101, body)) {
-          float m = fredYoy(body.c_str(), nullptr);
-          if (m != 0) fiM2Yoy = m;
+        // the bases, twelve months and five years back, for each metric and
+        // for bitcoin: they move a day a day, so weekly is close enough
+        if (fiMktBase[0] <= 0 || tierDue(fi5Wake, 10080, all)) {
+          uint32_t t12 = today - 10000, t5 = today - 50000;
+          int got = 0;
+          for (int i = 0; i < 6; i++) {
+            float a12 = fredAt(http, client, FI_MKT_FRED[i], t12, body);
+            float a5  = fredAt(http, client, FI_MKT_FRED[i], t5, body);
+            if (a12 > 0) { fiMktBase[i] = a12; got++; }
+            if (a5 > 0) fiMkt5[i] = a5;
+          }
+          float b12 = fredAt(http, client, "CBBTCUSD", t12, body);
+          float b5  = fredAt(http, client, "CBBTCUSD", t5, body);
+          if (b12 > 0) fiBtcYearAgo = b12;
+          if (b5 > 0) fiBtc5 = b5;
+          if (fredGet(http, client, "M2SL", (y - 2) * 10000 + 101, body)) {
+            float m = fredYoy(body.c_str(), nullptr);
+            if (m != 0) fiM2Yoy = m;
+          }
+          if (got >= 3) fi5Wake = tierStamp();
         }
         fiMktWake = tierStamp();                     // spaced either way
         if (fiCloseDate < want) fiCloseTries++;
@@ -7271,12 +7299,19 @@ public:
     return (m >= 1 && m <= 12) ? M[m - 1] : "---";
   }
   float fiBtcUsd() { return fxRate[0] > 0 ? fxRate[0] : 0; }
-  float fiBtcYtd() {
-    float b = fiBtcUsd();
-    return (b > 0 && fiBtcBase > 0) ? (b / fiBtcBase - 1) * 100 : NAN;
+  // a change in %, and the same change measured in bitcoin: above zero the
+  // thing beat bitcoin over the period, below zero bitcoin beat it
+  static float fiChg(float now, float base) {
+    return (now > 0 && base > 0) ? (now / base - 1) * 100 : NAN;
   }
-  float fiYtd(int i) {
-    return (fiMkt[i] > 0 && fiMktBase[i] > 0) ? (fiMkt[i] / fiMktBase[i] - 1) * 100 : NAN;
+  static float fiInBtc(float usd, float btcUsd) {
+    return (isnan(usd) || isnan(btcUsd)) ? NAN : ((1 + usd / 100) / (1 + btcUsd / 100) - 1) * 100;
+  }
+  // a 10-year bond bought `years` ago and held: its yield then, compounded
+  // (coupons only; the bond's own price is left out, as a holder to
+  // maturity would)
+  static float fiHeld(float yieldThen, int years) {
+    return yieldThen > 0 ? (powf(1 + yieldThen / 100, (float)years) - 1) * 100 : NAN;
   }
   // bitcoin's own new money: a year of blocks at today's subsidy, over supply
   float fiBtcIssue() {
@@ -7382,17 +7417,20 @@ public:
 
   void drawFiatMarkets() {
     int i = cellSel[M_FMKT] % 6;
-    float btc = fiBtcUsd(), btcYtd = fiBtcYtd();
-    // the dials: the trading day, and how many of these bitcoin beats this year
+    float btc = fiBtcUsd();
+    float btc12 = fiChg(btc, fiBtcYearAgo), btc5 = fiChg(btc, fiBtc5);
+    // the dials: the trading day, and how many of these bitcoin beats over
+    // five years (the steadier verdict; twelve months while 5 y is unknown)
     float pct; bool open = nyseOpen(&pct, nullptr);
     char mid[8]; snprintf(mid, 8, open ? "%d" : "OFF", (int)(pct * 100));
     drawSubdial(26, 80, 16, pct, "NYSE", mid);
     int beat = 0, known = 0;
     for (int k = 0; k < 6; k++) {
       if (k == 4) continue;                       // a yield is not a price
-      float y = fiYtd(k);
-      if (isnan(y) || isnan(btcYtd)) continue;
-      known++; if (btcYtd > y) beat++;
+      float v = fiInBtc(fiChg(fiMkt[k], fiMkt5[k]), btc5);
+      if (isnan(v)) v = fiInBtc(fiChg(fiMkt[k], fiMktBase[k]), btc12);
+      if (isnan(v)) continue;
+      known++; if (v < 0) beat++;
     }
     char bm[8]; if (known) snprintf(bm, 8, "%d/%d", beat, known); else snprintf(bm, 8, "--");
     drawSubdial(174, 80, 16, known ? (float)beat / known : 0, "BEAT", bm);
@@ -7420,31 +7458,38 @@ public:
       if (btc > 0) snprintf(val, 16, "%.0f", 1e8 / btc); else val[0] = 0;
       fiBox(val, "SAT", "1 USD IN SATS");
     }
-    // The thing's own year, twice: in dollars, and measured in bitcoin. In
-    // bitcoin is the line that answers the face's question: above zero it
-    // beat bitcoin, below zero bitcoin beat it (Ahmed, Oct 18: two rows of
-    // "the thing" and "bitcoin", both in USD, left the reader to divide).
-    // The 10Y: a year of holding the bond, its yield, against the same year
-    // of bitcoin.
-    static const char *HEAD[6] = {"S&P 500 THIS YEAR", "NASDAQ 100 THIS YEAR",
-                                  "DOW THIS YEAR", "OIL THIS YEAR",
-                                  "10Y BOND, HELD 12 MONTHS", "THE DOLLAR THIS YEAR"};
-    char a[10], b[10];
-    float inUsd, ref;
+    // Twelve months and five years, in dollars and measured in bitcoin. In
+    // bitcoin is the row that answers the face's question: above zero the
+    // thing beat bitcoin, below zero bitcoin beat it. Short and long can
+    // disagree, and that is often the point (Ahmed, Oct 18).
+    // The 10Y: the yield back then, and what holding the bond from then
+    // paid, measured in bitcoin.
+    static const char *NAME[6] = {"S&P 500", "NASDAQ 100", "DOW", "OIL",
+                                  "10Y BOND", "THE DOLLAR"};
+    char c1[10], c2[10];
+    display.setCursor(8, 102); display.print(NAME[i]);
+    display.setCursor(146 - 30, 102); display.print("12 MO");
+    display.setCursor(194 - 30, 102); display.print("5 YRS");
+    auto row = [&](const char *lab, const char *a, const char *b, int y) {
+      display.setCursor(8, y); display.print(lab);
+      display.setCursor(146 - (int)strlen(a) * 6, y); display.print(a);
+      display.setCursor(194 - (int)strlen(b) * 6, y); display.print(b);
+    };
     if (i == 4) {
-      inUsd = fiMkt[4];
-      ref = (btc > 0 && fiBtcYearAgo > 0) ? (btc / fiBtcYearAgo - 1) * 100 : NAN;
+      auto yl = [](char *o, float v) { if (v > 0) snprintf(o, 10, "%.2f%%", v); else snprintf(o, 10, "--"); };
+      yl(c1, fiMktBase[4]); yl(c2, fiMkt5[4]);
+      row("YIELD THEN", c1, c2, 112);
+      fiPct(c1, 10, fiInBtc(fiHeld(fiMktBase[4], 1), btc12), true);
+      fiPct(c2, 10, fiInBtc(fiHeld(fiMkt5[4], 5), btc5), true);
+      row("HELD, IN BTC", c1, c2, 122);
     } else {
-      inUsd = fiYtd(i);
-      ref = btcYtd;
+      float u12 = fiChg(fiMkt[i], fiMktBase[i]), u5 = fiChg(fiMkt[i], fiMkt5[i]);
+      fiPct(c1, 10, u12, true); fiPct(c2, 10, u5, true);
+      row("IN USD", c1, c2, 112);
+      fiPct(c1, 10, fiInBtc(u12, btc12), true); fiPct(c2, 10, fiInBtc(u5, btc5), true);
+      row("IN BTC", c1, c2, 122);
     }
-    float inBtc = (isnan(inUsd) || isnan(ref)) ? NAN
-                : ((1 + inUsd / 100) / (1 + ref / 100) - 1) * 100;
-    display.setCursor(8, 102); display.print(HEAD[i]);
-    float m = fmaxf(isnan(inUsd) ? 0 : fabsf(inUsd), isnan(inBtc) ? 0 : fabsf(inBtc));
-    fiPct(a, 10, inUsd, true); fiPct(b, 10, inBtc, true);
-    fiBar("USD", inUsd, m, a, 112, false);
-    fiBar("BTC", inBtc, m, b, 122, true);
+    char a[10], b[10];
     display.drawFastHLine(6, 133, 188, fg());
     display.setCursor(8, 138); display.print("NEW MONEY EACH YEAR");
     float iss = fiBtcIssue();
