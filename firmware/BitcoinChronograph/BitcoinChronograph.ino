@@ -7422,7 +7422,8 @@ public:
     centerSmall(radioBackedOff() ? "OFFLINE" : "FETCHED WITH THE NEXT UPDATE", 134);
   }
 
-  // Two columns, one per period, each headed by its name: a USD bar
+  // Two columns, one per period, each headed by its name (no rule between:
+  // the gap and their own zero lines part them): a USD bar
   // (hatched) and a BTC bar (solid) from a shared zero line, named under the
   // chart like an axis. Up is a gain, down a loss. A gain's value sits on the
   // bar; a loss's sits just above the zero line, so nothing collides with
@@ -7464,7 +7465,6 @@ public:
     int zy = top + (int)(up * scale + 0.5f);
     const int cx[2] = {52, 148}, bw = 26, gap = 6;
     const char *g[2] = {g1, g2};
-    display.drawFastVLine(100, 101, 69, fg());          // the column rule
     for (int k = 0; k < 2; k++) {
       display.setCursor(cx[k] - (int)strlen(g[k]) * 3, 102); display.print(g[k]);
       display.drawFastHLine(cx[k] - 44, zy, 88, fg());  // this column's zero
