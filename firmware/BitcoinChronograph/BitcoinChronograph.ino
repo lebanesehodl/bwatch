@@ -5131,6 +5131,13 @@ public:
     float h = runH[battProfile < 3 ? battProfile : 0];
     return (int)(p / 100.0f * h + 0.5f);
   }
+  // Battery life in the chain's own unit: the hours left, at the pace the
+  // chain has actually been keeping this epoch (avgBlockSec, not a flat ten
+  // minutes). Hours stay as the small second line: what a day is planned by.
+  long blocksLeft(int h) {
+    float s = (avgBlockSec > 300.0f && avgBlockSec < 1200.0f) ? avgBlockSec : 600.0f;
+    return h < 0 ? -1 : (long)(h * 3600.0f / s + 0.5f);
+  }
   void fmtHours(char *out, size_t n, int h) {
     if (h < 1)       snprintf(out, n, "<1H");
     else if (h < 24) snprintf(out, n, "~%dH", h);
@@ -6555,9 +6562,10 @@ public:
     drawBattery(10, 3);
     restHrsShown = hoursLeft();             // how long it has: the question a
     if (restHrsShown >= 0) {                // wearer picking it up is asking
-      char hb[12]; fmtHours(hb, 12, restHrsShown);
+      char hb[12], l[24]; fmtHours(hb, 12, restHrsShown);
+      snprintf(l, 24, "~%ld BLK (%s)", blocksLeft(restHrsShown), hb);
       display.setCursor(32, 3);
-      display.print(hb);
+      display.print(l);
     }
     const char *tag = night ? "NIGHT" : "REST";
     display.setCursor(188 - (int)strlen(tag) * 6, 3);
@@ -11610,8 +11618,16 @@ public:
     int p  = batteryPctShown();
     y += 20; display.setCursor(0, y);
     if (p >= 0 && !battEstimated && cs == 0) {   // on the cell: and how long
-      char hb[12]; fmtHours(hb, 12, hoursLeft());
-      display.printf("Batt %d%% %s", p, hb);
+      int hl = hoursLeft();
+      if (hl >= 0) {                     // in blocks, the hours under it
+        display.printf("Batt %d%% %ld BLK", p, blocksLeft(hl));
+        char hb[12], l[24]; fmtHours(hb, 12, hl);
+        snprintf(l, 24, "%s LEFT", hb);
+        display.setFont(NULL);
+        display.setCursor(66, y + 5); display.print(l);
+        display.setFont(&FreeMonoBold9pt7b);
+        y += 10;
+      } else display.printf("Batt %d%%", p);
     } else if (p >= 0) display.printf(battEstimated ? "Batt ~%2d%%" : "Batt %3d%%", p);
     else        display.print("Batt  --%");   // charging, and the last
                                               // on-cell reading died with
