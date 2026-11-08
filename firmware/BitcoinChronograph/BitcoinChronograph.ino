@@ -2153,8 +2153,16 @@ public:
       shown = true;
     }
 
+    if (shown) eventOnGlass = true;   // its own full put it there, finished
     return shown;
   }
+  // A moment's screen (curiosity, milestone, retarget, halving) ends with its
+  // own full refresh. Docked, the loop then redraws the face, which redraws
+  // the same card; the loop's partial on that identical image is the "crisp,
+  // then grey in half a second" of Oct 16 (display audit 3, #1). The first
+  // redraw after a moment took the glass is therefore marked as a full, so
+  // the partial is skipped.
+  bool eventOnGlass = false;
 
   void maybeFetch() {
     if (inDocked) return;   // docked loop schedules fetches itself,
@@ -11319,7 +11327,10 @@ public:
       return true;
     }
     drawEventScreen(ev);
+    bool same = eventOnGlass && evShown == ev;   // the card its own full put up
+    eventOnGlass = false;
     evShown = ev;
+    if (same) { justFull = true; return true; }  // already on the glass: no partial
     // the curiosity is black whatever the theme: a flip either way goes full
     bool dark = (ev == EV_CURIO || ev == EV_RETG || ev == EV_HALV || ev == EV_AGE) ? true : themeDark;
     if (timerWake && !inDocked) {                 // first sight: a full
