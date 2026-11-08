@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0151
+#define RTC_LAYOUT_MAGIC 0xB17C0152
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -654,6 +654,24 @@ RTC_DATA_ATTR uint32_t fiBskWake       = 0;     // wakeMin of the basket fetch
 RTC_DATA_ATTR uint32_t fiCloseDate     = 0;     // the newest S&P close FRED has given
 RTC_DATA_ATTR uint32_t fiCloseFor      = 0;     // the session close being waited for
 RTC_DATA_ATTR uint8_t  fiCloseTries    = 0;     // tries for it (a holiday never comes)
+// ---- the case temperature (Nov 8): the accelerometer's thermometer ----
+// The panel picks its waveform from its own sensor; in direct sun the glass
+// runs hotter than that and the ink comes out washed out, and in the cold
+// the ink is sluggish and the cell sags. The case reading (whole degrees,
+// lagging the face by minutes) sets a mode, with hysteresis so it does not
+// flicker at the edge:
+//   HOT  at >= 38 C, off at <= 35 C: a wrist alone keeps the case ~28-34 C
+//   COLD at <=  5 C, off at >=  8 C: a car, a windowsill, a coat pocket
+// Starting values, to be tuned from what About shows in the wild.
+#define TEMP_HOT_ON   38
+#define TEMP_HOT_OFF  35
+#define TEMP_COLD_ON   5
+#define TEMP_COLD_OFF  8
+#define TEMP_PANEL_C  25      // what the panel is told while HOT
+enum { TEMP_OK = 0, TEMP_HOT = 1, TEMP_COLD = 2 };
+RTC_DATA_ATTR int8_t   caseTempC       = 99;    // last reading (99: none yet)
+RTC_DATA_ATTR uint8_t  tempMode        = TEMP_OK;
+RTC_DATA_ATTR uint8_t  coldLowVolt     = 0;     // cold: low readings in a row
 RTC_DATA_ATTR bool     fiatAsk         = false; // fetch the FIAT data at the next
                                                 // chance: after a boot, or a FIAT
                                                 // face just turned on
@@ -2153,9 +2171,12 @@ public:
     if (!watchIsIdle() && alarmHeight > 0 && blockHeight > 0 &&
         alarmHeight - blockHeight <= ALARM_NEAR_BLOCKS && every > ALARM_NEAR_EVERY)
       every = ALARM_NEAR_EVERY;
-    bool due = forceFetch || !haveData ||
+    // COLD: the radio's current dips a sagging cell hardest; the fetch waits
+    // until the watch warms (a long UP still goes, and so does a first fetch)
+    bool coldWait = (tempMode == TEMP_COLD) && haveData && !forceFetch;
+    bool due = !coldWait && (forceFetch || !haveData ||
                (wakeMin - lastFetchMin >= every) ||
-               (fiatAsk && (faceShown(M_FMKT) || faceShown(M_FBSK)));
+               (fiatAsk && (faceShown(M_FMKT) || faceShown(M_FBSK))));
     // offline and a press woke it: the retry the backoff allows can wait for
     // the next minute wake, not hold the face up for a 12 s search
     if (pressRun && failCount > 0 && !forceFetch) due = false;
@@ -5602,10 +5623,12 @@ public:
   void curiosityScreen(long h, const char *why) {
     // staged in, a partial at each step, like a find in an old handheld game:
     // the number, the brackets closing in, the name, then the card settles
-    drawCurioCard(h, 0); display.display(true); delay(260);
-    drawCurioCard(h, 1); display.display(true); delay(200);
-    drawCurioCard(h, 2); display.display(true); delay(260);
-    drawCurioCard(h, 3); display.display(true); delay(320);
+    if (tempMode != TEMP_COLD) {  // cold: no animation, the card as it lands
+      drawCurioCard(h, 0); display.display(true); delay(260);
+      drawCurioCard(h, 1); display.display(true); delay(200);
+      drawCurioCard(h, 2); display.display(true); delay(260);
+      drawCurioCard(h, 3); display.display(true); delay(320);
+    }
     drawCurioCard(h, 4);
     displayFull();
     paintedDark = true;           // white on black, whatever the theme: the
@@ -5730,7 +5753,7 @@ public:
   // staged in like the curiosities: the count runs down to the line and past
   // it (900,003 -> 900,000 -> 899,999), then the card settles with a full
   void supplyScreen(int i) {
-    for (int st = 0; st < 4; st++) {
+    for (int st = 0; st < 4 && tempMode != TEMP_COLD; st++) {   // cold: no animation
       drawSupplyCard(i, st); display.display(true);
       delay(st == 0 ? 500 : st == 3 ? 420 : 260);
     }
@@ -6403,6 +6426,7 @@ public:
     fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0; fiatAsk = false; fiM2Date = 0;
     for (int k = 0; k < 4; k++) fiM2Halv[k] = 0;
     fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
+    caseTempC = 99; tempMode = TEMP_OK; coldLowVolt = 0;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
@@ -6717,10 +6741,10 @@ public:
     bool now = frameDark();
     bool was = glass < 0 ? paintedAtStart : glass == 1;
     epdLog("FULL start");
-    display.display(false);
+    sendFull();
     if (was && !now) {                 // black to white: settle it
       epdLog("FULL dark->light: second full");
-      display.display(false);
+      sendFull();
     }
     epdLog("FULL done");
     panelOff();
@@ -6728,7 +6752,57 @@ public:
     glass = now ? 1 : 0;
     if (was && !now) facePartials = FACE_SETTLE;   // and once more next minute
   }
-  void partialSync() { display.display(true); glass = frameDark() ? 1 : 0; }
+  // Read the case temperature and move between the modes. Called once per
+  // wake, before anything is drawn. A failed read (the sensor answers 0 when
+  // it has nothing) keeps the last mode rather than guessing.
+  void updateTempMode() {
+    float t = sensor.readTemperature();
+    if (t == 0.0f && caseTempC != 99 && abs(caseTempC) > 4) return;  // no valid read
+    caseTempC = (int8_t)constrain((int)lroundf(t), -40, 85);
+    uint8_t was = tempMode;
+    if (tempMode == TEMP_HOT  && caseTempC <= TEMP_HOT_OFF)  tempMode = TEMP_OK;
+    if (tempMode == TEMP_COLD && caseTempC >= TEMP_COLD_OFF) tempMode = TEMP_OK;
+    if (tempMode == TEMP_OK) {
+      if (caseTempC >= TEMP_HOT_ON)  tempMode = TEMP_HOT;
+      if (caseTempC <= TEMP_COLD_ON) tempMode = TEMP_COLD;
+    }
+    if (tempMode != TEMP_COLD) coldLowVolt = 0;
+    if (tempMode != was)
+      Serial.printf("[temp] case %d C: %s -> %s\n", caseTempC,
+                    was == TEMP_HOT ? "HOT" : was == TEMP_COLD ? "COLD" : "OK",
+                    tempMode == TEMP_HOT ? "HOT" : tempMode == TEMP_COLD ? "COLD" : "OK");
+  }
+  // HOT: a refresh with the panel told it is TEMP_PANEL_C instead of reading
+  // its own sensor, so it drives the ink with the room-temperature waveform.
+  // Same as the driver's refresh but split in two, as Good Display's own
+  // samples do it: write the temperature, load the waveform for it (0x91
+  // full, 0x99 partial: no temperature read), then display. The full ends
+  // with the voltage off (0xC7, then the usual panelOff); the partial keeps
+  // it on (0xCC), exactly as the driver's own partial (0xFC) does, since a
+  // power-off between partials is what ghosted JOE's cards (0aa0e2c).
+  void hotUpdate(bool partial) {
+    WatchyDisplay &e = display.epd2;
+    uint8_t *fb = display.*epdGet(EpdBufTag());
+    if (partial) e.writeImage(fb, 0, 0, 200, 200);
+    else e.writeImageForFullRefresh(fb, 0, 0, 200, 200);  // both memories
+    uint16_t t16 = (uint16_t)(TEMP_PANEL_C * 16);         // 12 bits, 1/16 C
+    EpdFull::cmd(e, 0x1A); EpdFull::dat(e, t16 >> 4); EpdFull::dat(e, (t16 & 0xF) << 4);
+    EpdFull::cmd(e, 0x22); EpdFull::dat(e, partial ? 0x99 : 0x91);
+    EpdFull::cmd(e, 0x20); EpdFull::busy(e, "_hotLUT", 300);
+    EpdFull::cmd(e, 0x22); EpdFull::dat(e, partial ? 0xCC : 0xC7);
+    EpdFull::cmd(e, 0x20); EpdFull::busy(e, partial ? "_hotPart" : "_hotFull", partial ? 1500 : 4000);
+    EpdFull::markOn(e);                // the driver's power state: on, so the
+                                       // off it sends next (panelOff) is real
+    epdLog(partial ? "HOT partial (panel told 25 C)" : "HOT full (panel told 25 C)");
+  }
+  void sendFull() { if (tempMode == TEMP_HOT) hotUpdate(false); else display.display(false); }
+  // COLD: no quick refreshes at all (they cannot move sluggish ink); the
+  // full's flash is the price, and a cold watch is rarely being worn.
+  void partialSync() {
+    if (tempMode == TEMP_COLD) { displayFull(); return; }
+    if (tempMode == TEMP_HOT) hotUpdate(true); else display.display(true);
+    glass = frameDark() ? 1 : 0;
+  }
   // THE FADE (found with the serial log, Oct 16): a full refresh came out
   // crisp, and the partial refresh sent ~0.5 s later on the SAME image greyed
   // its black areas within half a second. So after a full, the identical
@@ -7853,6 +7927,7 @@ public:
       else { shipSleep(); return; }     // (a reset) goes back to sleep
     }
 
+    updateTempMode();                   // the case temperature: HOT / COLD
     // Out of charge: put up the resting screen once and stop. Checked before
     // anything else is drawn, because a panel refresh at 3.3 V is exactly
     // what browns the chip out mid-frame and leaves half an image on the
@@ -7861,10 +7936,13 @@ public:
       int cs = chargeState();
       if (cs != 0 && resting) {           // plugged in: back to life
         resting = false;
-      } else if (cs == 0 && battVoltsTrue() < 3.36f) {
+      } else if (cs == 0 && battVoltsTrue() < 3.36f &&
+                 // a cold cell sags without being empty: believe it only
+                 // when the next wake reads low too
+                 (tempMode != TEMP_COLD || ++coldLowVolt >= 2)) {
         if (!resting) { resting = true; restingScreen(); }
         return;                           // nothing else gets drawn
-      }
+      } else if (tempMode == TEMP_COLD && battVoltsTrue() >= 3.36f) coldLowVolt = 0;
     }
 
     if (dispMode == M_JOE) { drawJoeFace(); return; }
@@ -8032,6 +8110,8 @@ public:
       strcpy(tag, (dispMode == M_WALT) ? "SCAN" : "FTCH");   // asked for, not
                                                             // yet delivered
     else if (inDocked) strcpy(tag, dockNetDown ? "DK-" : "DOCK");
+    else if (tempMode == TEMP_HOT)  strcpy(tag, "HOT");   // the panel is told 25 C
+    else if (tempMode == TEMP_COLD) strcpy(tag, "COLD");  // fulls only, no fetch
     else if (chargeState() != 0) strcpy(tag, "CHG");   // asleep on purpose, so
                                                        // the cell gets the
                                                        // charger's current
@@ -8651,6 +8731,8 @@ public:
                dB >= 0 ? "ARRIVING" : "ARRIVED", MON[c.m - 1], c.y);
     }
     const char *title = travelActive     ? destLine
+                      : (chargeState() != 0 && caseTempC != 99 && caseTempC <= 0)
+                                         ? "TOO COLD TO CHARGE"
                       : fiatFace         ? fiatTitle()
                       : showThemeName    ? THEME_NAMES[themeMode]
                       : (dispMode == M_WALT && walletPrivate && !walletPeek &&
@@ -11642,10 +11724,13 @@ public:
     // the cell holds), so it says nothing. Show the charge chip's own status
     // pin instead, raw: CHARGING (pin low) or IDLE (finished, or not charging
     // at all: a weak port or cable). Reopen About to read it again.
-    if (cs == 0) display.printf("Pwr  bat %.2fV", batteryVolts());   // <=17
+    char tc[6] = "";                   // the case temperature, on the same line
+    if (caseTempC != 99) snprintf(tc, 6, " %dC", caseTempC);
+    if (cs == 0) display.printf("Pwr  bat %.2fV%s", batteryVolts(), tc);   // <=18
     else {
       pinMode(CHG_STAT_PIN, INPUT_PULLUP); delayMicroseconds(60);
       display.print(digitalRead(CHG_STAT_PIN) == LOW ? "USB  CHARGING" : "USB  IDLE");
+      display.print(tc);
     }
 
     y += 18; display.setCursor(0, y);
