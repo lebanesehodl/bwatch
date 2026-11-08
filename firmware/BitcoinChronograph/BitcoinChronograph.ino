@@ -1503,7 +1503,7 @@ public:
     }
     drawHalving(v, 4);
     displayFull();
-    paintedDark = true;
+    paintedDark = themeDark;      // cards follow the theme (Nov 8)
     for (int i = 0; i < 4; i++) { buzz(35, 2); delay(140); }
   }
 
@@ -1522,7 +1522,7 @@ public:
     }
     drawRetarget(r, 4);
     displayFull();
-    paintedDark = true;            // always black: the face after flips full
+    paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(35, 2); delay(140); buzz(35, 2);
   }
 
@@ -2907,6 +2907,15 @@ public:
 
   uint16_t fg() { return themeDark ? GxEPD_WHITE : GxEPD_BLACK; }
   uint16_t bg() { return themeDark ? GxEPD_BLACK : GxEPD_WHITE; }
+  // The cards (curiosity, 1M, supply milestones, retarget and halving
+  // recaps, Bitcoin dates, birthdays, JOE's people) used to be white on black
+  // whatever the theme: every one was a whole-panel flip on a light face,
+  // with the double full, the settle, the fade after black and hours of
+  // black held on the glass that came with it. Now they follow the theme
+  // (Ahmed, Nov 8). The names say "card" so the drawing code reads as before:
+  // cardBg() is the card's ground, cardFg() its ink.
+  uint16_t cardBg() { return bg(); }
+  uint16_t cardFg() { return fg(); }
 
   long staleMinutes() {
     long e = (long)wakeMin - (long)lastFetchMin;
@@ -3512,24 +3521,24 @@ public:
   // the dial at any size: the face's small EPOC dial, scaled. The arc and
   // ring keep their proportions; the label sits inside when there is room.
   void drawDialRing(int cx, int cy, int R, float pct, const char *name) {
-    display.drawCircle(cx, cy, R, GxEPD_WHITE);
+    display.drawCircle(cx, cy, R, cardFg());
     int tk = R > 40 ? 4 : 3;
     for (int a = 0; a < 360; a += 90) {            // the quarter ticks
       float rad = a * DEG_TO_RAD;
       display.drawLine(cx + cosf(rad) * (R + 1), cy + sinf(rad) * (R + 1),
                        cx + cosf(rad) * (R + tk), cy + sinf(rad) * (R + tk),
-                       GxEPD_WHITE);
+                       cardFg());
     }
     int outer = R - (R > 40 ? 3 : 2), inner = R - (R > 40 ? 10 : 5);
     // the arc, solid: a filled ring (spokes at this radius leave gaps)
-    display.fillCircle(cx, cy, outer, GxEPD_WHITE);
-    display.fillCircle(cx, cy, inner, GxEPD_BLACK);
+    display.fillCircle(cx, cy, outer, cardFg());
+    display.fillCircle(cx, cy, inner, cardBg());
     if (pct < 1.0f)                               // what is still to go
       for (float a = -90 + pct * 360.0f; a <= 270; a += 0.25f) {
         float rad = a * DEG_TO_RAD;
         display.drawLine(cx + cosf(rad) * (inner - 1), cy + sinf(rad) * (inner - 1),
                          cx + cosf(rad) * (outer + 1), cy + sinf(rad) * (outer + 1),
-                         GxEPD_BLACK);
+                         cardBg());
       }
     char p[8]; snprintf(p, 8, "%d", (int)(pct * 100 + 0.001f));
     display.setFont(NULL); display.setTextSize(1);
@@ -3548,8 +3557,8 @@ public:
   // 3: closed at 100, 4: the recap inside it
   void drawRetarget(const Retarget &r, int stage) {
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(cardBg());
+    display.setTextColor(cardFg());
     static const int CX[] = {26, 62, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
     int k = stage < 2 ? stage : 2;
     drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "EPOC");
@@ -3576,7 +3585,7 @@ public:
     display.setCursor(x + 14 + w + 6, 67); display.print("%");
     display.setTextSize(1);
 
-    display.drawFastHLine(70, 102, 60, GxEPD_WHITE);
+    display.drawFastHLine(70, 102, 60, cardFg());
     if (r.days > 0) {
       snprintf(s, 34, "2,016 BLOCKS IN %.1f DAYS", r.days);
       centerSmall(s, 110);
@@ -3600,8 +3609,8 @@ public:
   // 3: closed at 100, 4: the recap of the era that just ended
   void drawHalving(const Halving &v, int stage) {
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(cardBg());
+    display.setTextColor(cardFg());
     static const int CX[] = {174, 138, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
     int k = stage < 2 ? stage : 2;
     drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "HALV");
@@ -3619,7 +3628,7 @@ public:
     snprintf(s, 34, "BTC A BLOCK, WAS %s", was);
     centerSmall(s, 86);
 
-    display.drawFastHLine(70, 99, 60, GxEPD_WHITE);
+    display.drawFastHLine(70, 99, 60, cardFg());
     if (v.years > 0) {
       snprintf(s, 34, "210,000 BLOCKS, %.1f YEARS", v.years);
       centerSmall(s, 106);
@@ -5550,8 +5559,8 @@ public:
     char s[16], line[34];
     snprintf(s, 16, "%ld", h);
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(cardBg());
+    display.setTextColor(cardFg());
     display.setTextWrap(false);
     display.setFont(NULL); display.setTextSize(1);
     curioWhen(line, 34, h);
@@ -5572,7 +5581,7 @@ public:
       cx[i] = x + g->xOffset + g->width / 2;
       x += g->xAdvance;
       if ((n - 1 - i) % 3 == 0 && i < n - 1) {
-        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, GxEPD_WHITE); x += cw;
+        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, cardFg()); x += cw;
       }
     }
     display.setFont(NULL);
@@ -5582,27 +5591,27 @@ public:
     if (kind == 0) {                         // mirrors, outermost first
       for (int i = 0; i < P && i < upto; i++) {
         int dp = 4 + (P - 1 - i) * 5, a = cx[i], b = cx[n - 1 - i];
-        display.fillRect(a - 1, y, 2, dp + 1, GxEPD_WHITE);
-        display.fillRect(b - 1, y, 2, dp + 1, GxEPD_WHITE);
-        display.fillRect(a - 1, y + dp - 1, b - a + 2, 2, GxEPD_WHITE);
+        display.fillRect(a - 1, y, 2, dp + 1, cardFg());
+        display.fillRect(b - 1, y, 2, dp + 1, cardFg());
+        display.fillRect(a - 1, y + dp - 1, b - a + 2, 2, cardFg());
       }
-      if (n % 2 && upto >= P) display.fillCircle(cx[n / 2], y + 3, 2, GxEPD_WHITE);
+      if (n % 2 && upto >= P) display.fillCircle(cx[n / 2], y + 3, 2, cardFg());
     } else if (kind == 1) {                  // two halves, equal
       int hf = n / 2;
       for (int k = 0; k < 2 && k < upto; k++) {
         int a = cx[k * hf], b = cx[k * hf + hf - 1];
-        display.fillRect(a - 1, y, 2, 7, GxEPD_WHITE);
-        display.fillRect(b - 1, y, 2, 7, GxEPD_WHITE);
-        display.fillRect(a - 1, y + 6, b - a + 2, 2, GxEPD_WHITE);
+        display.fillRect(a - 1, y, 2, 7, cardFg());
+        display.fillRect(b - 1, y, 2, 7, cardFg());
+        display.fillRect(a - 1, y + 6, b - a + 2, 2, cardFg());
       }
       if (upto >= 2) {
         int m = (cx[hf - 1] + cx[hf]) / 2;
-        display.fillRect(m - 3, y + 2, 7, 2, GxEPD_WHITE);
-        display.fillRect(m - 3, y + 6, 7, 2, GxEPD_WHITE);
+        display.fillRect(m - 3, y + 2, 7, 2, cardFg());
+        display.fillRect(m - 3, y + 6, 7, 2, cardFg());
       }
     } else if (upto) {                       // every digit, one line
-      for (int i = 0; i < n; i++) display.fillRect(cx[i] - 1, y, 2, 6, GxEPD_WHITE);
-      display.fillRect(cx[0] - 1, y + 5, cx[n - 1] - cx[0] + 2, 2, GxEPD_WHITE);
+      for (int i = 0; i < n; i++) display.fillRect(cx[i] - 1, y, 2, 6, cardFg());
+      display.fillRect(cx[0] - 1, y + 5, cx[n - 1] - cx[0] + 2, 2, cardFg());
     }
     if (stage >= 3) {
       display.setTextSize(3);
@@ -5612,7 +5621,7 @@ public:
       centerSmall("BLOCK", 62);
     }
     if (stage >= 4) {
-      display.drawFastHLine(30, 142, 140, GxEPD_WHITE);
+      display.drawFastHLine(30, 142, 140, cardFg());
       centerSmall(L1[kind], 154);
       long nx = curioNext(kind, h);
       if (nx > 0) {
@@ -5623,8 +5632,8 @@ public:
         else snprintf(line, 34, "NEXT: %s", g);
         centerSmall(line, 170);
       }
-      display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
-      display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+      display.drawRect(0, 0, 200, 200, cardFg());
+      display.drawRect(2, 2, 196, 196, cardFg());
     }
   }
 
@@ -5639,8 +5648,7 @@ public:
     }
     drawCurioCard(h, 4);
     displayFull();
-    paintedDark = true;           // white on black, whatever the theme: the
-                                  // face after it must not flip by partial
+    paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(35, 2);
     Serial.printf("[curio] %ld — %s\n", h, why);
   }
@@ -5688,8 +5696,8 @@ public:
                : leftWas - (long)((leftWas - leftNow) * stage / 4.0 + 0.5);
     if (stage == 3) shown = L;                          // 900,000: the line
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(cardBg());
+    display.setTextColor(cardFg());
     display.setTextWrap(false);
     display.setFont(NULL); display.setTextSize(1);
     curioWhen(line, 34, h);
@@ -5718,7 +5726,7 @@ public:
       display.setCursor(x, yb); display.print(c);
       x += F->glyph[s[j] - F->first].xAdvance;
       if ((n - 1 - j) % 3 == 0 && j < n - 1) {
-        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, GxEPD_WHITE); x += cw;
+        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, cardFg()); x += cw;
       }
     }
     display.setFont(NULL);
@@ -5730,15 +5738,15 @@ public:
       int a = inkL + (inkR - inkL + gap) * c / 10;
       int b = inkL + (inkR - inkL + gap) * (c + 1) / 10 - gap;
       double f = (minedOfLast - c * 100000.0) / 100000.0;
-      if (f >= 0.999) display.fillRect(a, 118, b - a, 7, GxEPD_WHITE);
+      if (f >= 0.999) display.fillRect(a, 118, b - a, 7, cardFg());
       else {
-        display.drawRect(a, 118, b - a, 7, GxEPD_WHITE);
-        if (f > 0) display.fillRect(a, 118, (int)((b - a) * f), 7, GxEPD_WHITE);
+        display.drawRect(a, 118, b - a, 7, cardFg());
+        if (f > 0) display.fillRect(a, 118, (int)((b - a) * f), 7, cardFg());
       }
     }
     (void)x0;
     if (stage >= 4) {
-      display.drawFastHLine(30, 136, 140, GxEPD_WHITE);
+      display.drawFastHLine(30, 136, 140, cardFg());
       double pct = 100.0 * supplyBTC(h) / cap;
       snprintf(line, 34, "%.2f%% OF ALL BITCOIN MINED", pct);
       centerSmall(line, 146);
@@ -5753,8 +5761,8 @@ public:
         snprintf(line, 34, "NEXT: %s %s", k2, eta);
         centerSmall(line, 178);
       }
-      display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
-      display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+      display.drawRect(0, 0, 200, 200, cardFg());
+      display.drawRect(2, 2, 196, 196, cardFg());
     }
   }
 
@@ -5767,7 +5775,7 @@ public:
     }
     drawSupplyCard(i, 4);
     displayFull();
-    paintedDark = true;           // white on black, whatever the theme
+    paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(60, 3);
     Serial.printf("[supply] under %ld left, block %ld\n", supMsLeft(i), supMsHeight(i));
   }
@@ -5842,8 +5850,8 @@ public:
     char s[34];
     guiState = APP_STATE;
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(cardBg());
+    display.setTextColor(cardFg());
     display.setFont(NULL);
 
     // 1. the date it happened
@@ -5869,7 +5877,7 @@ public:
     delay(240);
 
     // 4. the detail, and the clean frame that stays up
-    display.drawFastHLine(30, 138, 140, GxEPD_WHITE);
+    display.drawFastHLine(30, 138, 140, cardFg());
     centerSmall(b.l1, 150);
     centerSmall(b.l2, 162);
     if (b.l3) centerSmall(b.l3, 178);
@@ -5878,10 +5886,10 @@ public:
       snprintf(s, 34, "NOW %s %s", w, CUR_CODES[curIdx]);
       centerSmall(s, 178);
     }
-    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
-    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    display.drawRect(0, 0, 200, 200, cardFg());
+    display.drawRect(2, 2, 196, 196, cardFg());
     displayFull();
-    paintedDark = true;            // always black: the face after flips full
+    paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(35, 2);
     Serial.printf("[date] %s, %d years\n", b.title, years);
 
@@ -5905,6 +5913,8 @@ public:
 
   // true when a card went up (and the face after it): the press is spent
   bool maybeDateCard() {
+    themeDark = darkNow();             // a press, before any face draw: the
+                                       // card's colours come from the theme
     if (maybeBirthdayCard()) return true;
     uint32_t key = 0;
     const BtcDate *b = dateCardDue(key);
@@ -6302,7 +6312,8 @@ public:
   // Leaving JOE with a card on the glass: the next face goes on with a full.
   void leaveFace(int to) {
     if (dispMode == M_JOE && to != M_JOE) {
-      if (joeCardsSeen) fullOnClose();
+      if (joeCardsSeen && themeDark) fullOnClose();   // dark cards only: light
+                                                    // ones leave no trace
       joeCardsSeen = false; joeStep = 0; joeLastStep = 0;
     }
     dispMode = to;
@@ -7053,8 +7064,8 @@ public:
   void drawStatCard(const char *top, const char *title, long long num,
                     const char *l1, const char *l2, const char *l3) {
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(cardBg());
+    display.setTextColor(cardFg());
     display.setTextWrap(false);
     display.setFont(NULL); display.setTextSize(1);
     centerSmall(top, 14);
@@ -7077,16 +7088,16 @@ public:
       display.setCursor(x, 104); display.print(c);
       x += F->glyph[s[i] - F->first].xAdvance;
       if ((n - 1 - i) % 3 == 0 && i < n - 1) {
-        display.fillRect(x + cw / 2 - 1, 103, 3, 5, GxEPD_WHITE); x += cw;
+        display.fillRect(x + cw / 2 - 1, 103, 3, 5, cardFg()); x += cw;
       }
     }
     display.setFont(NULL);
     centerSmall(l1, 114);
-    display.drawFastHLine(30, 134, 140, GxEPD_WHITE);
+    display.drawFastHLine(30, 134, 140, cardFg());
     centerSmall(l2, 146);
     centerSmall(l3, 160);
-    display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
-    display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+    display.drawRect(0, 0, 200, 200, cardFg());
+    display.drawRect(2, 2, 196, 196, cardFg());
   }
 
   // JOE's person card: at the trip's destination when travelling
@@ -7812,7 +7823,7 @@ public:
       drawStatCard(top, pplName[i][0] ? pplName[i] : "SOMEONE", years,
                    years == 1 ? "YEAR OLD TODAY" : "YEARS OLD TODAY", l2, l3);
       displayFull();
-      paintedDark = true;
+      paintedDark = themeDark;      // cards follow the theme (Nov 8)
       buzz(35, 2);
       pinMode(BACK_BTN_PIN, INPUT); pinMode(MENU_BTN_PIN, INPUT);
       pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
@@ -7833,13 +7844,16 @@ public:
   }
 
   void drawJoeFace() {
+    themeDark = darkNow();             // JOE draws before the face sets it
     if (!buttonWake) joeStep = 0;                          // one glance only
     if (joeStep >= joeSteps()) joeStep = 0;
     // Any change that puts a card up or takes one down is a full refresh.
     // The OTP partial waveform leaves the last card's lines in the black
     // (card 2 showed card 1, card 3 showed both), and a card change is a
     // press the wearer made, so the flash answers it rather than surprises.
-    if (!prePaint && joeStep != joeLastStep && (joeStep >= 1 || joeLastStep >= 1))
+    // (Dark theme only, since Nov 8: in light the cards are light too, and
+    // light-to-light partials were clean.)
+    if (!prePaint && themeDark && joeStep != joeLastStep && (joeStep >= 1 || joeLastStep >= 1))
       fullOnClose();
     if (!prePaint) joeLastStep = joeStep;
     joeCardsSeen = (joeStep >= 1);
@@ -7847,8 +7861,8 @@ public:
       int k = joeStep - 1, n = peopleCount();
       if (k < n) drawPersonCard(personAt(k), k + 1, n);
       else drawWatchCard();
-      if (!paintedDark) fullOnClose();                     // black card: a flip
-      paintedDark = true;
+      if (paintedDark != themeDark) fullOnClose();         // a flip: full
+      paintedDark = themeDark;
       return;
     }
     if (paintedDark != themeDark) fullOnClose();           // back from a card
@@ -10247,8 +10261,8 @@ public:
   void drawMillionCard(int stage, long shown, int segs) {
     char s[16], line[34];
     display.setFullWindow();
-    display.fillScreen(GxEPD_BLACK);
-    display.setTextColor(GxEPD_WHITE);
+    display.fillScreen(cardBg());
+    display.setTextColor(cardFg());
     display.setTextWrap(false);
     display.setFont(NULL); display.setTextSize(1);
     curioWhen(line, 34, 1000000L);
@@ -10269,7 +10283,7 @@ public:
       if (s[i] != ' ') { char c[2] = {s[i], 0}; display.setCursor(x, yb); display.print(c); }
       x += adv;
       if ((i == 0 && s[0] != ' ') || i == 3) {
-        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, GxEPD_WHITE);
+        display.fillRect(x + cw / 2 - 1, yb - 1, 3, 5, cardFg());
       }
       if (i == 0 || i == 3) x += cw;
     }
@@ -10283,8 +10297,8 @@ public:
     for (int k = 0; k < 10 && stage >= 1; k++) {   // not during the roll
       int a = inkL + (inkR - inkL + gap) * k / 10;
       int b = inkL + (inkR - inkL + gap) * (k + 1) / 10 - gap;
-      if (k < segs) display.fillRect(a, 118, b - a, 7, GxEPD_WHITE);
-      else display.drawRect(a, 118, b - a, 7, GxEPD_WHITE);
+      if (k < segs) display.fillRect(a, 118, b - a, 7, cardFg());
+      else display.drawRect(a, 118, b - a, 7, cardFg());
     }
     if (stage >= 1) {
       display.setTextSize(3);
@@ -10294,7 +10308,7 @@ public:
       centerSmall("BLOCK", 62);
     }
     if (stage >= 2) {
-      display.drawFastHLine(30, 136, 140, GxEPD_WHITE);
+      display.drawFastHLine(30, 136, 140, cardFg());
       int64_t g = heightUtc(0), m = heightUtc(1000000L);
       double yrs = (double)(m - g) / (365.25 * 86400.0);
       snprintf(line, 34, "%.0f YEARS, ONE BLOCK AT A TIME", yrs);
@@ -10303,8 +10317,8 @@ public:
       snprintf(line, 34, "%s BTC ISSUED", gs);
       centerSmall(line, 160);
       centerSmall("TICK TOCK NEXT BLOCK", 178);
-      display.drawRect(0, 0, 200, 200, GxEPD_WHITE);
-      display.drawRect(2, 2, 196, 196, GxEPD_WHITE);
+      display.drawRect(0, 0, 200, 200, cardFg());
+      display.drawRect(2, 2, 196, 196, cardFg());
     }
   }
 
@@ -10325,7 +10339,7 @@ public:
     }
     drawMillionCard(2, 1000000L, 10);
     displayFull();            // full refresh: this one is worth it
-    paintedDark = true;       // always black: the next face flips full
+    paintedDark = themeDark;      // cards follow the theme (Nov 8)
     Serial.printf("[1M] block 1,000,000 marked at tip %ld\n", blockHeight);
     sawMillion = true;
     savePrefs();
@@ -11331,8 +11345,7 @@ public:
     eventOnGlass = false;
     evShown = ev;
     if (same) { justFull = true; return true; }  // already on the glass: no partial
-    // the curiosity is black whatever the theme: a flip either way goes full
-    bool dark = (ev == EV_CURIO || ev == EV_RETG || ev == EV_HALV || ev == EV_AGE) ? true : themeDark;
+    bool dark = themeDark;                        // cards follow the theme
     if (timerWake && !inDocked) {                 // first sight: a full
       displayFull();                     // refresh, then sleep
       paintedDark = dark;
