@@ -35,6 +35,7 @@
   --bg:#12110d; --panel:#1b1a15; --ink:#f4f2ec; --dim:#b4b0a4; --faint:#7f7c72; --line:#35332c;
   --accent:#ff3b12; --accent-text:#ff5a36; --on-accent:#12110d; --good:#5cc27a; color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none!important}   /* the site has no reset for this: without it, display:flex on .st and .row wins over hidden */
 html,body{background:var(--bg);color:var(--ink)}
 body{margin:0;font-family:var(--display);font-weight:500;padding-block:28px 48px;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
