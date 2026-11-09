@@ -492,38 +492,40 @@ function readNumber(height,t){
   const words=ds.map(d=>DIG[d]);
   if(!speak(words.slice(0,h).join(" ")+". "+words.slice(h).join(" ")+".")) ds.forEach((d,i)=>tone("sine",600+80*Number(d),t+1.2+i*0.3,0.005,0.08,0.06))}
 
-// ---------- rain, drop by drop: bubbles and taps, rendered once into seamless loops ----------
-// A raindrop on water rings as a tiny bubble: a sine whose pitch rises as it dies away
-// (Minnaert resonance, after van den Doel's model). On hard ground it is a short tap.
-// Thousands of them make the wash; a few dozen close ones are the drops you can pick out.
+// ---------- rain, drop by drop: impacts on leaves, ground and stone, rendered once into seamless loops ----------
+// Rain is mostly broadband impacts: thousands of tiny, differently coloured clicks a second, a few big
+// splats, over a soft wash. (Pitched "bubble" drops made it sound like a trickling stream: left out.)
 let RAIN=null,DROPS=null;
-function bubbleInto(L,R,len,sr,at,f0,amp,pan){
-  const d=0.043*f0+0.0014*Math.pow(f0,1.5),n=Math.min(Math.floor(sr*5/d),len),gl=amp*Math.sqrt(0.5*(1-pan)),gr=amp*Math.sqrt(0.5*(1+pan));
-  let ph=0;for(let i=0;i<n;i++){const tt=i/sr,f=f0*(1+0.1*d*tt);ph+=2*Math.PI*f/sr;const v=Math.sin(ph)*Math.exp(-d*tt);const k=(at+i)%len;L[k]+=v*gl;R[k]+=v*gr}}
-function tapInto(L,R,len,sr,at,amp,pan,bright){
-  const n=Math.floor(sr*0.004),gl=amp*Math.sqrt(0.5*(1-pan)),gr=amp*Math.sqrt(0.5*(1+pan));let lp=0;
-  for(let i=0;i<n;i++){const w=Math.random()*2-1;lp+=bright*(w-lp);const v=lp*Math.exp(-i/(sr*0.0008));const k=(at+i)%len;L[k]+=v*gl;R[k]+=v*gr}}
+function impactInto(L,R,len,sr,at,amp,pan,fc,ms){
+  const n=Math.max(8,Math.floor(sr*ms/1000)),gl=amp*Math.sqrt(0.5*(1-pan)),gr=amp*Math.sqrt(0.5*(1+pan));
+  const aHi=1-Math.exp(-2*Math.PI*Math.min(fc*1.8,sr*0.45)/sr),aLo=1-Math.exp(-2*Math.PI*(fc*0.45)/sr),dk=n/4.5;let hi=0,lo=0;
+  for(let i=0;i<n;i++){const w=Math.random()*2-1;hi+=aHi*(w-hi);lo+=aLo*(hi-lo);const v=(hi-lo)*Math.exp(-i/dk);const k=(at+i)%len;L[k]+=v*gl;R[k]+=v*gr}}
 function renderRain(perSec,secs){
   const sr=ctx.sampleRate,len=Math.floor(sr*secs),buf=ctx.createBuffer(2,len,sr),L=buf.getChannelData(0),R=buf.getChannelData(1);
   const n=Math.floor(perSec*secs);
-  for(let i=0;i<n;i++){const at=Math.floor(Math.random()*len),pan=Math.random()*2-1,far=Math.random();
-    if(Math.random()<0.35){const r=0.8+Math.random()*2.6;bubbleInto(L,R,len,sr,at,3200/r,0.05*Math.pow(r,0.8)*(0.25+0.75*far),pan)}
-    else tapInto(L,R,len,sr,at,0.12*(0.2+0.8*far)*Math.random(),pan,0.25+0.6*Math.random())}
-  // the wash of rain too far away to hear one by one: pink noise, soft on top
-  let b0=0,b1=0,b2=0,lpL=0,lpR=0;const wash=0.012+0.00002*perSec;
-  for(let i=0;i<len;i++){const w=Math.random()*2-1;b0=0.99765*b0+w*0.099;b1=0.963*b1+w*0.2965;b2=0.57*b2+w*1.0526;
-    const p=(b0+b1+b2+w*0.1848)*0.18;lpL+=0.25*(p-lpL);lpR+=0.25*((p*0.6+(Math.random()*2-1)*0.08)-lpR);L[i]+=lpL*wash;R[i]+=lpR*wash}
+  for(let i=0;i<n;i++){const at=Math.floor(Math.random()*len),pan=Math.random()*2-1,size=Math.pow(Math.random(),3);   // most drops are small
+    const fc=900*Math.pow(9,Math.random());                                                                             // 0.9 to 8 kHz: ground to leaves
+    impactInto(L,R,len,sr,at,(0.015+0.25*size)*(0.4+0.6*Math.random()),pan,fc,1+5*size+Math.random()*2);
+    if(size>0.6&&Math.random()<0.5) impactInto(L,R,len,sr,at+Math.floor(sr*0.002),0.12*size,pan,500+700*Math.random(),12+20*size)}   // the odd big splat
+  // the wash: pink noise from about 300 Hz to 6 kHz, breathing slowly like gusts
+  let b0=0,b1=0,b2=0,lpL=0,lpR=0,hpL=0,hpR=0,g=1,gt=1;const wash=0.05+0.00006*perSec,aL=1-Math.exp(-2*Math.PI*6000/sr),aH=1-Math.exp(-2*Math.PI*300/sr);
+  for(let i=0;i<len;i++){ if(i%2048===0) gt=0.75+0.5*Math.random(); g+=0.0002*(gt-g);
+    const w=Math.random()*2-1;b0=0.99765*b0+w*0.099;b1=0.963*b1+w*0.2965;b2=0.57*b2+w*1.0526;const p=(b0+b1+b2+w*0.1848)*0.15;
+    const q=(Math.random()*2-1)*0.25+p*0.75;lpL+=aL*(p-lpL);lpR+=aL*(q-lpR);hpL+=aH*(lpL-hpL);hpR+=aH*(lpR-hpR);
+    L[i]+=(lpL-hpL)*wash*g;R[i]+=(lpR-hpR)*wash*g}
+  // fade the loop's ends into each other so the seam never clicks
+  const x=Math.floor(sr*0.25);for(let i=0;i<x;i++){const f=i/x;L[i]=L[i]*f+L[len-x+i]*(1-f);R[i]=R[i]*f+R[len-x+i]*(1-f)}
   return buf}
 function prepareRain(){ if(RAIN||!ctx) return; RAIN={};
-  // rendered a layer at a time so the page never stalls
-  [["light",90],["steady",420],["heavy",1500]].forEach(([k,ps],i)=>setTimeout(()=>{RAIN[k]=renderRain(ps,7);if(bed&&bed.st==="nature")rainLayer(k)},60+i*120));
-  DROPS=[];for(let i=0;i<24;i++){const sr=ctx.sampleRate,len=Math.floor(sr*0.12),b=ctx.createBuffer(2,len,sr),L=b.getChannelData(0),R=b.getChannelData(1);
-    if(i<16){const r=1+Math.random()*3;bubbleInto(L,R,len,sr,0,3200/r,0.5,0)}else tapInto(L,R,len,sr,0,0.9,0,0.5);DROPS.push(b)}}
+  [["light",350],["steady",1600],["heavy",5000]].forEach(([k,ps],i)=>setTimeout(()=>{RAIN[k]=renderRain(ps,8);if(bed&&bed.st==="nature")rainLayer(k)},60+i*150));
+  DROPS=[];for(let i=0;i<24;i++){const sr=ctx.sampleRate,len=Math.floor(sr*0.08),b=ctx.createBuffer(2,len,sr),L=b.getChannelData(0),R=b.getChannelData(1);
+    const big=i>=16;impactInto(L,R,len,sr,0,0.8,0,big?600+600*Math.random():1500+5000*Math.random(),big?18:3+4*Math.random());
+    if(big) impactInto(L,R,len,sr,Math.floor(sr*0.001),0.5,0,3000+3000*Math.random(),2);DROPS.push(b)}}
 function rainLayer(k){ if(!bed||bed.st!=="nature"||!RAIN[k]||bed.gains["rain_"+k]) return;
   const s=ctx.createBufferSource();s.buffer=RAIN[k];s.loop=true;s.loopStart=0;s.loopEnd=RAIN[k].duration;
   const g=ctx.createGain();g.gain.value=0;s.connect(g);g.connect(bus);s.start(ctx.currentTime,Math.random()*5);bed.nodes.push(s);bed.gains["rain_"+k]=g}
 function closeDrop(t,p){ if(!DROPS||!DROPS.length) return false;const s=ctx.createBufferSource();s.buffer=DROPS[Math.floor(Math.random()*DROPS.length)];
-  s.playbackRate.value=0.8+Math.random()*0.5;const g=ctx.createGain();g.gain.value=0.05+0.12*Math.random();s.connect(g);g.connect(panNode(p));s.start(t);return true}
+  s.playbackRate.value=0.85+Math.random()*0.3;const g=ctx.createGain();g.gain.value=0.04+0.1*Math.random();s.connect(g);g.connect(panNode(p));s.start(t);return true}
 
 // ---------- beats: a 16-step machine, the pattern written by each block ----------
 let beat={step:0,next:0,kick:[],snare:[],ghost:[],open:-1,lead:[],bpm:88,fill:false,root:38};
