@@ -663,7 +663,11 @@ RTC_DATA_ATTR uint8_t  fiCloseTries    = 0;     // tries for it (a holiday never
 //   HOT  at >= 38 C, off at <= 35 C: a wrist alone keeps the case ~28-34 C
 //   COLD at <=  5 C, off at >=  8 C: a car, a windowsill, a coat pocket
 // Starting values, to be tuned from what About shows in the wild.
-#define TEMP_HOT_ON   38
+// HOT RETIRED (Nov 8): the sun fade is light breaking the full refresh's
+// waveform (labs 5-6 under a phone LED), not heat; and docked, a charging,
+// awake watch read HOT and froze in a HOT refresh. Out of reach until the
+// mode is either proven or removed.
+#define TEMP_HOT_ON  127
 #define TEMP_HOT_OFF  35
 #define TEMP_COLD_ON   5
 #define TEMP_COLD_OFF  8
@@ -990,6 +994,18 @@ struct EpdBufTag {
   friend type epdGet(EpdBufTag);
 };
 template struct EpdRob<EpdBufTag, &GxEPD2_BW<WatchyDisplay, WatchyDisplay::HEIGHT>::_buffer>;
+
+// The panel's busy wait. Watchy's own callback light-sleeps until the busy
+// line drops, with no other way out: if the panel never drops it, the watch
+// sleeps forever with every button dead (docked, Nov 8). This one also wakes
+// every 20 ms, so the driver's 10 s timeout can end a stuck wait.
+void bwBusy(const void *) {
+  gpio_wakeup_enable((gpio_num_t)DISPLAY_BUSY, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+  esp_sleep_enable_timer_wakeup(20000);
+  esp_light_sleep_start();
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+}
 
 struct EpdFull : WatchyDisplay {
   // The driver only sends its power-off when it believes the panel is on,
@@ -6780,6 +6796,8 @@ public:
     caseTempC = (int8_t)constrain((int)lroundf(t), -40, 85);
     uint8_t was = tempMode;
     if (tempMode == TEMP_HOT  && caseTempC <= TEMP_HOT_OFF)  tempMode = TEMP_OK;
+    if (tempMode == TEMP_HOT  && TEMP_HOT_ON > 100)          tempMode = TEMP_OK;  // retired: a watch
+                                       // that froze in HOT keeps it in RTC memory
     if (tempMode == TEMP_COLD && caseTempC >= TEMP_COLD_OFF) tempMode = TEMP_OK;
     if (tempMode == TEMP_OK) {
       if (caseTempC >= TEMP_HOT_ON)  tempMode = TEMP_HOT;
@@ -9969,7 +9987,7 @@ public:
     int go = waitForPress(60000);
     waitAllRelease();
     if (go != UP_BTN_PIN) {                       // BACK, MENU, or nobody
-      display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+      display.epd2.setBusyCallback(bwBusy);
       myShowMenu(menuIndex, false);
       return;
     }
@@ -9982,7 +10000,7 @@ public:
     display.display(true);
     runPortal(wm, 60, true, true);
     WiFi.mode(WIFI_OFF); btStop();
-    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+    display.epd2.setBusyCallback(bwBusy);
 
     { WiFiManagerParameter *bp[MAX_PEOPLE] = {&pB0, &pB1, &pB2, &pB3};
       bool changed = false;
@@ -10818,7 +10836,7 @@ public:
     display.epd2.setBusyCallback(0);
     WiFiManager wm;
     bool ok = runPortal(wm, 300);
-    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+    display.epd2.setBusyCallback(bwBusy);
     display.setFont(NULL);
     if (ok && WiFi.status() == WL_CONNECTED) {
       saveNetwork(WiFi.SSID(), WiFi.psk());
@@ -12086,7 +12104,7 @@ public:
       }
     }
     WiFi.mode(WIFI_OFF); btStop();
-    display.epd2.setBusyCallback(WatchyDisplay::busyCallback);
+    display.epd2.setBusyCallback(bwBusy);
     guiState = APP_STATE;
   }
 
@@ -12744,5 +12762,5 @@ watchySettings settings{
 };
 
 BitcoinChrono watchy(settings);
-void setup() { watchy.init(); }
+void setup() { Watchy::display.epd2.setBusyCallback(bwBusy); watchy.init(); }
 void loop() {}
