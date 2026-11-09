@@ -151,7 +151,7 @@ footer a:hover{color:var(--ink)}
     <div class="facts">
       <span><b id="tx">3,061</b> transactions</span>
       <span>chord <b id="chord">Dmaj9</b></span>
-      <span>station <b id="stName">Airport</b></span>
+      <span>station <b id="stName">Sunday</b></span>
     </div>
     <div class="wait">
       <div class="wait-line"><span id="waitText">Press play to listen</span><span class="label" id="tensionPct"></span></div>
@@ -185,13 +185,14 @@ footer a:hover{color:var(--ink)}
   <section class="row">
     <div class="label">Station</div>
     <div class="stations" id="stations">
-      <button class="st" data-st="airport" aria-pressed="true"><small>01</small><b>Airport</b><span>Soft pads, bell melodies, light rain.</span></button>
+      <button class="st" data-st="sunday" aria-pressed="true"><small>01</small><b>Sunday</b><span>Soft chords, bell melodies, a little rain. For a slow afternoon.</span></button>
       <button class="st" data-st="nature" aria-pressed="false"><small>02</small><b>Nature</b><span>Rain from the mempool, wind while it waits, thunder on every block.</span></button>
       <button class="st" data-st="beats" aria-pressed="false"><small>03</small><b>Beats</b><span>808 kicks and a pocket synth. Each block writes a new pattern.</span></button>
       <button class="st" data-st="heart" aria-pressed="false"><small>04</small><b>Heart</b><span>A heartbeat that races while it waits and slows when a block lands.</span></button>
       <button class="st" data-st="musicbox" aria-pressed="false"><small>05</small><b>Music box</b><span>Tines, and a ticking spring while it waits.</span></button>
       <button class="st" data-st="deep" aria-pressed="false"><small>06</small><b>Deep</b><span>A low drone that swells with the wait.</span></button>
       <button class="st" data-st="shortwave" aria-pressed="false"><small>07</small><b>Shortwave</b><span>A numbers station that reads each new block aloud.</span></button>
+      <button class="st" data-st="downstroke" aria-pressed="false"><small>08</small><b>Downstroke</b><span>Two guitars, bass and drums in straight eighths. Each block is a new riff.</span></button>
     </div>
   </section>
 
@@ -330,14 +331,14 @@ function speak(text){try{if(!("speechSynthesis" in window))return false;const u=
 const DIG=["zero","one","two","three","four","five","six","seven","eight","nine"];
 
 // ---------- a held chord, with one filter the wait opens ----------
-const PADS={airport:[380,2600],deep:[180,900],musicbox:[1200,600],shortwave:[520,500],heart:[500,500]};
+const PADS={sunday:[380,2600],deep:[180,900],musicbox:[1200,600],shortwave:[520,500],heart:[500,500]};
 function makePad(chord,st,t){
   if(!PADS[st]) return null;
   const [bass,up]=CH[chord];const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(1,t+3);
   const f=ctx.createBiquadFilter();f.type="lowpass";f.Q.value=0.6;f.frequency.value=PADS[st][0];f.connect(g);g.connect(bus);
   const oscs=[];const add=(type,freq,det,lvl,dest=f)=>{const o=ctx.createOscillator(),og=ctx.createGain();o.type=type;o.frequency.value=freq;o.detune.value=det;og.gain.value=lvl;o.connect(og);og.connect(dest);o.start(t);oscs.push(o)};
   const notes=[bass,...up];
-  if(st==="airport") notes.forEach((m,i)=>{add("sawtooth",mtof(m),-6,0.016);add("sawtooth",mtof(m),6,0.016);add("sine",mtof(m),0,i?0.03:0.05)});
+  if(st==="sunday") notes.forEach((m,i)=>{add("sawtooth",mtof(m),-6,0.016);add("sawtooth",mtof(m),6,0.016);add("sine",mtof(m),0,i?0.03:0.05)});
   if(st==="deep") notes.forEach((m,i)=>{const mm=i?m-12:m;add("triangle",mtof(mm),-4,0.05);add("sine",mtof(mm),5,0.05)});
   if(st==="musicbox") up.forEach(m=>add("sine",mtof(m+12),0,0.012));
   if(st==="shortwave") [bass+12,up[1]].forEach(m=>add("square",mtof(m),0,0.012));
@@ -432,6 +433,59 @@ function breath(t){const s=ctx.createBufferSource();s.buffer=noise;const f=ctx.c
 
 writePattern(new Uint8Array(32),"Dmaj9",3000);   // a plain beat until the first block writes one
 
+// ---------- downstroke: a garage band, two guitars in eighths ----------
+// guitars are plucked strings (Karplus-Strong), rendered once per pitch, then overdriven through a small amp
+const KS={};
+function ksBuf(m){ if(KS[m]) return KS[m];
+  const sr=ctx.sampleRate,f=mtof(m),L=Math.max(2,Math.round(sr/f)),n=Math.round(sr*1.6),b=ctx.createBuffer(1,n,sr),d=b.getChannelData(0);
+  const line=new Float32Array(L);let prev=0;for(let i=0;i<L;i++){const w=Math.random()*2-1;prev=prev*0.45+w*0.55;line[i]=prev}
+  let i=0;for(let k=0;k<n;k++){const a=line[i],c=line[(i+1)%L];const y=0.4985*(a+c);d[k]=a;line[i]=y;i=(i+1)%L}
+  return KS[m]=b}
+let amps=null;
+function amp(pan,drive,tone){const pre=ctx.createGain();pre.gain.value=drive;const ws=ctx.createWaveShaper();const c=new Float32Array(1024);
+  for(let i=0;i<1024;i++){const x=i/512-1;c[i]=Math.tanh(3*x)}ws.curve=c;ws.oversample="2x";
+  const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=tone;lp.Q.value=0.9;const hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=90;
+  const g=ctx.createGain();g.gain.value=0.16;pre.connect(ws);ws.connect(lp);lp.connect(hp);hp.connect(g);g.connect(panNode(pan,out));
+  const send=ctx.createGain();send.gain.value=0.04;g.connect(send);send.connect(bus);return {in:pre,lp}}
+function pluck(m,t,ampIn,peak,mute){const s=ctx.createBufferSource();s.buffer=ksBuf(m);const g=ctx.createGain();
+  g.gain.setValueAtTime(peak,t);g.gain.setTargetAtTime(0,t+(mute?0.03:0.1),mute?0.03:0.35);s.connect(g);g.connect(ampIn);s.start(t);s.stop(t+(mute?0.4:1.6))}
+let rock={step:0,next:0,bpm:138,root:45,third:4,accent:[],mute:[],lineB:[],kick3:false,lead:[],octave:[]};
+function writeRiff(by,chord,tx){
+  const name=chord;let root=CH[chord][0];while(root<40)root+=12;while(root>49)root-=12;
+  rock.root=root;rock.third=name.includes("sus")?5:(/m(?!aj)/.test(name)?3:4);
+  rock.accent=[...Array(8)].map((_,i)=>i%2===0||((by[12]>>i)&1)===1);
+  rock.mute=[...Array(8)].map((_,i)=>i%2===1&&((by[13]>>i)&1)===1);
+  const pool=[0,7,12,12+rock.third,19,24];rock.lineB=[...Array(8)].map((_,i)=>pool[(by[14+i]>>2)%pool.length]);
+  rock.kick3=(by[22]&1)===1;rock.octave=[...Array(8)].map((_,i)=>i===6&&(by[23]&1)===1);
+  rock.bpm=Math.round(132+16*Math.min(1,(tx||3000)/8000))}
+writeRiff(new Uint8Array(32),"Dmaj9",3000);
+function rockKick(t,pk){thump(t,pk,0.09,120,52,dry())}
+function rockSnare(t,pk){burst(t,0.11,2200,0.7,pk,0,"bandpass",dry());tone("triangle",210,t,0.002,pk*0.5,0.05,0,dry())}
+function rockHat(t,open,pk){burst(t,open?0.16:0.022,7500,0.7,pk,-0.2,"highpass",dry())}
+function rockTom(t,f,pk){thump(t,pk,0.18,f*1.6,f,dry())}
+function rockTick(now,ten,rain){
+  if(!amps) amps={a:amp(-0.5,2.6,3300),b:amp(0.5,1.6,4200),bass:amp(0,1.1,900)};
+  amps.a.lp.frequency.setTargetAtTime(2400+2200*ten,now,0.5);
+  const e=60/rock.bpm/2;if(rock.next<now) rock.next=now+0.05;
+  while(rock.next<now+0.2){const s=rock.step%8,t=rock.next,bar=Math.floor(rock.step/8),fill=ten>0.7&&bar%4===3&&s>=4;
+    // drums
+    if(s===0||s===4||(s===5&&rock.kick3)) rockKick(t,0.55);
+    if(s===2||s===6) rockSnare(t,0.2);
+    if(fill){rockTom(t,[0,0,0,0,110,95,80,70][s],0.4);if(s===7) rockSnare(t+e/2,0.14)}
+    else rockHat(t,s===7&&ten>0.5,(s%2?0.04:0.06)*(0.7+0.5*Math.min(1,rain/10)));
+    // guitar A: power chord downstrokes
+    const r=rock.root+12,mute=rock.mute[s];
+    [0,7,12].forEach((iv,k)=>pluck(r+iv,t+k*0.006,amps.a.in,rock.accent[s]?0.9:0.55,mute));
+    // guitar B: the single-note line, or the block's song when it has one queued
+    if(rock.lead.length&&rock.lead[0].step===rock.step){const n=rock.lead.shift();pluck(n.m,t,amps.b.in,0.9,false)}
+    else if(!rock.lead.length) pluck(rock.root+24+rock.lineB[s],t,amps.b.in,0.5,s%2===1);
+    // bass: roots in eighths
+    pluck(rock.root-12+(rock.octave[s]?12:0),t,amps.bass.in,0.9,s%2===1);
+    rock.step++;rock.next+=e}
+}
+function rockBlock(t,notes,by,chord,tx){writeRiff(by,chord,tx);burst(t,1.1,6000,0.4,0.18,0.3,"highpass",dry());
+  const s0=rock.step+((8-rock.step%8)%8);rock.lead=notes.map((n,i)=>({m:n.m-12,step:s0+i}))}
+
 // ---------- what each station does when a block lands ----------
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);
@@ -441,6 +495,7 @@ function playBlock(st,b,notes,t,by,chord,close){
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);const d=thunder(t,size,close);bolt(d);
     let x=t+d+2.5;notes.forEach(n=>{chime(mtof(n.m),x,0.03,(n.m-74)/14);x+=n.d*1.8});return}
   if(st==="beats"){beatsBlock(t,notes,by,chord,b.tx);return}
+  if(st==="downstroke"){rockBlock(t,notes,by,chord,b.tx);return}
   if(st==="heart"){breath(t);let x=t+1.2;notes.forEach(n=>{const o=tone("sine",mtof(n.m-12),x,0.08,0.06,0.5,(n.m-74)/18);x+=n.d*1.3});return}
   if(st==="deep"){thump(t,0.7,0.6);let x=t+0.5;notes.forEach(n=>{fmBell(mtof(n.m-12),x,0.09,1.6,1.5,1.2,(n.m-74)/18);x+=n.d*1.6});return}
   if(st==="musicbox"){CH[chord][1].forEach((m,i)=>tine(mtof(m+24),t+i*0.07,0.05));
@@ -450,12 +505,12 @@ function playBlock(st,b,notes,t,by,chord,close){
 }
 // the wait's pulse and the rain, for the stations that use them
 function blip(st,ten,t){
-  if(st==="airport") tone("sine",mtof(CH[curChord][1][1]+12),t,0.003,0.06*Math.pow(ten,1.6),0.05,Math.sin(t)*0.5);
+  if(st==="sunday") tone("sine",mtof(CH[curChord][1][1]+12),t,0.003,0.06*Math.pow(ten,1.6),0.05,Math.sin(t)*0.5);
   if(st==="musicbox") burst(t,0.004,6000,0.8,0.05+0.08*ten,0,"highpass");
   if(st==="deep") tone("sine",mtof(CH[curChord][0]),t,0.4,0.05*Math.pow(ten,1.4),0.5,0);
 }
 function grain(st,t){const p=Math.random()*1.8-0.9;
-  if(st==="airport") burst(t,0.003,3500,1,0.05*Math.random()+0.01,p);
+  if(st==="sunday") burst(t,0.003,3500,1,0.05*Math.random()+0.01,p);
   if(st==="musicbox") burst(t,0.002,7000,1,0.025*Math.random(),p);
   if(st==="deep") burst(t,0.006,700,1.5,0.06*Math.random(),p);
   if(st==="shortwave") burst(t,0.0015,2500,0.4,0.12*Math.random(),p,"highpass");
@@ -463,11 +518,13 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
       o.frequency.setValueAtTime(f,t);o.frequency.exponentialRampToValueAtTime(f*0.55,t+0.05);o.connect(g);g.connect(panNode(p));env(g,t,0.001,0.03*Math.random(),0.02);o.start(t);o.stop(t+0.2)}
     else burst(t,0.002,1500+Math.random()*4000,1.5,0.04*Math.random(),p)}
 }
-const USES_PULSE={airport:1,musicbox:1,deep:1},USES_GRAIN={airport:1,musicbox:1,deep:1,shortwave:1,nature:1};
+const TRIM={sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2.2,deep:1.25,shortwave:1.3,downstroke:0.8};   // even out the stations
+function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
+const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
 // ---------- the clock: live or tonight's replay ----------
 const $=id=>document.getElementById(id);
-let mode="live",speed=0.3,st="airport",playing=false,curChord="Dmaj9",pad=null;
+let mode="live",speed=0.3,st="sunday",playing=false,curChord="Dmaj9",pad=null;
 let chain=TONIGHT.slice(),lastIdx=-1,liveOk=null,mempoolCount=null,rStart=0,rVirt0=0;
 let nextBlip=0,nextGrain=0,timer=null,poll=null;
 function virtNow(){return mode==="live"?Date.now():rVirt0+(ctx.currentTime-rStart)/speed*60000}
@@ -499,6 +556,7 @@ function tick(){
   bedTick(ten,rain,now);
   if(st==="beats") beatsTick(now,ten,rain);
   if(st==="heart") heartTick(now,ten);
+  if(st==="downstroke") rockTick(now,ten,rain);
   if(nextBlip<now) nextBlip=now+0.05;
   while(nextBlip<now+0.25){if(USES_PULSE[st]&&lastIdx>=0&&ten>0.12) blip(st,ten,nextBlip);nextBlip+=1/(0.35+2.4*ten)}
   if(nextGrain<now) nextGrain=now+0.05;
@@ -515,7 +573,7 @@ async function liveStart(){
   try{const arr=await getJSON(API+"/v1/blocks");
     chain=arr.slice().reverse().map(b=>({height:b.height,time:b.timestamp*1000,tx:b.tx_count,hash:b.id}));
     liveOk=true;curChord="Dmaj9";
-    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i===chain.length-1)writePattern(by,curChord,chain[i].tx)}
+    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx)}}
     try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}
     return true}catch(e){liveOk=false;return false}}
 function livePoll(){clearInterval(poll);poll=setInterval(async()=>{
@@ -555,7 +613,7 @@ async function start(){
   if(!playing) return;
   if(mode==="live"){lastIdx=chain.length-1;showBlock(chain[lastIdx]);$("src").innerHTML="<b>● Live</b> · mempool.space";livePoll()}
   else{chain=TONIGHT.slice();lastIdx=-1;curChord="Dmaj9";rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent="Tonight · recorded blocks"}
-  pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);
+  pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);trim();
   clearInterval(timer);timer=setInterval(tick,100);tick()}
 function stop(){
   playing=false;clearInterval(timer);clearInterval(poll);
@@ -570,14 +628,14 @@ $("speedSeg").addEventListener("click",e=>{const b=e.target.closest("button");if
   const v=ctx&&playing?virtNow():0;speed=Number(b.dataset.speed);if(playing&&mode==="replay"){rVirt0=v;rStart=ctx.currentTime}});
 $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b)return;press($("stations"),b);st=b.dataset.st;
   $("stName").textContent=b.querySelector("b").textContent;
-  if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);beat.next=heart.next=0}});
+  if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();beat.next=heart.next=rock.next=0}});
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
   initAudio();if(ctx.state==="suspended")await ctx.resume();
   let hash=null;if(liveOk!==false){try{const r=await getJSON(API+"/block-height/"+h,4000);if(typeof r==="string"&&/^[0-9a-f]{64}$/.test(r.trim()))hash=r.trim()}catch(err){}}
   const by=await songBytes({height:h,hash}),ch=nextChord("Dmaj9",by),notes=motif(by,ch),t=ctx.currentTime+0.1;
-  const p=makePad(ch,"airport",t);p.tension(0.2,t);setTimeout(()=>p.stop(ctx.currentTime),4200);
-  playBlock("airport",{height:h},notes,t,by,ch,0.3);
+  const p=makePad(ch,"sunday",t);p.tension(0.2,t);setTimeout(()=>p.stop(ctx.currentTime),4200);
+  playBlock("sunday",{height:h},notes,t,by,ch,0.3);
   $("songNotes").textContent="Block "+fmt(h)+" · "+ch+" · "+notes.map(n=>NAMES[n.m%12]).join(" ")+(hash?"":" · stand-in hash")});
 
 // ---------- keep it on the air: Lightning (LNURL-pay) and on-chain ----------
