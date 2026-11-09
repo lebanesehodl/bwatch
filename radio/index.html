@@ -219,7 +219,7 @@ footer a:hover{color:var(--ink)}
 
   <section class="sec">
     <h2>A block's song</h2>
-    <p class="note">Every block has its own transmission. It opens with a call sign drawn from its hash, sent in Morse, reads out its number, then signs off. The same block always has the same call sign. Try a birthday, a halving (840000) or genesis (0).</p>
+    <p class="note">Every block has its own transmission. An organ plays the tune drawn from its hash, a call sign follows in Morse, then its number is read out and it signs off. The same block always sounds the same. Try a birthday, a halving (840000) or genesis (0).</p>
     <form class="inline" id="songForm">
       <input class="f" id="songHeight" inputmode="numeric" autocomplete="off" value="840000" aria-label="Block height" style="width:12ch">
       <button class="btn" type="submit">Play its song</button>
@@ -752,7 +752,8 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){   // blocks faster than a transmission (fast replay): just the pips, so they never pile up
     if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return}
-    const open=morse("DE "+callSign(by),t),T=t+open+0.4;readNumber(b.height,T);   // "this is BW9IF", the numbers, then SK: end of transmission
+    const sig=intervalSignal(notes,t,1)+0.4;   // the organ plays the block's tune, then "this is BW9IF", the numbers, and SK: end of transmission
+    const open=morse("DE "+callSign(by),t+sig),T=t+sig+open+0.4;readNumber(b.height,T);
     const nEnd=T+1.3+String(b.height).length*0.62+0.55+0.4;swBusy=nEnd+morse("^",nEnd)+0.5;return}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
     if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
@@ -947,11 +948,11 @@ $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b
   if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
 // a block's transmission, on Shortwave: static, three pips, the number read out, then its melody as tones on the same line
 function transmission(h,notes,ch,t,by){loadShots("voice");
-  const cs=callSign(by),dur=(cs.length+2)*0.75+0.4+1.3+String(h).length*0.62+0.55+(cs.length+1)*0.75+2.5;
+  const sigLen=(notes.reduce((a,n)=>a+n.d*1.25,0)+0.45)*2+0.4,cs=callSign(by),dur=sigLen+(cs.length+2)*0.75+0.4+1.3+String(h).length*0.62+0.55+(cs.length+1)*0.75+2.5;
   const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.frequency.value=1400;f.Q.value=0.5;
   const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(playing?0:0.03,t+0.3);g.gain.setValueAtTime(playing?0:0.03,t+dur-0.8);g.gain.linearRampToValueAtTime(0,t+dur);
   s.connect(f);f.connect(g);g.connect(bus);s.start(t);s.stop(t+dur+0.1);
-  const go=T=>{const o=morse("DE "+cs,T),N=T+o+0.4;readNumber(h,N);morse(cs+" ^",N+1.3+String(h).length*0.62+0.55+0.4)};
+  const go=T0=>{const T=T0+intervalSignal(notes,T0,2)+0.4,o=morse("DE "+cs,T),N=T+o+0.4;readNumber(h,N);morse(cs+" ^",N+1.3+String(h).length*0.62+0.55+0.4)};
   if(OBUF.voice&&Object.keys(OBUF.voice).length===10) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),900)}
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
