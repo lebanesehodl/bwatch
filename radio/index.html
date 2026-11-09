@@ -130,6 +130,7 @@ details[open] summary{margin-bottom:10px}
 .watch figure{margin:0;background:var(--panel);border:1px solid var(--line);aspect-ratio:4/5;overflow:hidden;max-width:100%}
 .watch figure img{width:100%;height:100%;object-fit:cover;display:block}
 .watch .col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.watch .lead{margin:0;font:600 clamp(22px,3.4vw,30px)/1.15 var(--display);letter-spacing:-.01em;text-wrap:balance}
 .eds{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--line)}
 .ed{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line)}
 .ed input{accent-color:var(--accent);margin:0}
@@ -229,10 +230,11 @@ footer a:hover{color:var(--ink)}
   <section class="sec" id="watch">
     <div class="label">The watch</div>
     <div class="watch">
-      <figure><img id="watchImg" alt="BWATCH bw-1 on a wrist" loading="lazy" decoding="async"></figure>
+      <figure><img id="watchImg" alt="BWATCH bw-1, close up" loading="lazy" decoding="async"></figure>
       <div class="col">
         <h2>Pre-order BWATCH bw-1</h2>
-        <p class="note">A wristwatch that keeps Bitcoin's time: block height, fees, the mempool and the coins left to mine, with the S&amp;P, oil and a dozen eggs priced in bitcoin. It buzzes on every block, like the bell on this radio, and even counts its battery in blocks. Hold it up to get paid on-chain or over Lightning, and it buzzes again the moment the sats land. Watch-only, so it can't spend a sat. No app, no account, no custodian.</p>
+        <p class="lead">Bitcoin time. Right on your wrist.</p>
+        <p class="note">It feels every block: a gentle buzz, every ten minutes or so. Hold it up to get paid, on-chain or over Lightning, and feel the sats land. Watch-only by design, so your keys stay yours. No app. No account. No custodian.</p>
         <form id="orderForm" class="col" action="https://formspree.io/f/xljeaawd" method="POST">
           <div class="eds">
             <div class="ed"><b>Standard edition</b><span class="price">5,000,000 sats</span>
@@ -937,7 +939,7 @@ window.addEventListener("pagehide",()=>{if(playing)presenceOff()});
 
 // ---------- the watch: picture, and pre-orders through the site's list form ----------
 (function(){const onSite=/bwatch\.xyz$/.test(location.hostname),img=$("watchImg");
-  img.src=onSite?"/img/hero-a.jpg":"img/hero-a.jpg";img.onerror=()=>{img.closest("figure").hidden=true};
+  img.src=onSite?"/img/fig2-supply.jpg":"img/fig2-supply.jpg";img.onerror=()=>{img.closest("figure").hidden=true};
   $("orderForm").addEventListener("submit",e=>{if(!onSite){e.preventDefault();$("orderStatus").textContent="Pre-orders go through on bwatch.xyz/radio. This preview doesn't send anything."}})})();
 window.addEventListener("resize",draw);
 document.fonts&&document.fonts.ready.then(draw);draw();
