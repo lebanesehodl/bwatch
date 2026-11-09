@@ -432,7 +432,7 @@ function keyFor(h){let k=(Math.floor(h/2016)*7)%12;return k>6?k-12:k}           
 function octFor(h){return Math.max(-24,Math.min(24,-12*(Math.floor(h/210000)-4)))}      // era 4 (840,000 to 1,049,999) is home
 function setKeyFor(h){keyShift=keyFor(h);octShift=octFor(h)}
 // ---------- a held chord, with one filter the wait opens ----------
-const PADS={sunday:[380,2600],deep:[180,900],musicbox:[1200,600],shortwave:[520,500],heart:[500,500]};
+const PADS={sunday:[380,2600],deep:[180,900],musicbox:[1200,600],shortwave:[900,700],heart:[500,500]};
 function makePad(chord,st,t){
   if(!PADS[st]) return null;
   const T=keyShift+octShift;const bass=CH[chord][0]+T,up=CH[chord][1].map(m=>m+T);const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(1,t+3);
@@ -442,7 +442,7 @@ function makePad(chord,st,t){
   if(st==="sunday") notes.forEach((m,i)=>{add("sawtooth",mtof(m),-6,0.016);add("sawtooth",mtof(m),6,0.016);add("sine",mtof(m),0,i?0.03:0.05)});
   if(st==="deep") notes.forEach((m,i)=>{const mm=i?m-12:m;add("triangle",mtof(mm),-4,0.05);add("sine",mtof(mm),5,0.05)});
   if(st==="musicbox") up.forEach(m=>add("sine",mtof(m+12),0,0.012));
-  if(st==="shortwave") [bass+12,up[1]].forEach(m=>add("square",mtof(m),0,0.012));
+  if(st==="shortwave") [bass+24,up[1]+12,up[2]+12].forEach(m=>add("square",mtof(m),0,0.01));   // up an octave: small speakers barely play the old register
   if(st==="heart"){            // a hum: voices through two vowel formants
     const f1=ctx.createBiquadFilter(),f2=ctx.createBiquadFilter();f1.type=f2.type="bandpass";f1.frequency.value=320;f2.frequency.value=820;f1.Q.value=f2.Q.value=4;
     f1.connect(f);f2.connect(f);up.slice(0,3).forEach(m=>{add("sawtooth",mtof(m-12),-3,0.05,f1);add("sawtooth",mtof(m-12),3,0.03,f2)})}
@@ -458,7 +458,7 @@ function startBed(st){
   const nodes=[],gains={};
   const chain=(src,list,name,level)=>{let n=src;list.forEach(x=>{n.connect(x);n=x});const g=ctx.createGain();g.gain.value=level;n.connect(g);g.connect(bus);gains[name]=g;nodes.push(src)};
   const filt=(type,fq,q)=>{const f=ctx.createBiquadFilter();f.type=type;f.frequency.value=fq;f.Q.value=q;return f};
-  if(st==="shortwave"){chain(loopSrc(noise),[filt("bandpass",1400,0.5)],"hiss",0.025);
+  if(st==="shortwave"){chain(loopSrc(noise),[filt("bandpass",1400,0.5)],"hiss",0.014);
     const w=ctx.createOscillator();w.frequency.value=900;w.start();chain(w,[],"whistle",0.004);gains.whistleOsc=w}
   if(st==="nature"){
     chain(loopSrc(brown),[filt("lowpass",300,0.7)],"roof",0.02);
@@ -471,7 +471,7 @@ function stopBed(){ if(!bed) return; const now=ctx.currentTime;
   Object.values(bed.gains).forEach(g=>{if(g.gain) g.gain.setTargetAtTime(0,now,0.3)});
   bed.nodes.forEach(n=>{try{n.stop(now+1.5)}catch(e){}}); bed=null}
 function bedTick(ten,rain,now){ if(!bed) return; const G=bed.gains;
-  if(bed.st==="shortwave"){G.hiss.gain.setTargetAtTime(0.02+0.05*ten,now,0.5);G.whistleOsc.frequency.setTargetAtTime(900+700*ten,now,2)}
+  if(bed.st==="shortwave"){G.hiss.gain.setTargetAtTime(0.014+0.018*ten,now,0.5);G.whistleOsc.frequency.setTargetAtTime(900+700*ten,now,2)}
   if(bed.st==="nature"){const r=Math.min(1,(rain-1)/10);
     const rec=OBUF.nature&&OBUF.nature.rain;
     if(rec&&!G.rec){const s=ctx.createBufferSource();s.buffer=rec;s.loop=true;const f=ctx.createBiquadFilter();f.type="lowpass";f.frequency.value=4000;f.Q.value=0.5;
@@ -837,7 +837,7 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
   if(st==="lofi"){burst(t,0.0015,3000,0.5,0.06*Math.random(),p,"highpass",lofi.bus||bus);if(Math.random()<0.5)burst(t,0.003,3200,1,0.03*Math.random(),p)}
   if(st==="musicbox") burst(t,0.002,7000,1,0.025*Math.random(),p);
   if(st==="deep") burst(t,0.006,700,1.5,0.06*Math.random(),p);
-  if(st==="shortwave") burst(t,0.0015,2500,0.4,0.12*Math.random(),p,"highpass");
+  if(st==="shortwave") burst(t,0.0015,2500,0.4,0.2*Math.random(),p,"highpass");
   if(st==="nature"){ if(OBUF.nature&&OBUF.nature.rain) return; if(!closeDrop(t,p)) burst(t,0.002,1500+Math.random()*4000,1.5,0.04*Math.random(),p)}
 }
 const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2,deep:0.9,shortwave:1.3,downstroke:0.8};   // even out the stations
@@ -935,7 +935,7 @@ function tick(){
   if(nextBlip<now) nextBlip=now+0.05;
   while(nextBlip<now+0.25){if(USES_PULSE[st]&&lastIdx>=0&&ten>0.12) blip(st,ten,nextBlip);nextBlip+=1/(0.35+2.4*ten)}
   if(nextGrain<now) nextGrain=now+0.05;
-  const gr=st==="nature"?rain*2.2:rain;
+  const gr=st==="nature"?rain*2.2:st==="shortwave"?rain*1.25:rain;
   while(nextGrain<now+0.25){if(USES_GRAIN[st]) grain(st,nextGrain);nextGrain+=-Math.log(1-Math.random())/gr}
   $("waitText").textContent=lastIdx<0?"Waiting for block "+fmt(chain[0].height):"Waiting "+Math.floor(w)+" min for the next one";
   $("tension").style.width=(ten*100).toFixed(1)+"%";$("tensionPct").textContent="tension "+Math.round(ten*100)+"%";
