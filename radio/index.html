@@ -62,6 +62,8 @@ h2{font-weight:600;font-size:18px;text-transform:uppercase;letter-spacing:.03em;
 .srcs{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
 @media (max-width:520px){.srcs{align-items:flex-start}}
 .st small .n{font-style:normal;color:var(--accent-text)}
+/* the seven-segment font has no comma: draw one, like the watch's pixel comma */
+.height .cm{display:inline-block;width:.1em;height:.2em;background:currentColor;margin:0 .07em 0 .05em;vertical-align:-.04em;transform:skewX(-12deg)}
 .height{font-family:var(--seg);font-weight:700;font-size:clamp(52px,14vw,112px);line-height:1;letter-spacing:.02em;white-space:nowrap}
 .facts{display:flex;gap:10px 22px;flex-wrap:wrap;font-family:var(--mono);font-size:13px;color:var(--dim)}
 .facts b{color:var(--ink);font-weight:500}
@@ -167,11 +169,13 @@ footer a:hover{color:var(--ink)}
       <div class="label">Block</div>
       <div class="srcs"><div class="src" id="src">Tonight · recorded blocks</div><div class="src" id="listeners" aria-live="polite" hidden></div></div>
     </div>
-    <div class="height" id="height">975.120</div>
+    <div class="height" id="height">975<i class="cm"></i>120</div>
     <div class="facts">
       <span><b id="tx">3,061</b> transactions</span>
       <span>chord <b id="chord">Dmaj9</b><span id="from"></span></span>
       <span>station <b id="stName">Shortwave</b></span>
+      <span>adjustment in <b id="adjFact">624 blocks</b></span>
+      <span>halving in <b id="halvFact">74,880 blocks</b></span>
     </div>
     <div class="wait">
       <div class="wait-line"><span id="waitText">Press play to listen</span><span class="label" id="tensionPct"></span></div>
@@ -188,6 +192,7 @@ footer a:hover{color:var(--ink)}
         <div class="seg" id="srcSeg">
           <button id="srcLive" aria-pressed="true">Live</button>
           <button id="srcReplay" aria-pressed="false">Tonight (recorded)</button>
+          <button id="srcDemo" aria-pressed="false">Demo: adjustment &amp; halving</button>
         </div>
       </div>
       <div class="row" id="speedRow" hidden>
@@ -299,6 +304,7 @@ footer a:hover{color:var(--ink)}
       <div><b>Blocks → numbers</b><p>Each new block is announced the way a numbers station would: three pips, then its height, read in two groups.</p></div>
       <div><b>Hashes → chords</b><p>Under the static, a faint organ holds the chord the block's hash picked. While it waits, it drifts back through the last eight blocks' chords.</p></div>
       <div><b>The wait → static</b><p>A block takes ten minutes on average but can take forty. The longer none comes, the louder the hiss and the higher the whistle drifts.</p></div>
+      <div><b>Adjustments → key, halvings → octave</b><p>Every difficulty adjustment, the station retunes on air and the organ moves to a new key. Every halving drops it an octave, for good. Countdowns to both are read out along the way.</p></div>
       <div><b>Mempool → crackle</b><p>Transactions waiting to be mined crackle on the line. A busy mempool is a storm of static.</p></div>
     </div>
     <p class="note">No prices anywhere in the music. Blocks and transactions only.</p>
@@ -408,11 +414,16 @@ function chime(f,t,peak,pan=0){[1,2.76,5.4,8.93].forEach((r,i)=>tone("sine",f*r,
 function speak(text){try{if(!("speechSynthesis" in window))return false;const u=new SpeechSynthesisUtterance(text);u.rate=0.78;u.pitch=0.55;speechSynthesis.speak(u);return true}catch(e){return false}}
 const DIG=["zero","one","two","three","four","five","six","seven","eight","nine"];
 
+// ---------- the schedule: every difficulty epoch has its own key, every halving era sits an octave lower ----------
+let keyShift=0,octShift=0;
+function keyFor(h){let k=(Math.floor(h/2016)*7)%12;return k>6?k-12:k}                 // round the circle of fifths, one step per epoch
+function octFor(h){return Math.max(-24,Math.min(24,-12*(Math.floor(h/210000)-4)))}      // era 4 (840,000 to 1,049,999) is home
+function setKeyFor(h){keyShift=keyFor(h);octShift=octFor(h)}
 // ---------- a held chord, with one filter the wait opens ----------
 const PADS={sunday:[380,2600],deep:[180,900],musicbox:[1200,600],shortwave:[520,500],heart:[500,500]};
 function makePad(chord,st,t){
   if(!PADS[st]) return null;
-  const [bass,up]=CH[chord];const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(1,t+3);
+  const T=keyShift+octShift;const bass=CH[chord][0]+T,up=CH[chord][1].map(m=>m+T);const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(1,t+3);
   const f=ctx.createBiquadFilter();f.type="lowpass";f.Q.value=0.6;f.frequency.value=PADS[st][0];f.connect(g);g.connect(bus);
   const oscs=[];const add=(type,freq,det,lvl,dest=f)=>{const o=ctx.createOscillator(),og=ctx.createGain();o.type=type;o.frequency.value=freq;o.detune.value=det;og.gain.value=lvl;o.connect(og);og.connect(dest);o.start(t);oscs.push(o)};
   const notes=[bass,...up];
@@ -477,7 +488,7 @@ function thunder(t,size,close){
   return delay}
 
 // ---------- one-shot recordings: drums (VCSL, CC0) and the numbers-station voice ----------
-const ONESHOTS={nature:["rain","thunder0","thunder1","thunder2","thunder3"],drums:["hatC1","hatC2","hatSoft","hatO","snare","snareSoft","clap1","clap2","shaker","crash"],voice:["0","1","2","3","4","5","6","7","8","9"]};
+const ONESHOTS={nature:["rain","thunder0","thunder1","thunder2","thunder3"],drums:["hatC1","hatC2","hatSoft","hatO","snare","snareSoft","clap1","clap2","shaker","crash"],voice:["0","1","2","3","4","5","6","7","8","9","adjustment","halving","plus","minus","point","percent","blocks","in"]};
 const OBUF={};
 function loadShots(dir){ if(OBUF[dir]||!ctx) return; OBUF[dir]={};
   ONESHOTS[dir].forEach(async n=>{try{const r=await fetch("samples/"+dir+"/"+n+".mp3");if(r.ok)OBUF[dir][n]=await ctx.decodeAudioData(await r.arrayBuffer())}catch(e){}})}
@@ -513,13 +524,46 @@ function morse(text,t,wpm=18){const dot=1.2/wpm;const o=ctx.createOscillator();o
   for(let k=0;k<=(x-t)/0.7;k++) fade.gain.setValueAtTime(0.1+0.07*Math.sin(k*1.3+t),t+k*0.7);   // a little fading on the line
   o.start(t);o.stop(x+0.1);return x-t}
 let swBusy=0;
+// the dial turning: static and a whistle sweep across the band, then settle
+function tuneSweep(t){const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.Q.value=2;
+  f.frequency.setValueAtTime(400,t);f.frequency.exponentialRampToValueAtTime(3200,t+1.2);f.frequency.exponentialRampToValueAtTime(1100,t+2.4);
+  const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.12,t+0.2);g.gain.setValueAtTime(0.12,t+2.1);g.gain.linearRampToValueAtTime(0,t+2.5);
+  s.connect(f);f.connect(g);g.connect(bus);s.start(t);s.stop(t+2.6);
+  const o=ctx.createOscillator(),og=ctx.createGain();o.frequency.setValueAtTime(600,t);o.frequency.exponentialRampToValueAtTime(2400,t+1.2);o.frequency.exponentialRampToValueAtTime(1100,t+2.4);
+  og.gain.setValueAtTime(0,t);og.gain.linearRampToValueAtTime(0.02,t+0.3);og.gain.linearRampToValueAtTime(0,t+2.5);o.connect(og);og.connect(bus);o.start(t);o.stop(t+2.6)}
+// a moment of silence on the line
+function duck(t,d){if(!out)return;const lvl=0.9*(TRIM[st]||1);out.gain.cancelScheduledValues(t);out.gain.setTargetAtTime(0.08,t,0.25);out.gain.setTargetAtTime(lvl,t+d,0.6)}
+// what the voice adds after the number: the adjustment's result, the halving, or a countdown now and then
+function scheduleCue(h,always){const r=2016-(h%2016),hr=210000-(h%210000);
+  if([10000,1000,100,10].includes(hr)||(h%1008===0&&hr<210000)) return ["halving","in",...digitsOf(hr),"blocks"];
+  if(always||[100,10].includes(r)||(h%144===0&&r<2016)) return ["adjustment","in",...digitsOf(r),"blocks"];
+  return null}
+// one transmission. special: a retarget or halving block gets its own broadcast. signoff: the closing Morse.
+function transmit(h,by,t,{special=true,always=false,signoff="^",adjPct=null}={}){
+  const cs=callSign(by),retarget=special&&h%2016===0,halving=special&&h%210000===0;let x=t;
+  if(halving){duck(x,3.6);x+=0.9;x+=morse("QRT",x)+1.8}                    // closing down: the era ends
+  if(retarget){tuneSweep(x);x+=2.6;x+=morse("QSY",x)+0.5}                  // change frequency: the network retunes
+  x+=morse("DE "+cs,x)+0.4;
+  x=readNumber(h,x)+0.4;
+  let extra=null;
+  if(halving) extra=["halving"];
+  else if(retarget) extra=adjPct!=null?["adjustment",...pct(adjPct)]:["adjustment"];
+  else extra=scheduleCue(h,always);
+  if(extra) x=say(extra,x)+0.4;
+  return x+morse(signoff,x)}
+function voiceReady(){return OBUF.voice&&ONESHOTS.voice.every(n=>OBUF.voice[n])}
+// the voice reads a list of digits and words; "|" is a pause. Returns when it will have finished.
+function say(tokens,t){const v=radioVoice();let x=t;
+  if(voiceReady()){tokens.forEach(k=>{if(k==="|"){x+=0.5;return}shot("voice",k,x,1,0,v);x+=OBUF.voice[k].duration+(/^\d$/.test(k)?0.2:0.12)});return x}
+  const words=tokens.map(k=>k==="|"?",":(/^\d$/.test(k)?DIG[k]:k)).join(" ");
+  if(!speak(words)) tokens.forEach((k,i)=>{if(/^\d$/.test(k))tone("sine",600+80*Number(k),t+i*0.3,0.005,0.08,0.06)});return t+tokens.length*0.55}
+const digitsOf=n=>String(Math.max(0,Math.round(n))).split("");
+function pct(v){const x=Math.round(Math.abs(v)*10);return [v<0?"minus":"plus",...digitsOf(Math.floor(x/10)),"point",String(x%10),"percent"]}
+// three pips, then the height in two groups; returns when the voice is done
 function readNumber(height,t){
   for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);
   const ds=String(height).split(""),h=Math.ceil(ds.length/2);
-  if(OBUF.voice&&Object.keys(OBUF.voice).length===10){let x=t+1.3;const v=radioVoice();
-    ds.forEach((d,i)=>{shot("voice",d,x,1,0,v);x+=0.62;if(i===h-1)x+=0.55});return}
-  const words=ds.map(d=>DIG[d]);
-  if(!speak(words.slice(0,h).join(" ")+". "+words.slice(h).join(" ")+".")) ds.forEach((d,i)=>tone("sine",600+80*Number(d),t+1.2+i*0.3,0.005,0.08,0.06))}
+  return say([...ds.slice(0,h),"|",...ds.slice(h)],t+1.3)}
 
 // ---------- rain, drop by drop: impacts on leaves, ground and stone, rendered once into seamless loops ----------
 // Rain is mostly broadband impacts: thousands of tiny, differently coloured clicks a second, a few big
@@ -753,8 +797,7 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){   // blocks faster than a transmission (fast replay): just the pips, so they never pile up
     if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return}
-    const open=morse("DE "+callSign(by),t),T=t+open+0.4;readNumber(b.height,T);   // "this is BW9IF", the numbers, then SK: end of transmission (the organ is for a block's song)
-    const nEnd=T+1.3+String(b.height).length*0.62+0.55+0.4;swBusy=nEnd+morse("^",nEnd)+0.5;return}
+    swBusy=transmit(b.height,by,t,{adjPct:adjResult()})+0.5;return}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
     if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
     else d=thunder(t,size,close);bolt(d);
@@ -789,7 +832,7 @@ const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0
 function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
 function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano");if(s==="beats")loadShots("drums");if(s==="nature"){loadShots("nature");setTimeout(()=>{if(!(OBUF.nature&&OBUF.nature.rain))prepareRain()},6000)}
   if(s==="shortwave"){loadShots("voice");if(playing&&lastIdx>=0)setTimeout(async()=>{if(!(playing&&st==="shortwave"))return;const bk=chain[lastIdx],by=await songBytes(bk),t=ctx.currentTime+0.05;   // the full transmission for the block on air
-      const o=morse("DE "+callSign(by),t),T=t+o+0.4;readNumber(bk.height,T);const e=T+1.3+String(bk.height).length*0.62+0.55+0.4;swBusy=e+morse("^",e)+0.5},1500)}}
+      swBusy=transmit(bk.height,by,t,{special:false,always:true})+0.5},1500)}}
 const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
 // ---------- the clock: live or tonight's replay ----------
@@ -804,7 +847,10 @@ function rainRate(){
   if(mode==="live"){const c=mempoolCount||20000;return 1+8*Math.max(0,Math.min(1,Math.log10(c/2000)/2))}
   const nb=chain[lastIdx+1]||chain[chain.length-1];return 1.5+9*Math.pow(nb.tx/7600,1.5)}
 const fmt=n=>Number(n).toLocaleString("en-US");
-function showBlock(b){$("height").textContent=fmt(b.height).replace(/,/g,".");$("tx").textContent=b.tx!=null?fmt(b.tx):"–"}
+function showBlock(b){$("height").innerHTML=fmt(b.height).split(",").join('<i class="cm" aria-hidden="true"></i>');$("height").setAttribute("aria-label","Block "+fmt(b.height));$("tx").textContent=b.tx!=null?fmt(b.tx):"–";showSchedule(b.height)}
+function showSchedule(h){const r=2016-(h%2016),hr=210000-(h%210000);
+  const est=mode==="live"&&adj&&typeof adj.change==="number"?" (~"+(adj.change>=0?"+":"")+adj.change.toFixed(1)+"%)":"";
+  $("adjFact").textContent=fmt(r)+" blocks"+est;$("halvFact").textContent=fmt(hr)+" blocks"}
 function flash(){const f=$("flash");f.classList.add("on");requestAnimationFrame(()=>requestAnimationFrame(()=>f.classList.remove("on")))}
 function bolt(){const b=$("bolt");b.classList.add("on");requestAnimationFrame(()=>requestAnimationFrame(()=>b.classList.remove("on")))}
 // ---------- memory: while it waits, the music walks back through the last blocks ----------
@@ -855,7 +901,7 @@ async function fireBlock(i,t){
   remember(nc,notes,b.height);
   if(!playing){curChord=nc;$("chord").textContent=nc;return}
   const now=Math.max(ctx.currentTime,t);
-  if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now);$("chord").textContent=nc;$("from").textContent="";
+  setKeyFor(b.height);if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now);$("chord").textContent=nc;$("from").textContent="";
   harm.next=now+harmPeriod()*1.5;harm.pos=-1;
   playBlock(st,b,notes,now+0.05,by,nc,close);flash();
 }
@@ -886,16 +932,21 @@ function tick(){
 // ---------- live data ----------
 async function getJSON(url,ms=6000){const c=new AbortController(),to=setTimeout(()=>c.abort(),ms);
   try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw new Error("HTTP "+r.status);const ct=r.headers.get("content-type")||"";return ct.includes("json")?await r.json():await r.text()}finally{clearTimeout(to)}}
+// the difficulty adjustment, from mempool.space: blocks left, the estimate, and the last one's result
+let adj=null;
+async function fetchAdj(){try{const a=await getJSON(API+"/v1/difficulty-adjustment");adj={change:a.difficultyChange,prev:a.previousRetarget};if(lastIdx>=0)showSchedule(chain[lastIdx].height)}catch(e){}}
+function adjResult(){if(mode==="live") return adj&&typeof adj.prev==="number"?adj.prev:null;return replaySet==="demo"?DEMO_ADJ:null}
 async function liveStart(){
   try{const arr=await getJSON(API+"/v1/blocks");
     chain=arr.slice().reverse().map(b=>({height:b.height,time:b.timestamp*1000,tx:b.tx_count,hash:b.id}));
     liveOk=true;curChord="Dmaj9";hist=[];
     for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i>=chain.length-HIST_MAX)remember(curChord,motif(by,curChord),chain[i].height);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
     try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}
+    await fetchAdj();
     return true}catch(e){liveOk=false;return false}}
 function livePoll(){clearInterval(poll);poll=setInterval(async()=>{
   try{const tip=await getJSON(API+"/blocks/tip/hash");if(tip&&tip.trim()!==chain[chain.length-1].hash){
-    const arr=await getJSON(API+"/v1/blocks");const known=new Set(chain.map(b=>b.hash));
+    const arr=await getJSON(API+"/v1/blocks");const known=new Set(chain.map(b=>b.hash));await fetchAdj();
     arr.slice().reverse().filter(b=>!known.has(b.id)).forEach(nb=>{chain.push({height:nb.height,time:nb.timestamp*1000,tx:nb.tx_count,hash:nb.id});if(chain.length>40)chain.shift();fireBlock(chain.length-1,ctx.currentTime)})}}catch(e){}
   try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}},20000)}
 
@@ -918,8 +969,14 @@ function draw(){
 
 // ---------- play controls ----------
 function press(group,btn){group.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b===btn?"true":"false"))}
+// a simulated run that lands on a difficulty adjustment and on the next halving, so both can be heard tonight
+const DEMO_ADJ=2.1;
+const DEMO=[975742,975743,975744,975745,1049998,1049999,1050000,1050001].map((h,i)=>({height:h,time:Date.parse("2026-11-08T20:00:00Z")+i*15*60000,tx:3000+(i*977)%3000,hash:null}));
+const DEMO_NOTE="A simulated run: blocks land on the difficulty adjustment at 975,744 and on the halving at 1,050,000, fifteen minutes apart. The blocks and the +2.1% are made up.";
+let replaySet="tonight";
 const REPLAY_NOTE="Tonight's 24 blocks, 975,097 to 975,120 (3:52 to 9:33 PM ET, Nov 8), with their real times and transaction counts. Their songs use a stand-in for each block's hash.";
-function setReplayUI(){mode="replay";press($("srcSeg"),$("srcReplay"));$("speedRow").hidden=false;$("srcNote").textContent=REPLAY_NOTE}
+function setReplayUI(set="tonight"){mode="replay";replaySet=set;press($("srcSeg"),$(set==="demo"?"srcDemo":"srcReplay"));$("speedRow").hidden=false;$("srcNote").textContent=set==="demo"?DEMO_NOTE:REPLAY_NOTE;
+  if(set==="demo"){speed=2;press($("speedSeg"),document.querySelector('#speedSeg [data-speed="2"]'))}}
 async function start(){
   initAudio();if(ctx.state==="suspended") await ctx.resume();
   playing=true;$("play").classList.add("on");$("play").setAttribute("aria-pressed","true");$("playLabel").textContent="Stop";
@@ -929,7 +986,8 @@ async function start(){
       $("srcNote").textContent="Live blocks need a connection to mempool.space, which isn't available here. Playing tonight's recorded blocks instead."}}
   if(!playing) return;
   if(mode==="live"){lastIdx=chain.length-1;showBlock(chain[lastIdx]);$("src").innerHTML="<b>● Live</b> · mempool.space";livePoll()}
-  else{chain=TONIGHT.slice();lastIdx=-1;curChord="Dmaj9";hist=[];rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent="Tonight · recorded blocks"}
+  else{chain=(replaySet==="demo"?DEMO:TONIGHT).slice();lastIdx=-1;curChord="Dmaj9";hist=[];rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent=replaySet==="demo"?"Demo · simulated blocks":"Tonight · recorded blocks";showSchedule(chain[0].height-1)}
+  setKeyFor(chain[Math.max(0,lastIdx)].height);
   pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);trim();loadFor(st);
   clearInterval(timer);timer=setInterval(tick,100);tick();presenceOn()}
 function stop(){
@@ -941,7 +999,8 @@ function stop(){
 $("play").addEventListener("click",()=>playing?stop():start());
 $("srcLive").addEventListener("click",()=>{if(mode==="live")return;mode="live";press($("srcSeg"),$("srcLive"));$("speedRow").hidden=true;
   $("srcNote").textContent="The real chain, as it happens. The chord changes when the next block is found, which can take a while.";if(playing){stop();start()}});
-$("srcReplay").addEventListener("click",()=>{if(mode==="replay")return;setReplayUI();if(playing){stop();start()}});
+$("srcReplay").addEventListener("click",()=>{if(mode==="replay"&&replaySet==="tonight")return;setReplayUI("tonight");if(playing){stop();start()}});
+$("srcDemo").addEventListener("click",()=>{if(mode==="replay"&&replaySet==="demo")return;setReplayUI("demo");if(playing){stop();start()}});
 $("speedSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;press($("speedSeg"),b);
   const v=ctx&&playing?virtNow():0;speed=Number(b.dataset.speed);if(playing&&mode==="replay"){rVirt0=v;rStart=ctx.currentTime}});
 $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b)return;press($("stations"),b);st=b.dataset.st;
@@ -949,12 +1008,12 @@ $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b
   if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
 // a block's transmission, on Shortwave: static, three pips, the number read out, then its melody as tones on the same line
 function transmission(h,notes,ch,t,by){loadShots("voice");
-  const cs=callSign(by),dur=(cs.length+2)*0.75+0.4+1.3+String(h).length*0.62+0.55+(cs.length+1)*0.75+2.5;
+  const cs=callSign(by),dur=(cs.length+2)*0.75+0.4+1.3+String(h).length*0.62+0.55+(cs.length+1)*0.75+(h%2016===0?8:0)+(h%210000===0?7:0)+2.5;
   const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.frequency.value=1400;f.Q.value=0.5;
   const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(playing?0:0.03,t+0.3);g.gain.setValueAtTime(playing?0:0.03,t+dur-0.8);g.gain.linearRampToValueAtTime(0,t+dur);
   s.connect(f);f.connect(g);g.connect(bus);s.start(t);s.stop(t+dur+0.1);
-  const go=T=>{const o=morse("DE "+cs,T),N=T+o+0.4;readNumber(h,N);morse(cs+" ^",N+1.3+String(h).length*0.62+0.55+0.4)};
-  if(OBUF.voice&&Object.keys(OBUF.voice).length===10) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),900)}
+  const go=T=>transmit(h,by,T,{signoff:cs+" ^"});
+  if(voiceReady()) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),1200)}
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
   initAudio();if(ctx.state==="suspended")await ctx.resume();
