@@ -219,7 +219,7 @@ footer a:hover{color:var(--ink)}
 
   <section class="sec">
     <h2>A block's song</h2>
-    <p class="note">Every block has its own transmission: its number, read out, and a short melody drawn from its hash, so the same block always plays the same tune. Try a birthday, a halving (840000) or genesis (0).</p>
+    <p class="note">Every block has its own transmission: an interval signal drawn from its hash, then its number, read out. The same block always plays the same tune. Try a birthday, a halving (840000) or genesis (0).</p>
     <form class="inline" id="songForm">
       <input class="f" id="songHeight" inputmode="numeric" autocomplete="off" value="840000" aria-label="Block height" style="width:12ch">
       <button class="btn" type="submit">Play its song</button>
@@ -489,6 +489,18 @@ function radioVoice(){ if(radioIn) return radioIn; const bp=ctx.createBiquadFilt
   const ws=ctx.createWaveShaper(),c=new Float32Array(512);for(let i=0;i<512;i++){const x=i/256-1;c[i]=Math.tanh(2.5*x)}ws.curve=c;
   const hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=350;const g=ctx.createGain();g.gain.value=0.5;
   bp.connect(ws);ws.connect(hp);hp.connect(g);g.connect(bus);return radioIn=bp}
+// the interval signal: before the numbers, a numbers station plays a short tune over and over so you know you've
+// found it. Here the tune is the block's melody, on a thin reed organ, through the same narrow, fading line.
+function intervalSignal(notes,t,reps){const v=radioVoice();const fade=ctx.createGain();fade.connect(v);
+  const len=notes.reduce((a,n)=>a+n.d*1.25,0)+0.45,total=len*reps;
+  for(let k=0;k<=Math.ceil(total/0.8);k++) fade.gain.setValueAtTime(0.55+0.45*Math.sin(k*1.7+t),t+k*0.8);   // the signal drifts in and out
+  const wob=ctx.createOscillator(),wg=ctx.createGain();wob.frequency.value=0.6;wg.gain.value=14;wob.connect(wg);wob.start(t);wob.stop(t+total+1);
+  for(let r=0;r<reps;r++){let x=t+r*len;notes.forEach(n=>{const d=n.d*1.25*0.85;
+    [["square",0.05],["triangle",0.09]].forEach(([type,pk])=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type=type;o.frequency.value=mtof(n.m);wg.connect(o.detune);
+      o.connect(g);g.connect(fade);g.gain.setValueAtTime(0,x);g.gain.linearRampToValueAtTime(pk,x+0.015);g.gain.setValueAtTime(pk,x+d-0.05);g.gain.linearRampToValueAtTime(0,x+d);o.start(x);o.stop(x+d+0.05)});
+    x+=n.d*1.25})}
+  return total}
+let swBusy=0;
 function readNumber(height,t){
   for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);
   const ds=String(height).split(""),h=Math.ceil(ds.length/2);
@@ -727,7 +739,9 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 
 // ---------- what each station does when a block lands ----------
 function playBlock(st,b,notes,t,by,chord,close){
-  if(st==="shortwave"){readNumber(b.height,t);return}
+  if(st==="shortwave"){   // blocks faster than a transmission (fast replay): just the pips, so they never pile up
+    if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return}
+    const d=intervalSignal(notes,t,1);readNumber(b.height,t+d+0.3);swBusy=t+d+0.3+1.3+String(b.height).length*0.62+0.8;return}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
     if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
     else d=thunder(t,size,close);bolt(d);
@@ -921,12 +935,11 @@ $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b
   if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
 // a block's transmission, on Shortwave: static, three pips, the number read out, then its melody as tones on the same line
 function transmission(h,notes,ch,t){loadShots("voice");
-  const dur=1.3+String(h).length*0.62+0.55+0.6+notes.reduce((a,n)=>a+n.d*1.4,0)+1.2;
+  const sig=(notes.reduce((a,n)=>a+n.d*1.25,0)+0.45)*2,dur=sig+0.4+1.3+String(h).length*0.62+0.55+1.2;
   const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.frequency.value=1400;f.Q.value=0.5;
   const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(playing?0:0.03,t+0.3);g.gain.setValueAtTime(playing?0:0.03,t+dur-0.8);g.gain.linearRampToValueAtTime(0,t+dur);
   s.connect(f);f.connect(g);g.connect(bus);s.start(t);s.stop(t+dur+0.1);
-  const go=T=>{readNumber(h,T);let x=T+1.3+String(h).length*0.62+0.55+0.6;const v=radioVoice();
-    notes.forEach(n=>{tone("sine",mtof(n.m),x,0.01,0.09,n.d*0.45,0,v);x+=n.d*1.4})};
+  const go=T=>{const d=intervalSignal(notes,T,2);readNumber(h,T+d+0.4)};
   if(OBUF.voice&&Object.keys(OBUF.voice).length===10) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),900)}
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
