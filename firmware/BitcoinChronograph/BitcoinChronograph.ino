@@ -11738,28 +11738,60 @@ public:
     if (!labStep("S5 full, off, then deep sleep. Fade?")) return false;
     return true;
   }
+  // ---- LAB 7 (Nov 8): a full refresh made of quick updates ----
+  // Lab 6 under a phone LED: every full refresh faded, however it ended
+  // (S3a, voltage left on, lost the image entirely). Lab 5 under the same
+  // light: card switches by quick update, OTP (W1) and Waveshare (W2), held.
+  // So the full's waveform is what light breaks. A "quick full": the inverse
+  // of the image by a quick update, then the image, so every pixel is driven
+  // (twice) by the short waveform only. Run once under the light (fade?) and
+  // once without (grey after black? ghosts after many?).
+  void labInvert() { uint8_t *b = labBuf(); for (int i = 0; i < 5000; i++) b[i] ^= 0xFF; }
+  void quickFullOtp() {                  // X1: the panel's own quick waveform
+    labInvert(); display.display(true);
+    labInvert(); display.display(true);
+    Serial.printf("[lab] %7lu quick full (OTP) done\n", millis());
+  }
+  void quickFullWs() {                   // X2: Waveshare's, holding pulses
+    labInvert(); wsPartial();            // labPrev must be the glass already
+    labInvert(); wsPartial();
+    Serial.printf("[lab] %7lu quick full (WS) done\n", millis());
+  }
+  bool quickRun() {
+    char m[80];
+    Serial.println("\n[lab] ===== DISPLAY LAB 7: quick full (inverse, then image) =====");
+    sunCard('B', "X0", "LAB 7: START"); labFull();
+    if (!labStep("X0 start (light on for the sun run, off for the indoor run). Press")) return false;
+    sunCard('A', "X1", "QUICK FULL, OTP");  quickFullOtp();
+    if (!labStep("X1 quick full by the panel's quick update. Watch 10 s: fade?")) return false;
+    labKeep();                                       // the glass: X1's card
+    sunCard('C', "X2", "QUICK FULL, WS");   quickFullWs();
+    if (!labStep("X2 quick full by Waveshare's quick update. Watch 10 s: fade?")) return false;
+    // X3: the case that greyed indoors: black, then back to light
+    labDark(); labTick('A', "X3", 0);
+    display.setCursor(8, 38); display.print("BLACK CARD (FULL)");
+    displayFull();
+    if (!labStep("X3-1 black card. Wait ~30 s, then press")) return false;
+    sunCard('B', "X3", "BACK TO LIGHT BY X1"); quickFullOtp();
+    if (!labStep("X3-2 back to light by the quick full. Press")) return false;
+    sunCard('B', "X3", "MINUTE TICK"); labTick('B', "X3", 1);
+    display.setCursor(8, 38); display.print("MINUTE TICK");
+    labPartial();
+    if (!labStep("X3-3 minute tick after it. Watch 30 s: grey? fade?")) return false;
+    // X4: many in a row, then a tick: does anything build up?
+    const char seq[10] = {'A','C','B','A','C','B','A','C','B','A'};
+    for (int k = 0; k < 10; k++) {
+      snprintf(m, 80, "QUICK FULL %d/10", k + 1);
+      sunCard(seq[k], "X4", m); quickFullOtp(); delay(600);
+    }
+    labTick('A', "X4", 1); display.setCursor(8, 38); display.print("TICK AFTER TEN");
+    labPartial();
+    return labStep("X4 ten quick fulls, then a tick. Ghosts of B or C? grey? fade?");
+  }
   void labRun() {
     EpdFull::diag(display.epd2);
-    bool on = sunRun();
-    if (on) {
-      sunCard('C', "LAB 5?", "ANY BUTTON: LAB 5  BACK: END"); labFull();
-      on = labStep("SUN done. Any button: lab 5 (W1-W3); BACK: end");
-    }
-    if (!on) { cleanScreen(); Serial.println("[lab] ===== done ====="); return; }
-    Serial.println("\n[lab] ===== DISPLAY LAB 5: dark mode, OTP vs WS partial =====");
-    // W3: light after black, the case that fades on the wrist (after JOE's
-    // cards, a switch to light, or a clearing cycle, whose black frames count
-    // too): lab 3b's sequence, with the minute partial done the WS way. In 3b
-    // every OTP variant (P1-P7) faded at that partial.
-    if (labDarkRun("W1", false) && labDarkRun("W2", true) && labPre("W3")) {
-      labLight(); labTick('B', "W3", 1); labFull(); labKeep();
-      if (labStep("W3-3 light full as the watch does it. Press")) {
-        labTick('B', "W3", 2); wsPartial();
-        labStep("W3-4 minute tick by WS partial. Watch 30 s: fade?");
-      }
-    }
-    // whatever ran, put the controller back as the watch expects it
-    cleanScreen();
+    quickRun();
+    cleanScreen();                       // the controller back as the watch expects it
     Serial.println("[lab] ===== done =====");
   }
 
