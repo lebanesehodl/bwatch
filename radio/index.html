@@ -170,7 +170,7 @@ footer a:hover{color:var(--ink)}
     <div class="facts">
       <span><b id="tx">3,061</b> transactions</span>
       <span>chord <b id="chord">Dmaj9</b><span id="from"></span></span>
-      <span>station <b id="stName">Lo-fi Sunday</b></span>
+      <span>station <b id="stName">Shortwave</b></span>
     </div>
     <div class="wait">
       <div class="wait-line"><span id="waitText">Press play to listen</span><span class="label" id="tensionPct"></span></div>
@@ -204,16 +204,15 @@ footer a:hover{color:var(--ink)}
   <section class="row">
     <div class="label">Station</div>
     <div class="stations" id="stations">
-      <button class="st" data-st="lofi" aria-pressed="true"><small>01</small><b>Lo-fi Sunday</b><span>Dusty piano, swung drums, tape wobble and vinyl crackle.</span></button>
-      <button class="st" data-st="nature" aria-pressed="false"><small>02</small><b>Nature</b><span>Rain from the mempool, wind while it waits, thunder on every block.</span></button>
-      <button class="st" data-st="beats" aria-pressed="false"><small>03</small><b>Beats</b><span>808 kicks and a pocket synth. Each block writes a new pattern.</span></button>
-      <button class="st" data-st="heart" aria-pressed="false"><small>04</small><b>Heart</b><span>A heartbeat that races while it waits and slows when a block lands.</span></button>
-      <button class="st" data-st="musicbox" aria-pressed="false"><small>05</small><b>Music box</b><span>Tines, and a ticking spring while it waits.</span></button>
-      <button class="st" data-st="deep" aria-pressed="false"><small>06</small><b>Deep</b><span>A low drone that swells with the wait.</span></button>
-      <button class="st" data-st="shortwave" aria-pressed="false"><small>07</small><b>Shortwave</b><span>A numbers station that reads each new block aloud.</span></button>
-      <button class="st" data-st="downstroke" aria-pressed="false"><small>08</small><b>Downstroke</b><span>Two guitars, bass and drums in straight eighths. Each block is a new riff.</span></button>
-      <button class="st" data-st="night" aria-pressed="false"><small>09</small><b>Late Night</b><span>Future soul: warm keys, wonky drums, a sliding sub and a lead that echoes.</span></button>
-      <button class="st" data-st="metro" aria-pressed="false"><small>10</small><b>Metronome</b><span>Tick, tock, quicker as the wait grows. A bell when the block lands.</span></button>
+      <button class="st" data-st="shortwave" aria-pressed="true"><small>01</small><b>Shortwave</b><span>A numbers station that reads each new block aloud.</span></button>
+      <button class="st" data-st="lofi" aria-pressed="false"><small>02</small><b>Lo-fi Sunday</b><span>Dusty piano, swung drums, tape wobble and vinyl crackle.</span></button>
+      <button class="st" data-st="nature" aria-pressed="false"><small>03</small><b>Nature</b><span>Rain from the mempool, wind while it waits, thunder on every block.</span></button>
+      <button class="st" data-st="beats" aria-pressed="false"><small>04</small><b>Beats</b><span>808 kicks and a pocket synth. Each block writes a new pattern.</span></button>
+      <button class="st" data-st="heart" aria-pressed="false"><small>05</small><b>Heart</b><span>A heartbeat that races while it waits and slows when a block lands.</span></button>
+      <button class="st" data-st="musicbox" aria-pressed="false"><small>06</small><b>Music box</b><span>Tines, and a ticking spring while it waits.</span></button>
+      <button class="st" data-st="deep" aria-pressed="false"><small>07</small><b>Deep</b><span>A low drone that swells with the wait.</span></button>
+      <button class="st" data-st="night" aria-pressed="false"><small>08</small><b>Late Night</b><span>Future soul: warm keys, wonky drums, a sliding sub and a lead that echoes.</span></button>
+      <button class="st" data-st="metro" aria-pressed="false"><small>09</small><b>Metronome</b><span>Tick, tock, quicker as the wait grows. A bell when the block lands.</span></button>
     </div>
   </section>
 
@@ -766,7 +765,7 @@ const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicb
 
 // ---------- the clock: live or tonight's replay ----------
 const $=id=>document.getElementById(id);
-let mode="live",speed=0.3,st="lofi",playing=false,curChord="Dmaj9",pad=null;
+let mode="live",speed=0.3,st="shortwave",playing=false,curChord="Dmaj9",pad=null;
 let chain=TONIGHT.slice(),lastIdx=-1,liveOk=null,mempoolCount=null,rStart=0,rVirt0=0;
 let nextBlip=0,nextGrain=0,timer=null,poll=null;
 function virtNow(){return mode==="live"?Date.now():rVirt0+(ctx.currentTime-rStart)/speed*60000}
