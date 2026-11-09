@@ -219,7 +219,7 @@ footer a:hover{color:var(--ink)}
 
   <section class="sec">
     <h2>A block's song</h2>
-    <p class="note">Every block has its own transmission: an interval signal drawn from its hash, then its number, read out. The same block always plays the same tune. Try a birthday, a halving (840000) or genesis (0).</p>
+    <p class="note">Every block has its own transmission: its number, read out, then a call sign drawn from its hash, sent in Morse. The same block always signs off the same way. Try a birthday, a halving (840000) or genesis (0).</p>
     <form class="inline" id="songForm">
       <input class="f" id="songHeight" inputmode="numeric" autocomplete="off" value="840000" aria-label="Block height" style="width:12ch">
       <button class="btn" type="submit">Play its song</button>
@@ -500,6 +500,17 @@ function intervalSignal(notes,t,reps){const v=radioVoice();const fade=ctx.create
       o.connect(g);g.connect(fade);g.gain.setValueAtTime(0,x);g.gain.linearRampToValueAtTime(pk,x+0.015);g.gain.setValueAtTime(pk,x+d-0.05);g.gain.linearRampToValueAtTime(0,x+d);o.start(x);o.stop(x+d+0.05)});
     x+=n.d*1.25})}
   return total}
+// Morse: each block signs off with a call sign drawn from its hash, keyed at 18 words a minute on a 700 Hz tone
+const MORSE={A:".-",B:"-...",C:"-.-.",D:"-..",E:".",F:"..-.",G:"--.",H:"....",I:"..",J:".---",K:"-.-",L:".-..",M:"--",N:"-.",O:"---",P:".--.",Q:"--.-",R:".-.",S:"...",T:"-",U:"..-",V:"...-",W:".--",X:"-..-",Y:"-.--",Z:"--..",
+  "0":"-----","1":".----","2":"..---","3":"...--","4":"....-","5":".....","6":"-....","7":"--...","8":"---..","9":"----."};
+function callSign(by){const L="ABCDEFGHIJKLMNOPQRSTUVWXYZ";return "BW"+(by[4]%10)+L[by[5]%26]+L[by[6]%26]}
+function morse(text,t,wpm=18){const dot=1.2/wpm;const o=ctx.createOscillator();o.frequency.value=700;const key=ctx.createGain();key.gain.value=0;
+  const bp=ctx.createBiquadFilter();bp.type="bandpass";bp.frequency.value=700;bp.Q.value=6;const fade=ctx.createGain();fade.gain.value=0.16;
+  o.connect(key);key.connect(bp);bp.connect(fade);fade.connect(bus);let x=t;
+  text.split("").forEach(ch=>{ if(ch===" "){x+=dot*4;return} (MORSE[ch]||"").split("").forEach(sym=>{const len=sym==="."?dot:dot*3;
+      key.gain.setValueAtTime(0,x);key.gain.linearRampToValueAtTime(1,x+0.005);key.gain.setValueAtTime(1,x+len-0.005);key.gain.linearRampToValueAtTime(0,x+len);x+=len+dot});x+=dot*2});
+  for(let k=0;k<=(x-t)/0.7;k++) fade.gain.setValueAtTime(0.1+0.07*Math.sin(k*1.3+t),t+k*0.7);   // a little fading on the line
+  o.start(t);o.stop(x+0.1);return x-t}
 let swBusy=0;
 function readNumber(height,t){
   for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);
@@ -741,7 +752,7 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){   // blocks faster than a transmission (fast replay): just the pips, so they never pile up
     if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return}
-    const d=intervalSignal(notes,t,1);readNumber(b.height,t+d+0.3);swBusy=t+d+0.3+1.3+String(b.height).length*0.62+0.8;return}
+    readNumber(b.height,t);const nEnd=t+1.3+String(b.height).length*0.62+0.55+0.5;const m=morse(callSign(by),nEnd);swBusy=nEnd+m+0.5;return}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
     if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
     else d=thunder(t,size,close);bolt(d);
@@ -934,21 +945,21 @@ $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b
   $("stName").textContent=b.querySelector("b").textContent;if(playing&&typeof presenceOn==="function")presenceOn();
   if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
 // a block's transmission, on Shortwave: static, three pips, the number read out, then its melody as tones on the same line
-function transmission(h,notes,ch,t){loadShots("voice");
-  const sig=(notes.reduce((a,n)=>a+n.d*1.25,0)+0.45)*2,dur=sig+0.4+1.3+String(h).length*0.62+0.55+1.2;
+function transmission(h,notes,ch,t,by){loadShots("voice");
+  const cs=callSign(by),dur=1.3+String(h).length*0.62+0.55+0.5+cs.length*2*0.75+2.5;
   const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.frequency.value=1400;f.Q.value=0.5;
   const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(playing?0:0.03,t+0.3);g.gain.setValueAtTime(playing?0:0.03,t+dur-0.8);g.gain.linearRampToValueAtTime(0,t+dur);
   s.connect(f);f.connect(g);g.connect(bus);s.start(t);s.stop(t+dur+0.1);
-  const go=T=>{const d=intervalSignal(notes,T,2);readNumber(h,T+d+0.4)};
+  const go=T=>{readNumber(h,T);morse(cs+" "+cs,T+1.3+String(h).length*0.62+0.55+0.5)};
   if(OBUF.voice&&Object.keys(OBUF.voice).length===10) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),900)}
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
   initAudio();if(ctx.state==="suspended")await ctx.resume();
   let hash=null;if(liveOk!==false){try{const r=await getJSON(API+"/block-height/"+h,4000);if(typeof r==="string"&&/^[0-9a-f]{64}$/.test(r.trim()))hash=r.trim()}catch(err){}}
   const by=await songBytes({height:h,hash}),ch=nextChord("Dmaj9",by),notes=motif(by,ch),t=ctx.currentTime+0.1;
-  if(st==="shortwave"){transmission(h,notes,ch,t)}
+  if(st==="shortwave"){transmission(h,notes,ch,t,by)}
   else{const p=makePad(ch,"sunday",t);p.tension(0.2,t);setTimeout(()=>p.stop(ctx.currentTime),4200);playBlock("sunday",{height:h},notes,t,by,ch,0.3)}
-  $("songNotes").textContent="Block "+fmt(h)+" · "+ch+" · "+notes.map(n=>NAMES[n.m%12]).join(" ")+(hash?"":" · stand-in hash")});
+  $("songNotes").textContent="Block "+fmt(h)+(st==="shortwave"?" · call sign "+callSign(by)+" · "+callSign(by).split("").map(c=>MORSE[c].replace(/\./g,"·").replace(/-/g,"–")).join(" "):" · "+ch+" · "+notes.map(n=>NAMES[n.m%12]).join(" "))+(hash?"":" · stand-in hash")});
 
 // ---------- keep it on the air: Lightning (LNURL-pay) and on-chain ----------
 let lnParams=null,invoice=null,payPoll=null;
