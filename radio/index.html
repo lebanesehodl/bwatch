@@ -437,8 +437,7 @@ function startBed(st){
   if(st==="shortwave"){chain(loopSrc(noise),[filt("bandpass",1400,0.5)],"hiss",0.025);
     const w=ctx.createOscillator();w.frequency.value=900;w.start();chain(w,[],"whistle",0.004);gains.whistleOsc=w}
   if(st==="nature"){
-    chain(loopSrc(noise),[filt("highpass",600,0.7),filt("lowpass",7000,0.7)],"rain",0.03);
-    chain(loopSrc(brown),[filt("lowpass",420,0.7)],"roof",0.05);
+    chain(loopSrc(brown),[filt("lowpass",300,0.7)],"roof",0.02);
     const wf=filt("bandpass",350,1.2);chain(loopSrc(noise),[wf],"wind",0.01);gains.windF=wf}
   if(st==="heart"){chain(loopSrc(brown),[filt("lowpass",180,0.8)],"rush",0.04)}
   if(st==="lofi"){chain(loopSrc(noise),[filt("bandpass",5000,0.4)],"hiss",0.006)}
@@ -450,7 +449,10 @@ function stopBed(){ if(!bed) return; const now=ctx.currentTime;
 function bedTick(ten,rain,now){ if(!bed) return; const G=bed.gains;
   if(bed.st==="shortwave"){G.hiss.gain.setTargetAtTime(0.02+0.05*ten,now,0.5);G.whistleOsc.frequency.setTargetAtTime(900+700*ten,now,2)}
   if(bed.st==="nature"){const r=Math.min(1,(rain-1)/10);
-    G.rain.gain.setTargetAtTime(0.012+0.06*r,now,1.5);G.roof.gain.setTargetAtTime(0.03+0.12*r,now,1.5);
+    if(RAIN)["light","steady","heavy"].forEach(k=>{if(RAIN[k]&&!G["rain_"+k])rainLayer(k)});
+    const w={light:Math.max(0,1-2*r),steady:1-Math.abs(2*r-1),heavy:Math.max(0,2*r-1)};
+    ["light","steady","heavy"].forEach(k=>{if(G["rain_"+k])G["rain_"+k].gain.setTargetAtTime(0.25+0.95*w[k],now,2)});
+    G.roof.gain.setTargetAtTime(0.01+0.04*r,now,1.5);
     G.wind.gain.setTargetAtTime(0.006+0.09*Math.pow(ten,1.4),now,1.2);G.windF.frequency.setTargetAtTime(260+260*Math.random()+200*ten,now,1.5)}
   if(bed.st==="heart"){const r=Math.min(1,(rain-1)/10);G.rush.gain.setTargetAtTime(0.02+0.05*r,now,1.5)}
 }
@@ -468,6 +470,61 @@ function thunder(t,size,close){
     s.start(at,Math.random()*2);s.stop(at+6)}
   return delay}
 
+// ---------- one-shot recordings: drums (VCSL, CC0) and the numbers-station voice ----------
+const ONESHOTS={drums:["hatC1","hatC2","hatSoft","hatO","snare","snareSoft","clap1","clap2","shaker","crash"],voice:["0","1","2","3","4","5","6","7","8","9"]};
+const OBUF={};
+function loadShots(dir){ if(OBUF[dir]||!ctx) return; OBUF[dir]={};
+  ONESHOTS[dir].forEach(async n=>{try{const r=await fetch("samples/"+dir+"/"+n+".mp3");if(r.ok)OBUF[dir][n]=await ctx.decodeAudioData(await r.arrayBuffer())}catch(e){}})}
+function shot(dir,n,t,gain,pan=0,dest,rate=1){const b=OBUF[dir]&&OBUF[dir][n];if(!b) return false;
+  const s=ctx.createBufferSource();s.buffer=b;s.playbackRate.value=rate;const g=ctx.createGain();g.gain.value=gain;s.connect(g);g.connect(panNode(pan,dest));s.start(t);return true}
+
+// ---------- the radio voice: digits read through a narrow, slightly broken speaker ----------
+let radioIn=null;
+function radioVoice(){ if(radioIn) return radioIn; const bp=ctx.createBiquadFilter();bp.type="bandpass";bp.frequency.value=1300;bp.Q.value=0.7;
+  const ws=ctx.createWaveShaper(),c=new Float32Array(512);for(let i=0;i<512;i++){const x=i/256-1;c[i]=Math.tanh(2.5*x)}ws.curve=c;
+  const hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=350;const g=ctx.createGain();g.gain.value=0.5;
+  bp.connect(ws);ws.connect(hp);hp.connect(g);g.connect(bus);return radioIn=bp}
+function readNumber(height,t){
+  for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);
+  const ds=String(height).split(""),h=Math.ceil(ds.length/2);
+  if(OBUF.voice&&Object.keys(OBUF.voice).length===10){let x=t+1.3;const v=radioVoice();
+    ds.forEach((d,i)=>{shot("voice",d,x,1,0,v);x+=0.62;if(i===h-1)x+=0.55});return}
+  const words=ds.map(d=>DIG[d]);
+  if(!speak(words.slice(0,h).join(" ")+". "+words.slice(h).join(" ")+".")) ds.forEach((d,i)=>tone("sine",600+80*Number(d),t+1.2+i*0.3,0.005,0.08,0.06))}
+
+// ---------- rain, drop by drop: bubbles and taps, rendered once into seamless loops ----------
+// A raindrop on water rings as a tiny bubble: a sine whose pitch rises as it dies away
+// (Minnaert resonance, after van den Doel's model). On hard ground it is a short tap.
+// Thousands of them make the wash; a few dozen close ones are the drops you can pick out.
+let RAIN=null,DROPS=null;
+function bubbleInto(L,R,len,sr,at,f0,amp,pan){
+  const d=0.043*f0+0.0014*Math.pow(f0,1.5),n=Math.min(Math.floor(sr*5/d),len),gl=amp*Math.sqrt(0.5*(1-pan)),gr=amp*Math.sqrt(0.5*(1+pan));
+  let ph=0;for(let i=0;i<n;i++){const tt=i/sr,f=f0*(1+0.1*d*tt);ph+=2*Math.PI*f/sr;const v=Math.sin(ph)*Math.exp(-d*tt);const k=(at+i)%len;L[k]+=v*gl;R[k]+=v*gr}}
+function tapInto(L,R,len,sr,at,amp,pan,bright){
+  const n=Math.floor(sr*0.004),gl=amp*Math.sqrt(0.5*(1-pan)),gr=amp*Math.sqrt(0.5*(1+pan));let lp=0;
+  for(let i=0;i<n;i++){const w=Math.random()*2-1;lp+=bright*(w-lp);const v=lp*Math.exp(-i/(sr*0.0008));const k=(at+i)%len;L[k]+=v*gl;R[k]+=v*gr}}
+function renderRain(perSec,secs){
+  const sr=ctx.sampleRate,len=Math.floor(sr*secs),buf=ctx.createBuffer(2,len,sr),L=buf.getChannelData(0),R=buf.getChannelData(1);
+  const n=Math.floor(perSec*secs);
+  for(let i=0;i<n;i++){const at=Math.floor(Math.random()*len),pan=Math.random()*2-1,far=Math.random();
+    if(Math.random()<0.35){const r=0.8+Math.random()*2.6;bubbleInto(L,R,len,sr,at,3200/r,0.05*Math.pow(r,0.8)*(0.25+0.75*far),pan)}
+    else tapInto(L,R,len,sr,at,0.12*(0.2+0.8*far)*Math.random(),pan,0.25+0.6*Math.random())}
+  // the wash of rain too far away to hear one by one: pink noise, soft on top
+  let b0=0,b1=0,b2=0,lpL=0,lpR=0;const wash=0.012+0.00002*perSec;
+  for(let i=0;i<len;i++){const w=Math.random()*2-1;b0=0.99765*b0+w*0.099;b1=0.963*b1+w*0.2965;b2=0.57*b2+w*1.0526;
+    const p=(b0+b1+b2+w*0.1848)*0.18;lpL+=0.25*(p-lpL);lpR+=0.25*((p*0.6+(Math.random()*2-1)*0.08)-lpR);L[i]+=lpL*wash;R[i]+=lpR*wash}
+  return buf}
+function prepareRain(){ if(RAIN||!ctx) return; RAIN={};
+  // rendered a layer at a time so the page never stalls
+  [["light",90],["steady",420],["heavy",1500]].forEach(([k,ps],i)=>setTimeout(()=>{RAIN[k]=renderRain(ps,7);if(bed&&bed.st==="nature")rainLayer(k)},60+i*120));
+  DROPS=[];for(let i=0;i<24;i++){const sr=ctx.sampleRate,len=Math.floor(sr*0.12),b=ctx.createBuffer(2,len,sr),L=b.getChannelData(0),R=b.getChannelData(1);
+    if(i<16){const r=1+Math.random()*3;bubbleInto(L,R,len,sr,0,3200/r,0.5,0)}else tapInto(L,R,len,sr,0,0.9,0,0.5);DROPS.push(b)}}
+function rainLayer(k){ if(!bed||bed.st!=="nature"||!RAIN[k]||bed.gains["rain_"+k]) return;
+  const s=ctx.createBufferSource();s.buffer=RAIN[k];s.loop=true;s.loopStart=0;s.loopEnd=RAIN[k].duration;
+  const g=ctx.createGain();g.gain.value=0;s.connect(g);g.connect(bus);s.start(ctx.currentTime,Math.random()*5);bed.nodes.push(s);bed.gains["rain_"+k]=g}
+function closeDrop(t,p){ if(!DROPS||!DROPS.length) return false;const s=ctx.createBufferSource();s.buffer=DROPS[Math.floor(Math.random()*DROPS.length)];
+  s.playbackRate.value=0.8+Math.random()*0.5;const g=ctx.createGain();g.gain.value=0.05+0.12*Math.random();s.connect(g);g.connect(panNode(p));s.start(t);return true}
+
 // ---------- beats: a 16-step machine, the pattern written by each block ----------
 let beat={step:0,next:0,kick:[],snare:[],ghost:[],open:-1,lead:[],bpm:88,fill:false,root:38};
 function writePattern(by,chord,tx){
@@ -480,8 +537,10 @@ function writePattern(by,chord,tx){
 function kick808(t,f){const o=ctx.createOscillator(),g=ctx.createGain(),ws=ctx.createWaveShaper();const c=new Float32Array(256);for(let i=0;i<256;i++){const x=i/128-1;c[i]=Math.tanh(2.2*x)}ws.curve=c;
   o.frequency.setValueAtTime(f*3.2,t);o.frequency.exponentialRampToValueAtTime(f,t+0.05);o.connect(ws);ws.connect(g);g.connect(dry());
   g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.55,t+0.004);g.gain.setTargetAtTime(0.0001,t+0.02,0.32);o.start(t);o.stop(t+2)}
-function snare(t,pk){burst(t,0.07,1900,0.8,pk,0.05,"bandpass");tone("triangle",185,t,0.002,pk*0.6,0.04,0.05)}
-function hat(t,open,pk){burst(t,open?0.18:0.025,8000,0.7,pk,0.25,"highpass")}
+function snare(t,pk){if(st==="beats"&&OBUF.drums&&OBUF.drums.snare){if(pk>0.15){shot("drums","snare",t,pk*2.6,0.05);shot("drums",Math.random()<0.5?"clap1":"clap2",t+0.004,pk*1.6,-0.1)}else shot("drums","snareSoft",t,pk*5,0.05);return}
+  burst(t,0.07,1900,0.8,pk,0.05,"bandpass");tone("triangle",185,t,0.002,pk*0.6,0.04,0.05)}
+function hat(t,open,pk){if(st==="beats"&&OBUF.drums&&OBUF.drums.hatC1){shot("drums",open?"hatO":(pk<0.05?"hatSoft":(Math.random()<0.5?"hatC1":"hatC2")),t,pk*(open?2.4:3.2),0.25,bus,0.97+Math.random()*0.06);return}
+  burst(t,open?0.18:0.025,8000,0.7,pk,0.25,"highpass")}
 function beatsTick(now,ten,rain){
   const sp=60/beat.bpm/4;if(beat.next<now) beat.next=now+0.05;
   while(beat.next<now+0.2){const s=beat.step%16,t=beat.next,bar=Math.floor(beat.step/16);
@@ -491,11 +550,12 @@ function beatsTick(now,ten,rain){
     if(fillBar&&s>=12) snare(t,0.07+0.04*(s-12));
     const sixteenths=ten>0.4||rain>6;
     if(s%2===0||sixteenths) hat(t,s===beat.open,(s%4===2?0.07:0.04)*(0.7+0.6*Math.min(1,rain/10)));
+    if(ten>0.5&&s%2===1) shot("drums","shaker",t,0.05+0.1*ten,-0.35);
     if(beat.lead.length&&beat.lead[0].step===beat.step){const n=beat.lead.shift();tone("square",mtof(n.m),t,0.004,0.045,0.12,(n.m-74)/16,bus)}
     beat.step++;beat.next+=sp}
 }
 function beatsBlock(t,notes,by,chord,tx){
-  writePattern(by,chord,tx);burst(t,0.9,6500,0.4,0.16,0,"highpass",bus);   // a crash on the one
+  writePattern(by,chord,tx);if(!shot("drums","crash",t,0.35,0.2))burst(t,0.9,6500,0.4,0.16,0,"highpass",bus);   // a crash on the one
   const s0=beat.step+((16-beat.step%16)%16);beat.lead=notes.map((n,i)=>({m:n.m,step:s0+i*2}))}
 
 // ---------- heart: a pulse that rises with the wait ----------
@@ -660,10 +720,7 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 
 // ---------- what each station does when a block lands ----------
 function playBlock(st,b,notes,t,by,chord,close){
-  if(st==="shortwave"){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);
-    const s=String(b.height).split("").map(d=>DIG[d]),h=Math.ceil(s.length/2);
-    if(!speak(s.slice(0,h).join(" ")+". "+s.slice(h).join(" ")+".")) String(b.height).split("").forEach((d,i)=>tone("sine",600+80*Number(d),t+1.2+i*0.3,0.005,0.08,0.06));
-    return}
+  if(st==="shortwave"){readNumber(b.height,t);return}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);const d=thunder(t,size,close);bolt(d);
     let x=t+d+2.5;notes.forEach(n=>{chime(mtof(n.m),x,0.03,(n.m-74)/14);x+=n.d*1.8});return}
   if(st==="beats"){beatsBlock(t,notes,by,chord,b.tx);return}
@@ -690,13 +747,12 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
   if(st==="musicbox") burst(t,0.002,7000,1,0.025*Math.random(),p);
   if(st==="deep") burst(t,0.006,700,1.5,0.06*Math.random(),p);
   if(st==="shortwave") burst(t,0.0015,2500,0.4,0.12*Math.random(),p,"highpass");
-  if(st==="nature"){ if(Math.random()<0.12){const f=900+Math.random()*900,o=ctx.createOscillator(),g=ctx.createGain();
-      o.frequency.setValueAtTime(f,t);o.frequency.exponentialRampToValueAtTime(f*0.55,t+0.05);o.connect(g);g.connect(panNode(p));env(g,t,0.001,0.03*Math.random(),0.02);o.start(t);o.stop(t+0.2)}
-    else burst(t,0.002,1500+Math.random()*4000,1.5,0.04*Math.random(),p)}
+  if(st==="nature"){ if(!closeDrop(t,p)) burst(t,0.002,1500+Math.random()*4000,1.5,0.04*Math.random(),p)}
 }
 const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2,deep:0.9,shortwave:1.3,downstroke:0.8};   // even out the stations
 function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
-function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano")}
+function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano");if(s==="beats")loadShots("drums");if(s==="nature")prepareRain();
+  if(s==="shortwave"){loadShots("voice");if(playing&&lastIdx>=0)setTimeout(()=>{if(playing&&st==="shortwave")readNumber(chain[lastIdx].height,ctx.currentTime+0.05)},1500)}}
 const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
 // ---------- the clock: live or tonight's replay ----------
