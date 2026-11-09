@@ -939,7 +939,7 @@ window.addEventListener("pagehide",()=>{if(playing)presenceOff()});
 
 // ---------- the watch: picture, and pre-orders through the site's list form ----------
 (function(){const onSite=/bwatch\.xyz$/.test(location.hostname),img=$("watchImg");
-  img.src=onSite?"/img/fig7-sand.jpg":"img/fig7-sand.jpg";img.onerror=()=>{img.closest("figure").hidden=true};
+  img.src="watch-sand.jpg";img.onerror=()=>{img.closest("figure").hidden=true};
   $("orderForm").addEventListener("submit",e=>{if(!onSite){e.preventDefault();$("orderStatus").textContent="Pre-orders go through on bwatch.xyz/radio. This preview doesn't send anything."}})})();
 window.addEventListener("resize",draw);
 document.fonts&&document.fonts.ready.then(draw);draw();
