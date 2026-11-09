@@ -192,9 +192,9 @@ footer a:hover{color:var(--ink)}
       <div class="row" id="speedRow" hidden>
         <div class="label">Speed of the replay</div>
         <div class="seg" id="speedSeg">
-          <button data-speed="0.3" aria-pressed="true">1 min = 0.3 s</button>
+          <button data-speed="0.3" aria-pressed="false">1 min = 0.3 s</button>
           <button data-speed="2" aria-pressed="false">1 min = 2 s</button>
-          <button data-speed="60" aria-pressed="false">Real time</button>
+          <button data-speed="60" aria-pressed="true">Real time</button>
         </div>
       </div>
       <p class="note" id="srcNote">The real chain, as it happens. The chord changes when the next block is found, which can take a while.</p>
@@ -793,7 +793,7 @@ const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicb
 
 // ---------- the clock: live or tonight's replay ----------
 const $=id=>document.getElementById(id);
-let mode="live",speed=0.3,st="shortwave",playing=false,curChord="Dmaj9",pad=null;
+let mode="live",speed=60,st="shortwave",playing=false,curChord="Dmaj9",pad=null;
 let chain=TONIGHT.slice(),lastIdx=-1,liveOk=null,mempoolCount=null,rStart=0,rVirt0=0;
 let nextBlip=0,nextGrain=0,timer=null,poll=null;
 function virtNow(){return mode==="live"?Date.now():rVirt0+(ctx.currentTime-rStart)/speed*60000}
