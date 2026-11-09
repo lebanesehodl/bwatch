@@ -136,7 +136,7 @@ footer a:hover{color:var(--ink)}
   <header>
     <div>
       <h1>BWATCH Radio</h1>
-      <div class="sub">Music for Blocks · harmony from blocks · weather from the mempool</div>
+      <div class="sub">Listen to Bitcoin.</div>
     </div>
     <a class="mark" href="https://bwatch.xyz/"><i>B</i>BWATCH</a>
   </header>
@@ -151,7 +151,7 @@ footer a:hover{color:var(--ink)}
     <div class="facts">
       <span><b id="tx">3,061</b> transactions</span>
       <span>chord <b id="chord">Dmaj9</b></span>
-      <span>station <b id="stName">Sunday</b></span>
+      <span>station <b id="stName">Lo-fi</b></span>
     </div>
     <div class="wait">
       <div class="wait-line"><span id="waitText">Press play to listen</span><span class="label" id="tensionPct"></span></div>
@@ -185,7 +185,7 @@ footer a:hover{color:var(--ink)}
   <section class="row">
     <div class="label">Station</div>
     <div class="stations" id="stations">
-      <button class="st" data-st="sunday" aria-pressed="true"><small>01</small><b>Sunday</b><span>Soft chords, bell melodies, a little rain. For a slow afternoon.</span></button>
+      <button class="st" data-st="lofi" aria-pressed="true"><small>01</small><b>Lo-fi</b><span>Dusty piano, swung drums, tape wobble and vinyl crackle.</span></button>
       <button class="st" data-st="nature" aria-pressed="false"><small>02</small><b>Nature</b><span>Rain from the mempool, wind while it waits, thunder on every block.</span></button>
       <button class="st" data-st="beats" aria-pressed="false"><small>03</small><b>Beats</b><span>808 kicks and a pocket synth. Each block writes a new pattern.</span></button>
       <button class="st" data-st="heart" aria-pressed="false"><small>04</small><b>Heart</b><span>A heartbeat that races while it waits and slows when a block lands.</span></button>
@@ -193,6 +193,8 @@ footer a:hover{color:var(--ink)}
       <button class="st" data-st="deep" aria-pressed="false"><small>06</small><b>Deep</b><span>A low drone that swells with the wait.</span></button>
       <button class="st" data-st="shortwave" aria-pressed="false"><small>07</small><b>Shortwave</b><span>A numbers station that reads each new block aloud.</span></button>
       <button class="st" data-st="downstroke" aria-pressed="false"><small>08</small><b>Downstroke</b><span>Two guitars, bass and drums in straight eighths. Each block is a new riff.</span></button>
+      <button class="st" data-st="night" aria-pressed="false"><small>09</small><b>Late Night</b><span>Future soul: warm keys, wonky drums, a sliding sub and a lead that echoes.</span></button>
+      <button class="st" data-st="metro" aria-pressed="false"><small>10</small><b>Metronome</b><span>Tick, tock, quicker as the wait grows. A bell when the block lands.</span></button>
     </div>
   </section>
 
@@ -364,6 +366,7 @@ function startBed(st){
     chain(loopSrc(brown),[filt("lowpass",420,0.7)],"roof",0.05);
     const wf=filt("bandpass",350,1.2);chain(loopSrc(noise),[wf],"wind",0.01);gains.windF=wf}
   if(st==="heart"){chain(loopSrc(brown),[filt("lowpass",180,0.8)],"rush",0.04)}
+  if(st==="lofi"){chain(loopSrc(noise),[filt("bandpass",5000,0.4)],"hiss",0.006)}
   bed={st,nodes,gains};
 }
 function stopBed(){ if(!bed) return; const now=ctx.currentTime;
@@ -486,6 +489,100 @@ function rockTick(now,ten,rain){
 function rockBlock(t,notes,by,chord,tx){writeRiff(by,chord,tx);burst(t,1.1,6000,0.4,0.18,0.3,"highpass",dry());
   const s0=rock.step+((8-rock.step%8)%8);rock.lead=notes.map((n,i)=>({m:n.m-12,step:s0+i}))}
 
+// ---------- real instruments: CC0 samples (Versilian Community Sample Library), loaded per station ----------
+const SAMPLES={upright:{notes:[],gain:3.2},fmpiano:{notes:[],gain:3.6}};
+for(let m=37;m<=97;m+=4) SAMPLES.upright.notes.push(m);
+for(let m=36;m<=96;m+=4) SAMPLES.fmpiano.notes.push(m);
+const SBUF={};
+function loadInst(name){ if(SBUF[name]||!ctx) return; SBUF[name]={};
+  SAMPLES[name].notes.forEach(async m=>{try{const r=await fetch("samples/"+name+"/"+m+".mp3");if(!r.ok)return;
+    SBUF[name][m]=await ctx.decodeAudioData(await r.arrayBuffer())}catch(e){}})}
+function sampleNote(name,m,t,peak,hold,dest,pan=0,wobble){
+  const set=SBUF[name];if(!set) return false;const ks=Object.keys(set).map(Number);if(!ks.length) return false;
+  let k=ks[0];ks.forEach(x=>{if(Math.abs(x-m)<Math.abs(k-m))k=x});
+  const s=ctx.createBufferSource();s.buffer=set[k];s.playbackRate.value=Math.pow(2,(m-k)/12);if(wobble) wobble.connect(s.detune);
+  const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(peak*SAMPLES[name].gain,t+0.004);
+  g.gain.setTargetAtTime(0,t+hold,0.25);s.connect(g);g.connect(panNode(pan,dest));s.start(t);s.stop(t+hold+2);return true}
+// the same note on a synth while the samples load (or if they can't)
+function epiano(m,t,peak,hold,dest,pan=0){const f=mtof(m),c=ctx.createOscillator(),md=ctx.createOscillator(),mg=ctx.createGain(),g=ctx.createGain();
+  c.frequency.value=f;md.frequency.value=f;mg.gain.setValueAtTime(f*1.4,t);mg.gain.setTargetAtTime(f*0.3,t,0.15);md.connect(mg);mg.connect(c.frequency);
+  c.connect(g);g.connect(panNode(pan,dest));g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(peak,t+0.005);g.gain.setTargetAtTime(peak*0.4,t+0.01,0.4);
+  g.gain.setTargetAtTime(0,t+hold,0.2);c.start(t);md.start(t);c.stop(t+hold+1.5);md.stop(t+hold+1.5)}
+const keyNote=(inst,m,t,pk,hold,dest,pan,wob)=>sampleNote(inst,m,t,pk,hold,dest,pan,wob)||epiano(m,t,pk*0.5,hold,dest,pan);
+function voicing(chord,lo,hi){return CH[chord][1].map(m=>{while(m<lo)m+=12;while(m>hi)m-=12;return m}).sort((a,b)=>a-b)}
+
+// ---------- lo-fi: dusty piano, swung drums, tape and vinyl ----------
+let lofi={step:0,next:0,bpm:76,kick:[],ghost:[],comp:-1,lead:[],bus:null,lp:null,wob:null};
+function lofiGraph(){ if(lofi.bus) return; const b=ctx.createGain();b.gain.value=1;const ws=ctx.createWaveShaper();const c=new Float32Array(512);
+  for(let i=0;i<512;i++){const x=i/256-1;c[i]=Math.tanh(1.6*x)/Math.tanh(1.6)}ws.curve=c;const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=3200;lp.Q.value=0.5;
+  const hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=55;b.connect(ws);ws.connect(lp);lp.connect(hp);hp.connect(out);
+  const send=ctx.createGain();send.gain.value=0.25;hp.connect(send);send.connect(bus);
+  const w1=ctx.createOscillator(),w2=ctx.createOscillator(),wg=ctx.createGain();w1.frequency.value=0.55;w2.frequency.value=6.5;
+  const g1=ctx.createGain(),g2=ctx.createGain();g1.gain.value=9;g2.gain.value=2.5;w1.connect(g1);w2.connect(g2);g1.connect(wg);g2.connect(wg);w1.start();w2.start();
+  lofi.bus=b;lofi.lp=lp;lofi.wob=wg}
+function writeLofi(by,chord,tx){const k=new Array(16).fill(false);k[0]=true;k[10]=true;if(by[24]&1)k[7]=true;if(by[24]&2)k[11]=false,k[9]=true;if(by[24]&4)k[15]=true;
+  lofi.kick=k;lofi.ghost=[...Array(16)].map((_,i)=>i%2===1&&((by[25]>>(i%8))&1)===1);lofi.comp=(by[26]&1)?6:10;lofi.bpm=Math.round(72+10*Math.min(1,(tx||3000)/8000))}
+function lofiTick(now,ten,rain){lofiGraph();lofi.lp.frequency.setTargetAtTime(2600+3000*ten,now,1);
+  const sp=60/lofi.bpm/4;if(lofi.next<now) lofi.next=now+0.05;
+  while(lofi.next<now+0.25){const s=lofi.step%16,sw=(s%2===1)?sp*0.22:0,t=lofi.next+sw+(Math.random()-0.5)*0.008,B=lofi.bus;
+    if(lofi.kick[s]){thump(t,0.55,0.12,105,48,B);const r=CH[curChord][0];let m=r;while(m<36)m+=12;while(m>47)m-=12;tone("sine",mtof(m),t,0.01,0.22,0.25,0,B)}
+    if(s===4||s===12){burst(t,0.13,1700,0.7,0.2,0.05,"bandpass",B);tone("triangle",190,t,0.002,0.08,0.05,0,B)}
+    if(s%2===0) burst(t,0.02,8500,0.6,0.035+0.015*Math.random(),0.3,"highpass",B);
+    else if(lofi.ghost[s]||ten>0.45) burst(t,0.015,9000,0.6,0.018,0.3,"highpass",B);
+    if(s===0||s===lofi.comp){const v=voicing(curChord,52,74);v.forEach((m,i)=>keyNote("upright",m,t+i*0.022,s===0?0.22:0.14,s===0?2.4:0.9,B,(i-1.5)*0.15,lofi.wob))}
+    if(lofi.lead.length&&lofi.lead[0].step===lofi.step){const n=lofi.lead.shift();keyNote("upright",n.m+12*0,t,0.26,0.8,B,0.2,lofi.wob)}
+    lofi.step++;lofi.next+=sp}}
+function lofiBlock(t,notes,by,chord,tx){writeLofi(by,chord,tx);const s0=lofi.step+((16-lofi.step%16)%16);
+  let s=s0;lofi.lead=notes.map(n=>{const st={m:n.m,step:s};s+=Math.max(1,Math.round(n.d/0.16));return st})}
+
+// ---------- late night: future soul, wonky drums, sliding sub, a lead with a delay ----------
+let night={step:0,next:0,bpm:88,kick:[],late:[],vox:[],lead:[],duck:null,sub:null,subG:null,dl:null,hatNext:0};
+function nightGraph(){ if(night.duck) return; const d=ctx.createGain();d.connect(bus);night.duck=d;
+  const dl=ctx.createDelay(2),fb=ctx.createGain(),lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=2600;fb.gain.value=0.38;
+  dl.connect(lp);lp.connect(fb);fb.connect(dl);const wet=ctx.createGain();wet.gain.value=0.35;lp.connect(wet);wet.connect(bus);night.dl=dl}
+function writeNight(by,chord,tx){const k=new Array(16).fill(false);k[0]=true;if(by[27]&1)k[3]=true;if(by[27]&2)k[6]=true;k[10]=!(by[27]&4);if(by[27]&8)k[11]=true;if(by[27]&16)k[14]=true;
+  night.kick=k;night.late=[...Array(16)].map((_,i)=>((by[28]>>(i%8))&1)?0.018:0);night.vox=[...Array(16)].map((_,i)=>(i===6||i===14||i===3)&&((by[29]>>(i%8))&1)===1);
+  night.bpm=Math.round(84+10*Math.min(1,(tx||3000)/8000))}
+function subNote(m,t){ if(!night.sub){const o=ctx.createOscillator(),g=ctx.createGain(),ws=ctx.createWaveShaper(),c=new Float32Array(256);
+    for(let i=0;i<256;i++){const x=i/128-1;c[i]=Math.tanh(1.8*x)}ws.curve=c;o.connect(ws);ws.connect(g);g.connect(out);g.gain.value=0;o.start();night.sub=o;night.subG=g}
+  night.sub.frequency.setTargetAtTime(mtof(m),t,0.03);night.subG.gain.cancelScheduledValues(t);night.subG.gain.setTargetAtTime(0.34,t,0.005);night.subG.gain.setTargetAtTime(0,t+0.35,0.2)}
+function clap(t){for(let i=0;i<3;i++) burst(t+i*0.009,0.03+i*0.02,1250,0.9,0.12,0,"bandpass",bus)}
+function vox(m,t,pan){const o=ctx.createOscillator();o.type="sawtooth";o.frequency.value=mtof(m);const g=ctx.createGain();
+  [[720,6,1],[1180,7,0.6],[2550,8,0.25]].forEach(([f,q,l])=>{const b=ctx.createBiquadFilter();b.type="bandpass";b.frequency.value=f;b.Q.value=q;const bg=ctx.createGain();bg.gain.value=l;o.connect(b);b.connect(bg);bg.connect(g)});
+  g.connect(panNode(pan,night.duck));env(g,t,0.01,0.22,0.07);o.start(t);o.stop(t+0.6)}
+function leadNote(m,t,dur,prev){const o=ctx.createOscillator(),o2=ctx.createOscillator();o.type=o2.type="sawtooth";o2.detune.value=9;
+  o.frequency.setValueAtTime(mtof(prev!=null?prev:m-1),t);o.frequency.setTargetAtTime(mtof(m),t,0.035);o2.frequency.setValueAtTime(mtof(prev!=null?prev:m-1),t);o2.frequency.setTargetAtTime(mtof(m),t,0.035);
+  const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.setValueAtTime(4200,t);lp.frequency.setTargetAtTime(1500,t,0.2);const g=ctx.createGain();
+  o.connect(lp);o2.connect(lp);lp.connect(g);g.connect(bus);g.connect(night.dl);g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.055,t+0.01);g.gain.setTargetAtTime(0,t+dur,0.08);
+  o.start(t);o2.start(t);o.stop(t+dur+0.6);o2.stop(t+dur+0.6)}
+function nightTick(now,ten,rain){nightGraph();const sp=60/night.bpm/4;night.dl.delayTime.value=sp*3;
+  if(night.next<now) night.next=now+0.05;
+  while(night.next<now+0.25){const s=night.step%16,t=night.next;
+    if(night.kick[s]){const tk=t+night.late[s];kick808(tk,mtof(Math.max(33,Math.min(45,CH[curChord][0]))));
+      night.duck.gain.cancelScheduledValues(tk);night.duck.gain.setValueAtTime(0.35,tk);night.duck.gain.setTargetAtTime(1,tk+0.02,0.12);
+      let m=CH[curChord][0];while(m<33)m+=12;while(m>45)m-=12;subNote(m+(s===14?7:0),tk)}
+    if(s===4||s===12) clap(t+0.006);
+    if(s===0||s===7){voicing(curChord,55,77).forEach((m,i)=>keyNote("fmpiano",m,t+i*0.012,s===0?0.2:0.13,s===0?1.6:0.5,night.duck,(i-1.5)*0.25))}
+    if(night.vox[s]){const v=voicing(curChord,62,79);vox(v[(night.step>>4)%v.length],t,s<8?-0.5:0.5)}
+    if(night.lead.length&&night.lead[0].step===night.step){const n=night.lead.shift();leadNote(n.m+12,t,n.d*0.9,n.prev!=null?n.prev+12:null)}
+    night.step++;night.next+=sp}
+  // hats on a triplet grid: eighths, with rolls that grow with the wait
+  const tp=60/night.bpm/6;if(night.hatNext<now) night.hatNext=now+0.05;
+  while(night.hatNext<now+0.25){const i=Math.round(night.hatNext/tp)%6,roll=Math.random()<0.08+0.5*ten;
+    if(i%3===0) burst(night.hatNext,0.02,9000,0.6,0.05,0.35,"highpass",bus); else if(roll) burst(night.hatNext,0.012,9500,0.6,0.025,0.35,"highpass",bus);
+    night.hatNext+=tp}}
+function nightBlock(t,notes,by,chord,tx){writeNight(by,chord,tx);burst(t,1.4,5000,0.3,0.1,0,"highpass",bus);
+  const s0=night.step+((16-night.step%16)%16);let s=s0,prev=null;night.lead=notes.map(n=>{const st={m:n.m,step:s,d:Math.max(0.15,n.d),prev};prev=n.m;s+=Math.max(1,Math.round(n.d/0.16));return st})}
+
+// ---------- metronome: tick, tock, and a bell when a block lands ----------
+let metro={next:0,n:0};
+function wood(t,f,pk){tone("sine",f,t,0.001,pk,0.025,0,out);burst(t,0.006,f*1.5,3,pk*0.6,0,"bandpass",out)}
+function metroTick(now,ten){ if(metro.next<now) metro.next=now+0.1;
+  while(metro.next<now+0.3){wood(metro.next,metro.n%2?1250:1650,0.3);metro.n++;metro.next+=60/(60+36*ten)}}
+function metroBlock(t,notes){fmBell(mtof(88),t,0.16,1.6,3.5,2.2,0);fmBell(mtof(81),t+0.02,0.08,1.4,3.5,1.6,0);
+  let x=t+1.4;notes.forEach(n=>{chime(mtof(n.m+12),x,0.025,(n.m-74)/14);x+=n.d*1.5});metro.n=0}
+writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9",3000);
+
 // ---------- what each station does when a block lands ----------
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);
@@ -496,6 +593,9 @@ function playBlock(st,b,notes,t,by,chord,close){
     let x=t+d+2.5;notes.forEach(n=>{chime(mtof(n.m),x,0.03,(n.m-74)/14);x+=n.d*1.8});return}
   if(st==="beats"){beatsBlock(t,notes,by,chord,b.tx);return}
   if(st==="downstroke"){rockBlock(t,notes,by,chord,b.tx);return}
+  if(st==="lofi"){lofiBlock(t,notes,by,chord,b.tx);return}
+  if(st==="night"){nightBlock(t,notes,by,chord,b.tx);return}
+  if(st==="metro"){metroBlock(t,notes);return}
   if(st==="heart"){breath(t);let x=t+1.2;notes.forEach(n=>{const o=tone("sine",mtof(n.m-12),x,0.08,0.06,0.5,(n.m-74)/18);x+=n.d*1.3});return}
   if(st==="deep"){thump(t,0.7,0.6);let x=t+0.5;notes.forEach(n=>{fmBell(mtof(n.m-12),x,0.09,1.6,1.5,1.2,(n.m-74)/18);x+=n.d*1.6});return}
   if(st==="musicbox"){CH[chord][1].forEach((m,i)=>tine(mtof(m+24),t+i*0.07,0.05));
@@ -511,6 +611,7 @@ function blip(st,ten,t){
 }
 function grain(st,t){const p=Math.random()*1.8-0.9;
   if(st==="sunday") burst(t,0.003,3500,1,0.05*Math.random()+0.01,p);
+  if(st==="lofi"){burst(t,0.0015,3000,0.5,0.06*Math.random(),p,"highpass",lofi.bus||bus);if(Math.random()<0.5)burst(t,0.003,3200,1,0.03*Math.random(),p)}
   if(st==="musicbox") burst(t,0.002,7000,1,0.025*Math.random(),p);
   if(st==="deep") burst(t,0.006,700,1.5,0.06*Math.random(),p);
   if(st==="shortwave") burst(t,0.0015,2500,0.4,0.12*Math.random(),p,"highpass");
@@ -518,13 +619,14 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
       o.frequency.setValueAtTime(f,t);o.frequency.exponentialRampToValueAtTime(f*0.55,t+0.05);o.connect(g);g.connect(panNode(p));env(g,t,0.001,0.03*Math.random(),0.02);o.start(t);o.stop(t+0.2)}
     else burst(t,0.002,1500+Math.random()*4000,1.5,0.04*Math.random(),p)}
 }
-const TRIM={sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2.2,deep:1.25,shortwave:1.3,downstroke:0.8};   // even out the stations
+const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2,deep:0.9,shortwave:1.3,downstroke:0.8};   // even out the stations
 function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
-const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
+function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano")}
+const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
 // ---------- the clock: live or tonight's replay ----------
 const $=id=>document.getElementById(id);
-let mode="live",speed=0.3,st="sunday",playing=false,curChord="Dmaj9",pad=null;
+let mode="live",speed=0.3,st="lofi",playing=false,curChord="Dmaj9",pad=null;
 let chain=TONIGHT.slice(),lastIdx=-1,liveOk=null,mempoolCount=null,rStart=0,rVirt0=0;
 let nextBlip=0,nextGrain=0,timer=null,poll=null;
 function virtNow(){return mode==="live"?Date.now():rVirt0+(ctx.currentTime-rStart)/speed*60000}
@@ -556,6 +658,9 @@ function tick(){
   bedTick(ten,rain,now);
   if(st==="beats") beatsTick(now,ten,rain);
   if(st==="heart") heartTick(now,ten);
+  if(st==="lofi") lofiTick(now,ten,rain);
+  if(st==="night") nightTick(now,ten,rain);
+  if(st==="metro") metroTick(now,ten);
   if(st==="downstroke") rockTick(now,ten,rain);
   if(nextBlip<now) nextBlip=now+0.05;
   while(nextBlip<now+0.25){if(USES_PULSE[st]&&lastIdx>=0&&ten>0.12) blip(st,ten,nextBlip);nextBlip+=1/(0.35+2.4*ten)}
@@ -573,7 +678,7 @@ async function liveStart(){
   try{const arr=await getJSON(API+"/v1/blocks");
     chain=arr.slice().reverse().map(b=>({height:b.height,time:b.timestamp*1000,tx:b.tx_count,hash:b.id}));
     liveOk=true;curChord="Dmaj9";
-    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx)}}
+    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
     try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}
     return true}catch(e){liveOk=false;return false}}
 function livePoll(){clearInterval(poll);poll=setInterval(async()=>{
@@ -613,7 +718,7 @@ async function start(){
   if(!playing) return;
   if(mode==="live"){lastIdx=chain.length-1;showBlock(chain[lastIdx]);$("src").innerHTML="<b>● Live</b> · mempool.space";livePoll()}
   else{chain=TONIGHT.slice();lastIdx=-1;curChord="Dmaj9";rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent="Tonight · recorded blocks"}
-  pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);trim();
+  pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);trim();loadFor(st);
   clearInterval(timer);timer=setInterval(tick,100);tick()}
 function stop(){
   playing=false;clearInterval(timer);clearInterval(poll);
@@ -628,7 +733,7 @@ $("speedSeg").addEventListener("click",e=>{const b=e.target.closest("button");if
   const v=ctx&&playing?virtNow():0;speed=Number(b.dataset.speed);if(playing&&mode==="replay"){rVirt0=v;rStart=ctx.currentTime}});
 $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b)return;press($("stations"),b);st=b.dataset.st;
   $("stName").textContent=b.querySelector("b").textContent;
-  if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();beat.next=heart.next=rock.next=0}});
+  if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
   initAudio();if(ctx.state==="suspended")await ctx.resume();
