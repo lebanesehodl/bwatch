@@ -219,7 +219,7 @@ footer a:hover{color:var(--ink)}
 
   <section class="sec">
     <h2>A block's song</h2>
-    <p class="note">Every block has a short melody drawn from its hash, so the same block always plays the same tune. Try a birthday, a halving (840000) or genesis (0).</p>
+    <p class="note">Every block has its own transmission: its number, read out, and a short melody drawn from its hash, so the same block always plays the same tune. Try a birthday, a halving (840000) or genesis (0).</p>
     <form class="inline" id="songForm">
       <input class="f" id="songHeight" inputmode="numeric" autocomplete="off" value="840000" aria-label="Block height" style="width:12ch">
       <button class="btn" type="submit">Play its song</button>
@@ -919,13 +919,22 @@ $("speedSeg").addEventListener("click",e=>{const b=e.target.closest("button");if
 $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b)return;press($("stations"),b);st=b.dataset.st;
   $("stName").textContent=b.querySelector("b").textContent;if(playing&&typeof presenceOn==="function")presenceOn();
   if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
+// a block's transmission, on Shortwave: static, three pips, the number read out, then its melody as tones on the same line
+function transmission(h,notes,ch,t){loadShots("voice");
+  const dur=1.3+String(h).length*0.62+0.55+0.6+notes.reduce((a,n)=>a+n.d*1.4,0)+1.2;
+  const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.frequency.value=1400;f.Q.value=0.5;
+  const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(playing?0:0.03,t+0.3);g.gain.setValueAtTime(playing?0:0.03,t+dur-0.8);g.gain.linearRampToValueAtTime(0,t+dur);
+  s.connect(f);f.connect(g);g.connect(bus);s.start(t);s.stop(t+dur+0.1);
+  const go=T=>{readNumber(h,T);let x=T+1.3+String(h).length*0.62+0.55+0.6;const v=radioVoice();
+    notes.forEach(n=>{tone("sine",mtof(n.m),x,0.01,0.09,n.d*0.45,0,v);x+=n.d*1.4})};
+  if(OBUF.voice&&Object.keys(OBUF.voice).length===10) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),900)}
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
   initAudio();if(ctx.state==="suspended")await ctx.resume();
   let hash=null;if(liveOk!==false){try{const r=await getJSON(API+"/block-height/"+h,4000);if(typeof r==="string"&&/^[0-9a-f]{64}$/.test(r.trim()))hash=r.trim()}catch(err){}}
   const by=await songBytes({height:h,hash}),ch=nextChord("Dmaj9",by),notes=motif(by,ch),t=ctx.currentTime+0.1;
-  const p=makePad(ch,"sunday",t);p.tension(0.2,t);setTimeout(()=>p.stop(ctx.currentTime),4200);
-  playBlock("sunday",{height:h},notes,t,by,ch,0.3);
+  if(st==="shortwave"){transmission(h,notes,ch,t)}
+  else{const p=makePad(ch,"sunday",t);p.tension(0.2,t);setTimeout(()=>p.stop(ctx.currentTime),4200);playBlock("sunday",{height:h},notes,t,by,ch,0.3)}
   $("songNotes").textContent="Block "+fmt(h)+" · "+ch+" · "+notes.map(n=>NAMES[n.m%12]).join(" ")+(hash?"":" · stand-in hash")});
 
 // ---------- keep it on the air: Lightning (LNURL-pay) and on-chain ----------
