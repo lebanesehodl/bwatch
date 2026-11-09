@@ -201,18 +201,19 @@ footer a:hover{color:var(--ink)}
     </div>
   </section>
 
-  <section class="row">
+  <!-- Stations: only Shortwave is on air for now. The others stay built (remove "hidden" to bring one back, and the chooser with it). -->
+  <section class="row" hidden>
     <div class="label">Station</div>
     <div class="stations" id="stations">
       <button class="st" data-st="shortwave" aria-pressed="true"><small>01</small><b>Shortwave</b><span>A numbers station that reads each new block aloud.</span></button>
-      <button class="st" data-st="lofi" aria-pressed="false"><small>02</small><b>Lo-fi Sunday</b><span>Dusty piano, swung drums, tape wobble and vinyl crackle.</span></button>
-      <button class="st" data-st="night" aria-pressed="false"><small>03</small><b>Late Night</b><span>Future soul: warm keys, wonky drums, a sliding sub and a lead that echoes.</span></button>
-      <button class="st" data-st="nature" aria-pressed="false"><small>04</small><b>Nature</b><span>Rain from the mempool, wind while it waits, thunder on every block.</span></button>
-      <button class="st" data-st="heart" aria-pressed="false"><small>05</small><b>Heart</b><span>A heartbeat that races while it waits and slows when a block lands.</span></button>
-      <button class="st" data-st="musicbox" aria-pressed="false"><small>06</small><b>Music box</b><span>Tines, and a ticking spring while it waits.</span></button>
-      <button class="st" data-st="deep" aria-pressed="false"><small>07</small><b>Deep</b><span>A low drone that swells with the wait.</span></button>
-      <button class="st" data-st="beats" aria-pressed="false"><small>08</small><b>Beats</b><span>808 kicks and a pocket synth. Each block writes a new pattern.</span></button>
-      <button class="st" data-st="metro" aria-pressed="false"><small>09</small><b>Metronome</b><span>Tick, tock, quicker as the wait grows. A bell when the block lands.</span></button>
+      <button class="st" data-st="lofi" aria-pressed="false" hidden><small>02</small><b>Lo-fi Sunday</b><span>Dusty piano, swung drums, tape wobble and vinyl crackle.</span></button>
+      <button class="st" data-st="night" aria-pressed="false" hidden><small>03</small><b>Late Night</b><span>Future soul: warm keys, wonky drums, a sliding sub and a lead that echoes.</span></button>
+      <button class="st" data-st="nature" aria-pressed="false" hidden><small>04</small><b>Nature</b><span>Rain from the mempool, wind while it waits, thunder on every block.</span></button>
+      <button class="st" data-st="heart" aria-pressed="false" hidden><small>05</small><b>Heart</b><span>A heartbeat that races while it waits and slows when a block lands.</span></button>
+      <button class="st" data-st="musicbox" aria-pressed="false" hidden><small>06</small><b>Music box</b><span>Tines, and a ticking spring while it waits.</span></button>
+      <button class="st" data-st="deep" aria-pressed="false" hidden><small>07</small><b>Deep</b><span>A low drone that swells with the wait.</span></button>
+      <button class="st" data-st="beats" aria-pressed="false" hidden><small>08</small><b>Beats</b><span>808 kicks and a pocket synth. Each block writes a new pattern.</span></button>
+      <button class="st" data-st="metro" aria-pressed="false" hidden><small>09</small><b>Metronome</b><span>Tick, tock, quicker as the wait grows. A bell when the block lands.</span></button>
     </div>
   </section>
 
@@ -294,10 +295,10 @@ footer a:hover{color:var(--ink)}
   <section class="sec">
     <h2>How it plays</h2>
     <div class="map">
-      <div><b>Blocks → harmony</b><p>The chord changes only when a block is found. The block's hash picks the next chord from a written progression and plays the block's melody.</p></div>
-      <div><b>The wait → tension</b><p>A block takes ten minutes on average but can take forty. While none comes, the sound opens and the pulse quickens. The next block releases it.</p></div>
-      <div><b>Memory → melody</b><p>While it waits, the music walks back through the last eight blocks' chords and sings their melodies again, varied. The longer the wait, the further back it goes. The next block brings it home.</p></div>
-      <div><b>Mempool → weather</b><p>Transactions waiting to be mined fall as rain. A busy mempool is a downpour; a quiet one, a few drops.</p></div>
+      <div><b>Blocks → numbers</b><p>Each new block is announced the way a numbers station would: three pips, then its height, read in two groups.</p></div>
+      <div><b>Hashes → chords</b><p>Under the static, a faint organ holds the chord the block's hash picked. While it waits, it drifts back through the last eight blocks' chords.</p></div>
+      <div><b>The wait → static</b><p>A block takes ten minutes on average but can take forty. The longer none comes, the louder the hiss and the higher the whistle drifts.</p></div>
+      <div><b>Mempool → crackle</b><p>Transactions waiting to be mined crackle on the line. A busy mempool is a storm of static.</p></div>
     </div>
     <p class="note">No prices anywhere in the music. Blocks and transactions only.</p>
   </section>
