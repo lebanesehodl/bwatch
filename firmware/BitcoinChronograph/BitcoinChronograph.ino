@@ -444,7 +444,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0152
+#define RTC_LAYOUT_MAGIC 0xB17C0153
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -676,6 +676,7 @@ enum { TEMP_OK = 0, TEMP_HOT = 1, TEMP_COLD = 2 };
 RTC_DATA_ATTR int8_t   caseTempC       = 99;    // last reading (99: none yet)
 RTC_DATA_ATTR uint8_t  tempMode        = TEMP_OK;
 RTC_DATA_ATTR uint8_t  coldLowVolt     = 0;     // cold: low readings in a row
+RTC_DATA_ATTR uint32_t realFullWake    = 0;     // wakeMin of the last real full
 RTC_DATA_ATTR bool     fiatAsk         = false; // fetch the FIAT data at the next
                                                 // chance: after a boot, or a FIAT
                                                 // face just turned on
@@ -2029,6 +2030,11 @@ public:
       if (darkNow() != paintedDark) {
         Serial.printf("[rest] theme now %s\n", darkNow() ? "dark" : "light");
         drawRestFace(); displayFull();     // full: the whole panel flips
+      } else if (restState == REST_NIGHT && realFullDue()) {
+        // the night's real full: a day of quick fulls leaves the panel's
+        // charge to be cleared, and nobody is in the sun now
+        Serial.println("[rest] night: real full");
+        drawRestFace(); displayFull();
       } else if (hoursLeft() != restHrsShown) {
         // the hours-left figure moved (every couple of hours): a resting
         // watch otherwise never redraws, and a stale "~1D" is the kind of
@@ -6461,7 +6467,7 @@ public:
     fiM2Yoy = 0; fiCpiYoy = 0; fiBskWake = 0; fiatAsk = false; fiM2Date = 0;
     for (int k = 0; k < 4; k++) fiM2Halv[k] = 0;
     fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
-    caseTempC = 99; tempMode = TEMP_OK; coldLowVolt = 0;
+    caseTempC = 99; tempMode = TEMP_OK; coldLowVolt = 0; realFullWake = 0;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
@@ -6772,9 +6778,49 @@ public:
     restExitFull = true;               // the face that follows: full
     facePartials = 0;
   }
+  // QUICK FULL (labs 5-7, Nov 8). Under strong light (sun, a phone LED held
+  // close) every full refresh fades the screen about a second after it ends,
+  // however it ends; quick updates do not, even ones that redraw the whole
+  // card. The full's long waveform is what light breaks. So a light image
+  // goes up by two quick updates: its inverse, then itself. Every pixel is
+  // driven (twice), by the short waveform only. Lab 7: no fade under the
+  // LED; indoors no grey after a black card (X3), no ghosts after ten (X4).
+  // The voltage stays on after it, as after every partial.
+  //
+  // A REAL full is still sent: for dark images (dark theme, black cards and
+  // screens: untested as quick fulls, and quick updates are what greyed
+  // black in October), in COLD (sluggish ink needs the long waveform), and
+  // once a night to clear what a day of quick updates leaves (realFullDue).
+  void quickFull() {
+    uint8_t *b = display.*epdGet(EpdBufTag());
+    const int n = (WatchyDisplay::WIDTH / 8) * WatchyDisplay::HEIGHT;
+    for (int i = 0; i < n; i++) b[i] ^= 0xFF;
+    display.display(true);
+    for (int i = 0; i < n; i++) b[i] ^= 0xFF;
+    display.display(true);
+  }
+  // A real full once a night: the first full after 18 h without one that
+  // lands in the wearer's night (or 00-05 with no night set), or anywhere
+  // after 36 h. The night rest asks for it on its hourly wakes.
+  bool realFullDue() {
+    uint32_t since = wakeMin - realFullWake;
+    if (since >= 36 * 60) return true;
+    if (since < 18 * 60) return false;
+    return nightOn() ? inNightWindow() : localMinuteOfDay() < 5 * 60;
+  }
   void displayFull() {
     bool now = frameDark();
     bool was = glass < 0 ? paintedAtStart : glass == 1;
+    if (!now && tempMode != TEMP_COLD && !realFullDue()) {
+      epdLog("QUICK FULL (inverse, then image)");
+      quickFull();
+      epdLog("QUICK FULL done");
+      justFull = true;
+      glass = 0;
+      if (facePartials == FACE_SETTLE) facePartials = 0;  // nothing to settle
+      return;
+    }
+    realFullWake = wakeMin;
     epdLog("FULL start");
     sendFull();
     if (was && !now) {                 // black to white: settle it
