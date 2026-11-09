@@ -123,8 +123,23 @@ details summary{cursor:pointer;font:500 13px/1.4 var(--mono);color:var(--dim);te
 details[open] summary{margin-bottom:10px}
 .addr{font:500 13px/1.5 var(--mono);word-break:break-all}
 
+
+/* the watch */
+.watch{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:24px;align-items:start}
+@media (max-width:700px){.watch{grid-template-columns:1fr}.watch figure{aspect-ratio:1/1}}
+.watch figure{margin:0;background:var(--panel);border:1px solid var(--line);aspect-ratio:4/5;overflow:hidden;max-width:100%}
+.watch figure img{width:100%;height:100%;object-fit:cover;display:block}
+.watch .col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.eds{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--line)}
+.ed{display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.ed input{accent-color:var(--accent);margin:0}
+.ed b{font:600 15px/1.2 var(--display);text-transform:uppercase;letter-spacing:.03em}
+.ed .price{font:500 14px/1 var(--mono);white-space:nowrap}
+.ed small{grid-column:2/4;font:400 12px/1.5 var(--mono);color:var(--dim)}
+.ed .left{color:var(--accent-text)}
+
 /* how it works */
-.map{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.map{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px}
 @media (max-width:640px){.map{grid-template-columns:1fr}}
 .map div{display:flex;flex-direction:column;gap:6px;min-width:0}
 .map b{font-weight:600;font-size:15px;text-transform:uppercase}
@@ -153,7 +168,7 @@ footer a:hover{color:var(--ink)}
     <div class="height" id="height">975.120</div>
     <div class="facts">
       <span><b id="tx">3,061</b> transactions</span>
-      <span>chord <b id="chord">Dmaj9</b></span>
+      <span>chord <b id="chord">Dmaj9</b><span id="from"></span></span>
       <span>station <b id="stName">Lo-fi Sunday</b></span>
     </div>
     <div class="wait">
@@ -211,6 +226,35 @@ footer a:hover{color:var(--ink)}
     <div class="notes" id="songNotes"></div>
   </section>
 
+  <section class="sec" id="watch">
+    <div class="label">The watch</div>
+    <div class="watch">
+      <figure><img id="watchImg" alt="BWATCH bw-1 on a wrist" loading="lazy" decoding="async"></figure>
+      <div class="col">
+        <h2>Pre-order BWATCH bw-1</h2>
+        <p class="note">A wristwatch that keeps Bitcoin's time: the block height, the mempool, the price in sats and your wallet, on e-paper. It buzzes when a block lands, like the bell on this radio. No app, no account, no custodian.</p>
+        <form id="orderForm" class="col" action="https://formspree.io/f/xljeaawd" method="POST">
+          <div class="eds" role="radiogroup" aria-label="Edition">
+            <label class="ed"><input type="radio" name="edition" value="Genesis 21" id="edGenesis" checked><b>Genesis 21</b><span class="price">1,000,000 sats</span>
+              <small>Orange anodised, numbered 1 to 21, the block that confirmed your payment engraved on the caseback. <span class="left" id="left">21 of 21 unclaimed.</span> Three weeks lead time.</small></label>
+            <label class="ed"><input type="radio" name="edition" value="Standard edition" id="edStandard"><b>Standard edition</b><span class="price">500,000 sats</span>
+              <small>Natural bead-blasted aluminium, unnumbered. Built in batches as orders come in. Four to six weeks lead time.</small></label>
+          </div>
+          <label for="orderContact" class="label">Your email address or Nostr npub</label>
+          <div class="inline" style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="f" id="orderContact" type="text" name="contact" required placeholder="you@example.com or npub1…" autocomplete="email" spellcheck="false"
+              pattern="(^[^@\s]+@[^@\s]+\.[^@\s]{2,}$)|(^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$)" title="An email address, or an npub beginning npub1" style="flex:1 1 220px">
+            <input type="hidden" name="_subject" value="BWATCH bw-1 pre-order (from Radio)">
+            <input type="hidden" name="_next" value="https://bwatch.xyz/thanks.html">
+            <button class="btn solid" type="submit">Pre-order</button>
+          </div>
+          <div class="status" id="orderStatus">Nothing is charged here. We'll write to confirm your edition and send an invoice, payable in bitcoin on-chain or over Lightning.</div>
+        </form>
+        <a class="note" href="https://bwatch.xyz/bwatch.html">Read about the watch →</a>
+      </div>
+    </div>
+  </section>
+
   <section class="sec" id="give">
     <h2>Keep it on the air</h2>
     <div class="give">
@@ -252,6 +296,7 @@ footer a:hover{color:var(--ink)}
     <div class="map">
       <div><b>Blocks → harmony</b><p>The chord changes only when a block is found. The block's hash picks the next chord from a written progression and plays the block's melody.</p></div>
       <div><b>The wait → tension</b><p>A block takes ten minutes on average but can take forty. While none comes, the sound opens and the pulse quickens. The next block releases it.</p></div>
+      <div><b>Memory → melody</b><p>While it waits, the music walks back through the last eight blocks' chords and sings their melodies again, varied. The longer the wait, the further back it goes. The next block brings it home.</p></div>
       <div><b>Mempool → weather</b><p>Transactions waiting to be mined fall as rain. A busy mempool is a downpour; a quiet one, a few drops.</p></div>
     </div>
     <p class="note">No prices anywhere in the music. Blocks and transactions only.</p>
@@ -668,13 +713,56 @@ const fmt=n=>Number(n).toLocaleString("en-US");
 function showBlock(b){$("height").textContent=fmt(b.height).replace(/,/g,".");$("tx").textContent=b.tx!=null?fmt(b.tx):"–"}
 function flash(){const f=$("flash");f.classList.add("on");requestAnimationFrame(()=>requestAnimationFrame(()=>f.classList.remove("on")))}
 function bolt(){const b=$("bolt");b.classList.add("on");requestAnimationFrame(()=>requestAnimationFrame(()=>b.classList.remove("on")))}
+// ---------- memory: while it waits, the music walks back through the last blocks ----------
+// The last eight blocks' chords form a progression. Right after a block the music stays home on its chord;
+// as the wait grows it reaches further back, and each block's chord brings back that block's melody, varied.
+// The next block brings it home and joins the progression; the oldest one leaves it.
+const HIST_MAX=8;let hist=[],harm={next:0,pos:0,count:0};
+function remember(chord,notes,height){hist.push({chord,notes,height});if(hist.length>HIST_MAX)hist.shift();harm.pos=-1}
+function harmPeriod(){
+  if(st==="lofi") return 8*60/lofi.bpm; if(st==="night") return 8*60/night.bpm;
+  if(st==="beats") return 8*60/beat.bpm; if(st==="downstroke") return 16*60/rock.bpm; return 9}
+function setChord(ch,now,fromHeight){
+  if(ch!==curChord){curChord=ch;
+    if(PADS[st]){if(pad)pad.stop(now);pad=makePad(ch,st,now)}
+    if(st==="downstroke"){let r=CH[ch][0];while(r<40)r+=12;while(r>49)r-=12;rock.root=r;rock.third=ch.includes("sus")?5:(/m(?!aj)/.test(ch)?3:4)}
+    if(st==="beats"){beat.root=CH[ch][0]<36?CH[ch][0]+12:CH[ch][0]}}
+  $("chord").textContent=ch;$("from").textContent=fromHeight?" · from block "+fmt(fromHeight):""}
+function pentIdx(m){let best=0;PENT.forEach((p,i)=>{if(Math.abs(p-m)<Math.abs(PENT[best]-m))best=i});return best}
+function vary(notes,n){const v=n%3;if(v===0)return notes;
+  if(v===2) return notes.slice().reverse();
+  const i0=pentIdx(notes[0].m);return notes.map(x=>({m:PENT[Math.max(0,Math.min(PENT.length-1,2*i0-pentIdx(x.m)))],d:x.d}))}
+function recall(notes,t){
+  if(st==="lofi"){let s=lofi.step+((16-lofi.step%16)%16);lofi.lead=notes.map(n=>{const o={m:n.m,step:s};s+=Math.max(1,Math.round(n.d/0.16));return o});return}
+  if(st==="night"){let s=night.step+((16-night.step%16)%16),prev=null;night.lead=notes.map(n=>{const o={m:n.m,step:s,d:Math.max(0.15,n.d),prev};prev=n.m;s+=Math.max(1,Math.round(n.d/0.16));return o});return}
+  if(st==="beats"){const s0=beat.step+((16-beat.step%16)%16);beat.lead=notes.map((n,i)=>({m:n.m,step:s0+i*2}));return}
+  if(st==="downstroke"){const s0=rock.step+((8-rock.step%8)%8);rock.lead=notes.map((n,i)=>({m:n.m-12,step:s0+i}));return}
+  let x=t;notes.forEach(n=>{
+    if(st==="sunday") fmBell(mtof(n.m),x,0.045,0.7,2,1.2,(n.m-74)/14);
+    if(st==="musicbox") tine(mtof(n.m+12),x,0.045,(n.m-74)/14);
+    if(st==="deep") fmBell(mtof(n.m-12),x,0.05,1.4,1.5,1,(n.m-74)/18);
+    if(st==="nature"||st==="metro") chime(mtof(n.m+(st==="metro"?12:0)),x,0.018,(n.m-74)/14);
+    if(st==="heart") tone("sine",mtof(n.m-12),x,0.08,0.035,0.5,(n.m-74)/18);
+    x+=n.d*(st==="deep"||st==="nature"?1.6:1.15)})}
+function harmonyTick(now,ten){
+  if(lastIdx<0||!hist.length) return;
+  if(harm.next<now-5) harm.next=now+harmPeriod();
+  if(now<harm.next) return;
+  const k=Math.max(1,Math.min(hist.length,1+Math.ceil(ten*1.5*(hist.length-1))));const win=hist.slice(-k);
+  harm.pos=(harm.pos<0||harm.pos>=win.length-1)?0:harm.pos+1;if(win.length===1)harm.pos=0;
+  const it=win[harm.pos],home=harm.pos===win.length-1;
+  setChord(it.chord,now,home?null:it.height);
+  if(!home&&Math.random()<0.35+0.5*ten) recall(vary(it.notes,harm.count++),now+0.15);
+  harm.next=now+harmPeriod()*(home?1.5:1)}
 async function fireBlock(i,t){
   const close=lastIdx<0?0.3:tensionOf(waitMin());
   lastIdx=i;const b=chain[i];showBlock(b);
   const by=await songBytes(b);const nc=nextChord(curChord,by);const notes=motif(by,nc);
+  remember(nc,notes,b.height);
   if(!playing){curChord=nc;$("chord").textContent=nc;return}
   const now=Math.max(ctx.currentTime,t);
-  if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now);$("chord").textContent=nc;
+  if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now);$("chord").textContent=nc;$("from").textContent="";
+  harm.next=now+harmPeriod()*1.5;harm.pos=-1;
   playBlock(st,b,notes,now+0.05,by,nc,close);flash();
 }
 function tick(){
@@ -686,6 +774,7 @@ function tick(){
   if(pad) pad.tension(ten,now);
   bedTick(ten,rain,now);
   if(st==="beats") beatsTick(now,ten,rain);
+  harmonyTick(now,ten);
   if(st==="heart") heartTick(now,ten);
   if(st==="lofi") lofiTick(now,ten,rain);
   if(st==="night") nightTick(now,ten,rain);
@@ -706,8 +795,8 @@ async function getJSON(url,ms=6000){const c=new AbortController(),to=setTimeout(
 async function liveStart(){
   try{const arr=await getJSON(API+"/v1/blocks");
     chain=arr.slice().reverse().map(b=>({height:b.height,time:b.timestamp*1000,tx:b.tx_count,hash:b.id}));
-    liveOk=true;curChord="Dmaj9";
-    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
+    liveOk=true;curChord="Dmaj9";hist=[];
+    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i>=chain.length-HIST_MAX)remember(curChord,motif(by,curChord),chain[i].height);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
     try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}
     return true}catch(e){liveOk=false;return false}}
 function livePoll(){clearInterval(poll);poll=setInterval(async()=>{
@@ -746,7 +835,7 @@ async function start(){
       $("srcNote").textContent="Live blocks need a connection to mempool.space, which isn't available here. Playing tonight's recorded blocks instead."}}
   if(!playing) return;
   if(mode==="live"){lastIdx=chain.length-1;showBlock(chain[lastIdx]);$("src").innerHTML="<b>● Live</b> · mempool.space";livePoll()}
-  else{chain=TONIGHT.slice();lastIdx=-1;curChord="Dmaj9";rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent="Tonight · recorded blocks"}
+  else{chain=TONIGHT.slice();lastIdx=-1;curChord="Dmaj9";hist=[];rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent="Tonight · recorded blocks"}
   pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);trim();loadFor(st);
   clearInterval(timer);timer=setInterval(tick,100);tick();presenceOn()}
 function stop(){
@@ -846,6 +935,12 @@ function renderListeners(){
 if(NB&&"WebSocket" in window){RELAYS.forEach(u=>connectRelay(u));setInterval(renderListeners,10000)}
 window.addEventListener("pagehide",()=>{if(playing)presenceOff()});
 
+
+// ---------- the watch: picture, and the count of Genesis numbers still unclaimed (kept by hand on the home page) ----------
+(function(){const onSite=/bwatch\.xyz$/.test(location.hostname),img=$("watchImg");
+  img.src=onSite?"/img/hero-a.jpg":"img/hero-a.jpg";img.onerror=()=>{img.closest("figure").hidden=true};
+  if(onSite) fetch("/",{cache:"no-store"}).then(r=>r.text()).then(h=>{const m=h.match(/id="left">(\d+)</);if(m)$("left").textContent=m[1]+" of 21 unclaimed."}).catch(()=>{});
+  $("orderForm").addEventListener("submit",e=>{if(!onSite){e.preventDefault();$("orderStatus").textContent="Pre-orders go through on bwatch.xyz/radio. This preview doesn't send anything."}})})();
 window.addEventListener("resize",draw);
 document.fonts&&document.fonts.ready.then(draw);draw();
 </script>
