@@ -752,8 +752,7 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){   // blocks faster than a transmission (fast replay): just the pips, so they never pile up
     if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return}
-    const sig=intervalSignal(notes,t,1)+0.4;   // the organ plays the block's tune, then "this is BW9IF", the numbers, and SK: end of transmission
-    const open=morse("DE "+callSign(by),t+sig),T=t+sig+open+0.4;readNumber(b.height,T);
+    const open=morse("DE "+callSign(by),t),T=t+open+0.4;readNumber(b.height,T);   // "this is BW9IF", the numbers, then SK: end of transmission (the organ is for a block's song)
     const nEnd=T+1.3+String(b.height).length*0.62+0.55+0.4;swBusy=nEnd+morse("^",nEnd)+0.5;return}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
     if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
