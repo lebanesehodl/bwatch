@@ -449,7 +449,12 @@ function stopBed(){ if(!bed) return; const now=ctx.currentTime;
 function bedTick(ten,rain,now){ if(!bed) return; const G=bed.gains;
   if(bed.st==="shortwave"){G.hiss.gain.setTargetAtTime(0.02+0.05*ten,now,0.5);G.whistleOsc.frequency.setTargetAtTime(900+700*ten,now,2)}
   if(bed.st==="nature"){const r=Math.min(1,(rain-1)/10);
-    if(RAIN)["light","steady","heavy"].forEach(k=>{if(RAIN[k]&&!G["rain_"+k])rainLayer(k)});
+    const rec=OBUF.nature&&OBUF.nature.rain;
+    if(rec&&!G.rec){const s=ctx.createBufferSource();s.buffer=rec;s.loop=true;const f=ctx.createBiquadFilter();f.type="lowpass";f.frequency.value=4000;f.Q.value=0.5;
+      const g=ctx.createGain();g.gain.value=0;s.connect(f);f.connect(g);g.connect(out);const send=ctx.createGain();send.gain.value=0.15;g.connect(send);send.connect(bus);
+      s.start(now,Math.random()*50);bed.nodes.push(s);G.rec=g;G.recF=f}
+    if(G.rec){G.rec.gain.setTargetAtTime(0.45+0.55*r,now,2);G.recF.frequency.setTargetAtTime(2600+12000*Math.pow(r,1.3),now,2)}   // light rain sounds further away
+    if(!rec&&RAIN)["light","steady","heavy"].forEach(k=>{if(RAIN[k]&&!G["rain_"+k])rainLayer(k)});
     const w={light:Math.max(0,1-2*r),steady:1-Math.abs(2*r-1),heavy:Math.max(0,2*r-1)};
     ["light","steady","heavy"].forEach(k=>{if(G["rain_"+k])G["rain_"+k].gain.setTargetAtTime(0.25+0.95*w[k],now,2)});
     G.roof.gain.setTargetAtTime(0.01+0.04*r,now,1.5);
@@ -471,7 +476,7 @@ function thunder(t,size,close){
   return delay}
 
 // ---------- one-shot recordings: drums (VCSL, CC0) and the numbers-station voice ----------
-const ONESHOTS={drums:["hatC1","hatC2","hatSoft","hatO","snare","snareSoft","clap1","clap2","shaker","crash"],voice:["0","1","2","3","4","5","6","7","8","9"]};
+const ONESHOTS={nature:["rain","thunder0","thunder1","thunder2","thunder3"],drums:["hatC1","hatC2","hatSoft","hatO","snare","snareSoft","clap1","clap2","shaker","crash"],voice:["0","1","2","3","4","5","6","7","8","9"]};
 const OBUF={};
 function loadShots(dir){ if(OBUF[dir]||!ctx) return; OBUF[dir]={};
   ONESHOTS[dir].forEach(async n=>{try{const r=await fetch("samples/"+dir+"/"+n+".mp3");if(r.ok)OBUF[dir][n]=await ctx.decodeAudioData(await r.arrayBuffer())}catch(e){}})}
@@ -723,7 +728,9 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 // ---------- what each station does when a block lands ----------
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){readNumber(b.height,t);return}
-  if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);const d=thunder(t,size,close);bolt(d);
+  if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
+    if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
+    else d=thunder(t,size,close);bolt(d);
     let x=t+d+2.5;notes.forEach(n=>{chime(mtof(n.m),x,0.03,(n.m-74)/14);x+=n.d*1.8});return}
   if(st==="beats"){beatsBlock(t,notes,by,chord,b.tx);return}
   if(st==="downstroke"){rockBlock(t,notes,by,chord,b.tx);return}
@@ -749,11 +756,11 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
   if(st==="musicbox") burst(t,0.002,7000,1,0.025*Math.random(),p);
   if(st==="deep") burst(t,0.006,700,1.5,0.06*Math.random(),p);
   if(st==="shortwave") burst(t,0.0015,2500,0.4,0.12*Math.random(),p,"highpass");
-  if(st==="nature"){ if(!closeDrop(t,p)) burst(t,0.002,1500+Math.random()*4000,1.5,0.04*Math.random(),p)}
+  if(st==="nature"){ if(OBUF.nature&&OBUF.nature.rain) return; if(!closeDrop(t,p)) burst(t,0.002,1500+Math.random()*4000,1.5,0.04*Math.random(),p)}
 }
 const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2,deep:0.9,shortwave:1.3,downstroke:0.8};   // even out the stations
 function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
-function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano");if(s==="beats")loadShots("drums");if(s==="nature")prepareRain();
+function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano");if(s==="beats")loadShots("drums");if(s==="nature"){loadShots("nature");setTimeout(()=>{if(!(OBUF.nature&&OBUF.nature.rain))prepareRain()},6000)}
   if(s==="shortwave"){loadShots("voice");if(playing&&lastIdx>=0)setTimeout(()=>{if(playing&&st==="shortwave")readNumber(chain[lastIdx].height,ctx.currentTime+0.05)},1500)}}
 const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
