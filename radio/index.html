@@ -192,7 +192,7 @@ footer a:hover{color:var(--ink)}
         <div class="seg" id="srcSeg">
           <button id="srcLive" aria-pressed="true">Live</button>
           <button id="srcReplay" aria-pressed="false">Tonight (recorded)</button>
-          <button id="srcDemo" aria-pressed="false">Demo: adjustment &amp; halving</button>
+          <button id="srcDemo" aria-pressed="false" hidden>Demo: adjustment &amp; halving</button>
         </div>
       </div>
       <div class="row" id="speedRow" hidden>
@@ -381,6 +381,14 @@ function motif(by,chord){
 
 // ---------- audio graph ----------
 let ctx=null,out=null,bus=null,noise=null,brown=null;
+// Phones: iOS mutes Web Audio when the ring/silent switch is on, unless the page says it is media playback.
+// Two ways to say it: the Audio Session API (Safari 16.4+), and a silent <audio> element playing in a loop.
+// Both must happen inside the tap. A one-sample buffer also wakes the audio context on older iPhones.
+let unlockEl=null;
+function unlockAudio(){
+  try{if(navigator.audioSession)navigator.audioSession.type="playback"}catch(e){}
+  try{if(!unlockEl){unlockEl=new Audio("data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==");unlockEl.loop=true;unlockEl.setAttribute("playsinline","");unlockEl.volume=0.01}const pr=unlockEl.play();if(pr&&pr.catch)pr.catch(()=>{})}catch(e){}
+  try{if(ctx){const b=ctx.createBuffer(1,1,22050),s=ctx.createBufferSource();s.buffer=b;s.connect(ctx.destination);s.start(0)}}catch(e){}}
 function initAudio(){
   if(ctx) return;
   ctx=new (window.AudioContext||window.webkitAudioContext)();
@@ -978,7 +986,7 @@ const REPLAY_NOTE="Tonight's 24 blocks, 975,097 to 975,120 (3:52 to 9:33 PM ET, 
 function setReplayUI(set="tonight"){mode="replay";replaySet=set;press($("srcSeg"),$(set==="demo"?"srcDemo":"srcReplay"));$("speedRow").hidden=false;$("srcNote").textContent=set==="demo"?DEMO_NOTE:REPLAY_NOTE;
   if(set==="demo"){speed=2;press($("speedSeg"),document.querySelector('#speedSeg [data-speed="2"]'))}}
 async function start(){
-  initAudio();if(ctx.state==="suspended") await ctx.resume();
+  initAudio();unlockAudio();if(ctx.state==="suspended") await ctx.resume();
   playing=true;$("play").classList.add("on");$("play").setAttribute("aria-pressed","true");$("playLabel").textContent="Stop";
   nextBlip=nextGrain=ctx.currentTime+0.1;
   if(mode==="live"){$("waitText").textContent="Tuning in to mempool.space…";
@@ -992,6 +1000,7 @@ async function start(){
   clearInterval(timer);timer=setInterval(tick,100);tick();presenceOn()}
 function stop(){
   if(playing){playing=false;presenceOff()}
+  try{if(unlockEl)unlockEl.pause()}catch(e){}
   playing=false;clearInterval(timer);clearInterval(poll);
   if(ctx){if(pad){pad.stop(ctx.currentTime);pad=null}stopBed()}try{speechSynthesis.cancel()}catch(e){}
   $("play").classList.remove("on");$("play").setAttribute("aria-pressed","false");$("playLabel").textContent="Play";
@@ -1016,7 +1025,7 @@ function transmission(h,notes,ch,t,by){loadShots("voice");
   if(voiceReady()) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),1200)}
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
-  initAudio();if(ctx.state==="suspended")await ctx.resume();
+  initAudio();unlockAudio();if(ctx.state==="suspended")await ctx.resume();
   let hash=null;if(liveOk!==false){try{const r=await getJSON(API+"/block-height/"+h,4000);if(typeof r==="string"&&/^[0-9a-f]{64}$/.test(r.trim()))hash=r.trim()}catch(err){}}
   const by=await songBytes({height:h,hash}),ch=nextChord("Dmaj9",by),notes=motif(by,ch),t=ctx.currentTime+0.1;
   if(st==="shortwave"){transmission(h,notes,ch,t,by)}
