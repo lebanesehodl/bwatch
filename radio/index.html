@@ -131,11 +131,11 @@ details[open] summary{margin-bottom:10px}
 .watch figure img{width:100%;height:100%;object-fit:cover;display:block}
 .watch .col{display:flex;flex-direction:column;gap:12px;min-width:0}
 .eds{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--line)}
-.ed{display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.ed{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line)}
 .ed input{accent-color:var(--accent);margin:0}
 .ed b{font:600 15px/1.2 var(--display);text-transform:uppercase;letter-spacing:.03em}
 .ed .price{font:500 14px/1 var(--mono);white-space:nowrap}
-.ed small{grid-column:2/4;font:400 12px/1.5 var(--mono);color:var(--dim)}
+.ed small{grid-column:1/3;font:400 12px/1.5 var(--mono);color:var(--dim)}
 .ed .left{color:var(--accent-text)}
 
 /* how it works */
@@ -234,12 +234,11 @@ footer a:hover{color:var(--ink)}
         <h2>Pre-order BWATCH bw-1</h2>
         <p class="note">A wristwatch that keeps Bitcoin's time: the block height, the mempool, the price in sats and your wallet, on e-paper. It buzzes when a block lands, like the bell on this radio. No app, no account, no custodian.</p>
         <form id="orderForm" class="col" action="https://formspree.io/f/xljeaawd" method="POST">
-          <div class="eds" role="radiogroup" aria-label="Edition">
-            <label class="ed"><input type="radio" name="edition" value="Genesis 21" id="edGenesis" checked><b>Genesis 21</b><span class="price">1,000,000 sats</span>
-              <small>Orange anodised, numbered 1 to 21, the block that confirmed your payment engraved on the caseback. <span class="left" id="left">21 of 21 unclaimed.</span> Three weeks lead time.</small></label>
-            <label class="ed"><input type="radio" name="edition" value="Standard edition" id="edStandard"><b>Standard edition</b><span class="price">500,000 sats</span>
-              <small>Natural bead-blasted aluminium, unnumbered. Built in batches as orders come in. Four to six weeks lead time.</small></label>
+          <div class="eds">
+            <div class="ed"><b>Standard edition</b><span class="price">500,000 sats</span>
+              <small>Natural bead-blasted aluminium. Built in batches as orders come in. Four to six weeks lead time.</small></div>
           </div>
+          <input type="hidden" name="edition" value="Standard edition">
           <label for="orderContact" class="label">Your email address or Nostr npub</label>
           <div class="inline" style="display:flex;gap:8px;flex-wrap:wrap">
             <input class="f" id="orderContact" type="text" name="contact" required placeholder="you@example.com or npub1…" autocomplete="email" spellcheck="false"
@@ -936,10 +935,9 @@ if(NB&&"WebSocket" in window){RELAYS.forEach(u=>connectRelay(u));setInterval(ren
 window.addEventListener("pagehide",()=>{if(playing)presenceOff()});
 
 
-// ---------- the watch: picture, and the count of Genesis numbers still unclaimed (kept by hand on the home page) ----------
+// ---------- the watch: picture, and pre-orders through the site's list form ----------
 (function(){const onSite=/bwatch\.xyz$/.test(location.hostname),img=$("watchImg");
   img.src=onSite?"/img/hero-a.jpg":"img/hero-a.jpg";img.onerror=()=>{img.closest("figure").hidden=true};
-  if(onSite) fetch("/",{cache:"no-store"}).then(r=>r.text()).then(h=>{const m=h.match(/id="left">(\d+)</);if(m)$("left").textContent=m[1]+" of 21 unclaimed."}).catch(()=>{});
   $("orderForm").addEventListener("submit",e=>{if(!onSite){e.preventDefault();$("orderStatus").textContent="Pre-orders go through on bwatch.xyz/radio. This preview doesn't send anything."}})})();
 window.addEventListener("resize",draw);
 document.fonts&&document.fonts.ready.then(draw);draw();
