@@ -787,7 +787,8 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
 const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2,deep:0.9,shortwave:1.3,downstroke:0.8};   // even out the stations
 function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
 function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano");if(s==="beats")loadShots("drums");if(s==="nature"){loadShots("nature");setTimeout(()=>{if(!(OBUF.nature&&OBUF.nature.rain))prepareRain()},6000)}
-  if(s==="shortwave"){loadShots("voice");if(playing&&lastIdx>=0)setTimeout(()=>{if(playing&&st==="shortwave")readNumber(chain[lastIdx].height,ctx.currentTime+0.05)},1500)}}
+  if(s==="shortwave"){loadShots("voice");if(playing&&lastIdx>=0)setTimeout(async()=>{if(!(playing&&st==="shortwave"))return;const bk=chain[lastIdx],by=await songBytes(bk),t=ctx.currentTime+0.05;   // the full transmission for the block on air
+      const o=morse("DE "+callSign(by),t),T=t+o+0.4;readNumber(bk.height,T);const e=T+1.3+String(bk.height).length*0.62+0.55+0.4;swBusy=e+morse("^",e)+0.5},1500)}}
 const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
 // ---------- the clock: live or tonight's replay ----------
