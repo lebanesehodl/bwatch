@@ -11688,8 +11688,64 @@ public:
     snprintf(m, 80, "%s-3 a minute tick. Watch 30 s: fade?", id);
     return labStep(m);
   }
+  // ---- SUN LAB (lab 6, Nov 8) ----
+  // Ahmed, with a phone LED held close: a static image does not fade, a
+  // quick (minute) update under the light does not fade, a full refresh under
+  // the light (the clean, the 30-min refresh) fades the whole screen about a
+  // second after it ends. The partial ends with the voltage left on (0xFC);
+  // the full ends with it switched off (0xF4, then 0x83 at once). Strong
+  // light makes the panel's transistors leak, so how the full ENDS is the
+  // suspect. Each step: a light card by a full ended one way, watched under
+  // the light. Keep the light on the glass the whole lab.
+  void sunCard(char v, const char *id, const char *note) {
+    labLight(); labCard(v, id);
+    display.setTextSize(1); display.setCursor(8, 38); display.print(note);
+  }
+  void sunF4() {                         // the full's waveform, voltage left on
+    WatchyDisplay &e = display.epd2;
+    e.writeImageForFullRefresh(labBuf(), 0, 0, 200, 200);   // inits, powers on
+    EpdFull::cmd(e, 0x22); EpdFull::dat(e, 0xF4);
+    EpdFull::cmd(e, 0x20); EpdFull::busy(e, "_sun_Full", 2600);
+    EpdFull::markOn(e);
+    Serial.printf("[lab] %7lu full waveform done\n", millis());
+  }
+  void sunSleep() {                      // the controller's deep sleep; the
+    display.epd2.hibernate();            // driver wakes it by the reset line
+    EpdFull::forget(display.epd2);       // on its next write
+    Serial.printf("[lab] %7lu panel deep sleep\n", millis());
+  }
+  bool sunRun() {
+    Serial.println("\n[lab] ===== DISPLAY LAB 6: SUN (light on the glass) =====");
+    sunCard('B', "SUN", "LIGHT ON THE GLASS NOW"); displayFull();
+    if (!labStep("SUN-0 start: hold the light on the glass, then press")) return false;
+    // S1: as the watch does it now
+    sunCard('A', "S1", "NOW: OFF AT ONCE"); labFull();
+    if (!labStep("S1 full, voltage off at once (as now). Watch 10 s: fade?")) return false;
+    // S2: the controller switches off inside the same sequence (0xF7)
+    sunCard('C', "S2", "OFF IN SEQUENCE");  labFullManual(false, true);
+    if (!labStep("S2 full ending 0xF7 (off inside the update). Fade?")) return false;
+    // S3: left on, then off later: which moment fades?
+    sunCard('A', "S3", "VOLTAGE LEFT ON");  sunF4();
+    if (!labStep("S3a full, voltage LEFT ON. Watch 10 s: fade?")) return false;
+    panelOff();
+    if (!labStep("S3b now switched off (late). Fade now?")) return false;
+    // S4: no power-off command, straight into deep sleep (as Watchy's own
+    // hibernate() does it)
+    sunCard('C', "S4", "DEEP SLEEP, NO OFF"); sunF4(); sunSleep();
+    if (!labStep("S4 full, then deep sleep without the off. Fade?")) return false;
+    // S5: off, then deep sleep
+    sunCard('A', "S5", "OFF + DEEP SLEEP"); sunF4(); panelOff(); sunSleep();
+    if (!labStep("S5 full, off, then deep sleep. Fade?")) return false;
+    return true;
+  }
   void labRun() {
     EpdFull::diag(display.epd2);
+    bool on = sunRun();
+    if (on) {
+      sunCard('C', "LAB 5?", "ANY BUTTON: LAB 5  BACK: END"); labFull();
+      on = labStep("SUN done. Any button: lab 5 (W1-W3); BACK: end");
+    }
+    if (!on) { cleanScreen(); Serial.println("[lab] ===== done ====="); return; }
     Serial.println("\n[lab] ===== DISPLAY LAB 5: dark mode, OTP vs WS partial =====");
     // W3: light after black, the case that fades on the wrist (after JOE's
     // cards, a switch to light, or a clearing cycle, whose black frames count
