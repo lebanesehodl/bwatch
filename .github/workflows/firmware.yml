@@ -44,9 +44,11 @@ jobs:
         run: firmware/ci/build.sh
 
       # The exact image CI built, for flashing a PR build for a wrist test.
+      # Named for the commit that was pushed (on a PR, github.sha is the
+      # temporary merge commit, which matches nothing in the branch).
       - uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ github.sha }}
+          name: firmware-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             firmware/ci/.build/out/*.bin
             firmware/ci/.build/out/*.elf
