@@ -8025,7 +8025,8 @@ public:
       } else if (cs == 0 && battVoltsTrue() < 3.36f &&
                  // a cold cell sags without being empty: believe it only
                  // when the next wake reads low too
-                 (tempMode != TEMP_COLD || ++coldLowVolt >= 2)) {
+                 // (once resting, stay: the count would wrap at 255)
+                 (tempMode != TEMP_COLD || resting || ++coldLowVolt >= 2)) {
         if (!resting) { resting = true; restingScreen(); }
         return;                           // nothing else gets drawn
       } else if (tempMode == TEMP_COLD && battVoltsTrue() >= 3.36f) coldLowVolt = 0;
@@ -8197,7 +8198,6 @@ public:
                                                             // yet delivered
     else if (inDocked) strcpy(tag, dockNetDown ? "DK-" : "DOCK");
     else if (tempMode == TEMP_HOT)  strcpy(tag, "HOT");   // the panel is told 25 C
-    else if (tempMode == TEMP_COLD) strcpy(tag, "COLD");  // fulls only, no fetch
     else if (chargeState() != 0) strcpy(tag, "CHG");   // asleep on purpose, so
                                                        // the cell gets the
                                                        // charger's current
@@ -8208,7 +8208,9 @@ public:
       // missed. an hour of "LIVE" would cover three failures in a row.
       long e = (dispMode == M_HGHT || dispMode == M_MEMP) ? heightStaleMinutes()
                                                           : staleMinutes();
-      if (e < staleAfter()) strcpy(tag, "LIVE");
+      // COLD (fulls only, fetches wait) stands in for LIVE only: a cold
+      // watch's numbers age fastest, so OLD and DEMO must still win
+      if (e < staleAfter()) strcpy(tag, tempMode == TEMP_COLD ? "COLD" : "LIVE");
       else if (e < 60) snprintf(tag, 8, "OLD %ldM", e);
       else             snprintf(tag, 8, "OLD %ldH", e / 60 > 48 ? 48 : e / 60);
     }
