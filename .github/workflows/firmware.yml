@@ -1,0 +1,53 @@
+# Compile the watch firmware on every PR that touches it. The build itself
+# lives in firmware/ci/build.sh, so a desktop runs exactly what CI runs.
+name: Firmware
+
+on:
+  pull_request:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  push:
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: Compile (esp32 2.0.17, ESP32S3 Dev Module, 8M with spiffs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The core's esptool, which turns the ELF into the flashable image, is a
+      # Python script that needs pyserial.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pyserial
+
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: "1.1.1"
+
+      - name: Build
+        run: firmware/ci/build.sh
+
+      # The exact image CI built, for flashing a PR build for a wrist test.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: |
+            firmware/ci/.build/out/*.bin
+            firmware/ci/.build/out/*.elf
+          retention-days: 14
