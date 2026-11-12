@@ -1,6 +1,6 @@
 # TLS on the bw–1
 
-Status: proposed · 2026-11-11 · reviewed at `511ed7a` by three models independently (Opus, Astra, Sol) and checked against the repo by Lead.
+Status: agreed · merged in PR #7 (`a03cae3`) on 2026-11-12 · reviewed at `511ed7a` by three models independently (Opus, Astra, Sol) and checked against the repo by Lead.
 
 This note exists because the firmware does not authenticate any HTTPS server it talks to.
 It says what that costs, where, and what the fix is. It is a design note, not a change:
