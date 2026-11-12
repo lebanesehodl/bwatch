@@ -216,6 +216,24 @@ static void signatures() {
   CHECK(detail::signature(signature, digest, pubkey));
   digest[0] ^= 1; CHECK(!detail::signature(signature, digest, pubkey));
 }
+static void featureBits() {
+  // BOLT11's odd/even rule applies to bits INSIDE the 9 field, not tag IDs.
+  CHECK(!detail::features(nullptr, 0));
+  const uint8_t zero = 0; CHECK(!detail::features(&zero, 1));
+  for (unsigned bit = 0; bit < 128; ++bit) {
+    const bool expected = (bit & 1) || bit == 8 || bit == 14 || bit == 16 || bit == 48;
+    std::vector<uint8_t> single(bit / 5 + 1, 0);
+    single[0] = static_cast<uint8_t>(1u << (bit % 5));
+    CHECK(detail::features(single.data(), single.size()) == expected);
+    auto nonminimal = single; nonminimal.insert(nonminimal.begin(), 0);
+    CHECK(!detail::features(nonminimal.data(), nonminimal.size()));
+    // A known required feature must not hide an unknown required feature.
+    auto mixed = single;
+    while (mixed.size() < 3) mixed.insert(mixed.begin(), 0);
+    mixed[mixed.size() - 3] |= 16; // payment_secret, bit 14
+    CHECK(detail::features(mixed.data(), mixed.size()) == expected);
+  }
+}
 static void amountsAndUrls() {
   uint64_t n = 0;
   for (const char *hrp : {"lnbc1", "lnbc1000m", "lnbc1000000u", "lnbc1000000000n", "lnbc1000000000000p"}) {
@@ -258,6 +276,6 @@ static void settlement() {
   proof[0] = '\0'; CHECK(!settlementProof(invoice, pr.data(), pr.size(), pr.data(), pr.size(), proof.data(), 64));
 }
 int main() {
-  protocolVectors(); boundaries(); signatures(); amountsAndUrls(); settlement();
+  protocolVectors(); boundaries(); signatures(); featureBits(); amountsAndUrls(); settlement();
   std::cout << "PASS: " << checks << " checks, 31 upstream vectors plus adversarial boundaries\n";
 }
