@@ -27,6 +27,7 @@ the one that makes the percentage meaningful, so it is not optional.
 | Core | 2.0.17 |
 | Upload speed | 115200 |
 | Libraries | the versions pinned in `firmware/ci/libraries.txt` |
+| Bench flags | none: `DISPLAY_LAB` stays `0` in a customer unit |
 
 CI compiles every firmware PR with these settings (`firmware/ci/build.sh`).
 Each run's artifacts include flashable images and a `FLASH.txt` that names the
