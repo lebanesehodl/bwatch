@@ -6,7 +6,8 @@ Inspired by the digital watches of my youth, bwatch shows the height of the Bitc
 issued supply on-device from the block height. It also carries a watch-only wallet that holds
 no key, and vibrates once for every block the network finds, roughly one hundred and
 forty-four times a day. The Bitcoin price is available in twenty currencies along with SATS/USD (MSCW Time),
-six of them on the dial out of the box.
+six of them on the dial out of the box. Twelve instruments are built in; ten are on
+the dial out of the box.
 
 **Site:** [bwatch.xyz](https://bwatch.xyz) · **Manual:** [bwatch.xyz/bwatch-manual.html](https://bwatch.xyz/bwatch-manual.html)
 
