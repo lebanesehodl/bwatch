@@ -5,7 +5,8 @@ A wristwatch that keeps Bitcoin's time. No app, no account, no custodian.
 Inspired by the digital watches of my youth, bwatch shows the height of the Bitcoin timechain, difficulty epochs, halvings, derives
 issued supply on-device from the block height. It also carries a watch-only wallet that holds
 no key, and vibrates once for every block the network finds, roughly one hundred and
-forty-four times a day. The Bitcoin price is available in 5 different currencies along with SATS/USD (MSCW Time)
+forty-four times a day. The Bitcoin price is available in twenty currencies along with SATS/USD (MSCW Time),
+six of them on the dial out of the box.
 
 **Site:** [bwatch.xyz](https://bwatch.xyz) · **Manual:** [bwatch.xyz/bwatch-manual.html](https://bwatch.xyz/bwatch-manual.html)
 
@@ -19,7 +20,6 @@ bwatch.html             the long document: claims, editions, specs, field log
 bwatch-manual.html      the manual: every mode, every button
 img/                    photographs and schematics
 fonts/                  Archivo, self-hosted
-brand/                  the mark and lockup, SVG and PDF
 favicon.svg
 404.html  robots.txt  sitemap.xml  CNAME
 
@@ -112,8 +112,8 @@ set WiFi, paste a zpub, calibrate the battery once, and it is the same watch.
 
 ## The mark
 
-`brand/` holds the mark and the lockup as SVG and PDF, letterforms converted to
-paths. The field is not a generic rounded square: it is the bw-1 case at its true
+The lockup as SVG and PDF is not in this repository yet; `favicon.svg` carries the mark.
+The field is not a generic rounded square: it is the bw-1 case at its true
 proportion — 40.40 × 50.36, corner radius 5.4 — traced from the same STEP file the
 shop machines from, so the mark and the object cannot drift apart.
 

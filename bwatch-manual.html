@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BWATCH bw–1 — Manual</title>
-<meta name="description" content="Four buttons, nine instruments. The BWATCH bw-1 field manual.">
+<meta name="description" content="Four buttons, twelve instruments. The BWATCH bw-1 field manual.">
 <style>
 :root{
   --paper:#F2EFE6;
@@ -170,7 +170,7 @@ footer a{color:var(--ink)}
 <header class="cover">
   <div class="kicker"><i></i><span class="eyebrow">BTC Technologies · DIV-001 · bw–1</span></div>
   <h1><span class="riso" data-t="THE">THE</span><br><span class="riso" data-t="MANUAL">MANUAL</span></h1>
-  <p class="sub">Four buttons. Nine instruments. One chain that does not care whether you are watching.</p>
+  <p class="sub">Four buttons. Twelve instruments. One chain that does not care whether you are watching.</p>
   <div class="meta">
     <div><div class="k">Read this</div><div class="v">Once, then never</div></div>
     <div><div class="k">Time needed</div><div class="v">Six minutes</div></div>
@@ -298,7 +298,7 @@ footer a{color:var(--ink)}
       <li><span class="n">6</span><span><b>Twenty-four hours</b>
         <span>Price, with its high and low. The labels move out of the line's way.</span></span></li>
       <li><span class="n">7</span><span><b>Mode strip</b>
-        <span>All nine instruments. The filled one is where you are.</span></span></li>
+        <span>Every instrument in the cycle. The filled one is where you are.</span></span></li>
     </ul>
   </div>
 </section>
@@ -378,9 +378,15 @@ footer a{color:var(--ink)}
   <div class="chead">
     <div class="cnum">03</div>
     <div>
-      <h2>Nine instruments</h2>
+      <h2>Twelve instruments</h2>
       <p>MODE walks through them in order. Each one owns the big number, the box, and the
          line beneath — everything else on the face stays where it is.</p>
+      <p>Ten are in the dial out of the box: HGT, MEM, PRC, SAT, CAP, FEE, SUP, HLV, WAL and JOE.
+         The pages below draw nine of them — MEM is a second view of the chain, beside HGT, and
+         keeps the same big number and the same box. Two more start switched off and are turned
+         on in <b>My Watch &rsaquo; Faces</b>: <b>MKT</b>, the fiat markets priced in bitcoin
+         (S&amp;P, Nasdaq, Dow, oil, the ten-year, the dollar), and <b>BSK</b>, the basket (a
+         house, eggs, gas, milk, coffee, and new money against the issuance).</p>
     </div>
   </div>
   <div class="modes" id="modeGrid"></div>
@@ -544,7 +550,7 @@ const MODES = [
     up:"UP: reward · miner · retarget · min/blk · block age · unconfirmed" },
   { tag:"PRC", name:"Price", big:"79,214", unit:"USD / BTC",
     box:["+2.4","24H %"],
-    txt:"One coin, in six currencies. Spelled out in full, whatever the scale.",
+    txt:"One coin, in twenty currencies. Six on the dial out of the box, the rest in My Watch › Currency. Spelled out in full, whatever the scale.",
     up:"UP: switch currency" },
   { tag:"SAT", name:"Sats per unit", big:"1,264", unit:"SAT / USD",
     box:["12:64","MOSCOW"],
