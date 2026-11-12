@@ -1,0 +1,21 @@
+# Libraries the firmware is compiled against, pinned. CI installs exactly
+# these and nothing else (firmware/ci/build.sh); to match it in the Arduino
+# IDE, install the same versions from the Library Manager.
+#
+# Each line: GitHub repo, release tag, then the name the Library Manager
+# shows. The Library Manager version is the tag without a leading "v".
+# To move a library, change its tag here and let CI prove the build.
+#
+# repo                              tag       Library Manager name
+sqfmi/Watchy                        v1.4.15   Watchy
+ZinggJM/GxEPD2                      1.6.9     GxEPD2
+adafruit/Adafruit-GFX-Library       1.13.0    Adafruit GFX Library
+adafruit/Adafruit_BusIO             1.17.4    Adafruit BusIO
+arduino-libraries/Arduino_JSON      0.2.2     Arduino_JSON
+JChristensen/DS3232RTC              3.1.2     DS3232RTC
+PaulStoffregen/Time                 v1.6.1    Time
+arduino-libraries/NTPClient         3.2.1     NTPClient
+orbitalair/Rtc_Pcf8563              1.0.3     Rtc_Pcf8563
+tzapu/WiFiManager                   v2.0.17   WiFiManager
+bblanchon/ArduinoJson               v7.4.3    ArduinoJson
+micro-bitcoin/uBitcoin              v0.2.0    uBitcoin
