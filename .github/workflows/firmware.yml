@@ -17,10 +17,11 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR cancels its older run. On main every merge finishes, so
+# A new push to a PR cancels its older run. A push to main gets a group of
+# its own commit, so no later merge can cancel it, running or queued, and
 # every merged change gets its own image.
 concurrency:
-  group: firmware-${{ github.ref }}
+  group: firmware-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -46,6 +47,15 @@ jobs:
       - uses: arduino/setup-arduino-cli@v2
         with:
           version: "1.1.1"
+
+      # A branch cut before CI existed has this workflow (it comes from the
+      # merge preview) but not the script, since the checkout is its head.
+      - name: Check the branch has the build script
+        run: |
+          [ -f firmware/ci/build.sh ] || {
+            echo "::error::This branch predates firmware CI (no firmware/ci/build.sh). Merge main into it."
+            exit 1
+          }
 
       - name: Build
         id: build
