@@ -8197,6 +8197,11 @@ public:
       strcpy(tag, (dispMode == M_WALT) ? "SCAN" : "FTCH");   // asked for, not
                                                             // yet delivered
     else if (inDocked) strcpy(tag, dockNetDown ? "DK-" : "DOCK");
+    // HOT outranks DEMO and OLD here, which would hide the data's age. It is
+    // safe only while HOT cannot happen: TEMP_HOT_ON (127) is above the clamp
+    // on caseTempC (85), and a HOT left in RTC memory is cleared (the magic
+    // bump's sanitizeState(), then updateTempMode() on every good read).
+    // If HOT ever comes back, move it into the final else, as COLD is.
     else if (tempMode == TEMP_HOT)  strcpy(tag, "HOT");   // the panel is told 25 C
     else if (chargeState() != 0) strcpy(tag, "CHG");   // asleep on purpose, so
                                                        // the cell gets the
