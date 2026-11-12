@@ -26,6 +26,12 @@ the one that makes the percentage meaningful, so it is not optional.
 | Partition | 8M with spiffs |
 | Core | 2.0.17 |
 | Upload speed | 115200 |
+| Libraries | the versions pinned in `firmware/ci/libraries.txt` |
+
+CI compiles every firmware PR with these settings (`firmware/ci/build.sh`).
+Each run's artifacts include flashable images and a `FLASH.txt` that names the
+commit they were built from and where each image goes. The `-full.bin` image
+erases the watch's settings, including the full-charge reading above.
 
 `Rtc_Pcf8563 claims to run on avr architecture` is expected and harmless — the
 Watchy library bundles that driver for earlier revisions. v3 does not use it.

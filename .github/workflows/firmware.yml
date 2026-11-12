@@ -1,0 +1,85 @@
+# Compile the watch firmware on every PR that touches it. The build itself
+# lives in firmware/ci/build.sh, so a desktop runs exactly what CI runs.
+name: Firmware
+
+on:
+  pull_request:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  push:
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels its older run. A push to main gets a group of
+# its own commit, so no later merge can cancel it, running or queued, and
+# every merged change gets its own image.
+concurrency:
+  group: firmware-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  compile:
+    name: Compile (esp32 2.0.17, ESP32S3 Dev Module, 8M with spiffs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Build the commit under review, not GitHub's temporary merge of it into
+      # main, so the images are the source they are named after. What lands
+      # on main is built again by the push trigger.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # The core's esptool, which turns the ELF into the flashable image, is a
+      # Python script that needs pyserial.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pyserial
+
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: "1.1.1"
+
+      # A branch cut before CI existed has this workflow (it comes from the
+      # merge preview) but not the script, since the checkout is its head.
+      - name: Check the branch has the build script
+        run: |
+          [ -f firmware/ci/build.sh ] || {
+            echo "::error::This branch predates firmware CI (no firmware/ci/build.sh). Merge main into it."
+            exit 1
+          }
+
+      - name: Build
+        id: build
+        run: firmware/ci/build.sh
+        env:
+          IMAGE_REF: ${{ github.event.pull_request.number && format('pr{0}', github.event.pull_request.number) || github.ref_name }}
+
+      # What OP flashes: -update.bin / -full.bin, the sketch zip and FLASH.txt
+      # (the commit, where each image goes, SHA-256). Images from main are
+      # kept 90 days, GitHub's maximum.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.image }}
+          path: firmware/ci/.build/out/flash/
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
+
+      # The IDE's build files with the ELF, for reviewers (nm, strings).
+      # Named for the commit that was pushed (on a PR, github.sha is the
+      # temporary merge commit, which matches nothing in the branch).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            firmware/ci/.build/out/*.bin
+            firmware/ci/.build/out/*.elf
+          retention-days: 14
