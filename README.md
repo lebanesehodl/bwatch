@@ -36,7 +36,7 @@ is where you check them.
 The case is the **Armadillonium**, SQFMI's official CNC anodized aluminium case for
 Watchy. Buy it from them unless you need a colour they do not sell — `hardware/case`
 holds the assembly split into its three parts and the manufacturing drawings that go
-with it, which exist because an orange case had to be machined.
+with it, which are there for a colour SQFMI does not sell.
 The geometry is theirs, under MIT; the drawings are ours.
 
 - Case: [shop.sqfmi.com](https://shop.sqfmi.com/products/watchy-cnc-anodized-aluminum-case)
