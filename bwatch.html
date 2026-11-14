@@ -362,8 +362,8 @@ nav .div{color:var(--orange);font-weight:400}
   <div class="chead"><div class="cnum">00</div><div><h2>Abstract</h2></div></div>
   <p>BWATCH is a wearable instrument for the timechain. It shows the
     height of the Bitcoin timechain, difficulty epochs, halvings, derives issued supply on-device
-    from the block height, carries a watch-only wallet that holds no key, and vibrates once for every block the
-    network finds — roughly one hundred and forty-four times a day. At the moment this page
+    from the block height, carries a watch-only wallet that holds no key, and buzzes once when it sees the chain
+    advance. At the moment this page
     loaded, the tip stood at <span class="live" id="tipa">······</span>.</p>
 
   <div class="chead"><div class="cnum">01</div><div><h2>Introduction</h2></div></div>
@@ -438,8 +438,9 @@ nav .div{color:var(--orange);font-weight:400}
   <h3>Measured, <em>not promised.</em></h3>
   <dl>
     <dt>Block height</dt>
-    <dd>On a network the height is exact — fetched, not inferred, and refreshed every fifteen
-      minutes. Off it, the watch falls back to dead reckoning: it counts forward at the epoch's
+    <dd>While the height data is fresh, the watch shows the height it fetched, not one it inferred,
+      and refreshes it about every fifteen minutes on the default setting. Once that data has gone
+      stale, the watch can fall back to dead reckoning: it counts forward at the epoch's
       measured block time, and the face
       stops claiming to know the tip — the unit line becomes an estimate with its own error bar,
       <b>EST +36 BLK +/-6</b> after six hours offline. Blocks arrive as a Poisson process, so the
@@ -497,8 +498,8 @@ nav .div{color:var(--orange);font-weight:400}
     <dt>Display</dt><dd>200 × 200 one-bit e-paper, 27.6 mm active. No backlight. Holds its image
       with the power off.</dd>
     <dt>Platform</dt><dd>Watchy by SQFMI, open hardware. ESP32-S3, WiFi, RTC, accelerometer.</dd>
-    <dt>Timekeeping</dt><dd>RTC disciplined by NTP every six hours. Block height is fetched, never inferred, while the network is reachable.</dd>
-    <dt>Haptics</dt><dd>One tick per block. Two quick pulses for a $1,000 rise, one long for a fall.</dd>
+    <dt>Timekeeping</dt><dd>RTC disciplined by NTP every six hours. Block height is the fetched height until that data has gone stale.</dd>
+    <dt>Haptics</dt><dd>One buzz when it sees the chain advance (on out of the box; Haptics &rsaquo; Block turns it off), however many blocks it missed since the last look. Two quick pulses for a $1,000 rise, one long for a fall.</dd>
     <dt>Battery</dt><dd>Multi-day on the wrist, deep sleep between minutes. Always awake when docked.</dd>
     <dt>Data</dt><dd>mempool.space, blockstream.info, Coinbase market data, alternative.me —
       or your own node.</dd>

@@ -4,8 +4,7 @@ A wristwatch that keeps Bitcoin's time. No app, no account, no custodian.
 
 Inspired by the digital watches of my youth, bwatch shows the height of the Bitcoin timechain, difficulty epochs, halvings, derives
 issued supply on-device from the block height. It also carries a watch-only wallet that holds
-no key, and vibrates once for every block the network finds, roughly one hundred and
-forty-four times a day. The Bitcoin price is available in twenty currencies along with SATS/USD (MSCW Time),
+no key, and buzzes once when it sees the chain advance. The Bitcoin price is available in twenty currencies along with SATS/USD (MSCW Time),
 six of them on the currency dial out of the box. Twelve instruments are built in; ten are in
 the face cycle out of the box.
 
@@ -82,8 +81,8 @@ Compatibility* or it will never see the network.
 
 Two rules run through the firmware and are worth knowing before changing it.
 
-**Never show a number you cannot defend.** Block height is fetched, never inferred,
-while the network is reachable. Once a fetch has actually failed the face switches to
+**Never show a number you cannot defend.** Block height is the fetched height
+until that data has gone stale. Then the face can switch to
 dead reckoning and says so — `EST +36 BLK +/-6` — rather than presenting a guess as a
 reading. The corner tag carries the age of everything on screen, so individual
 readouts do not each need their own disclaimer.
