@@ -5,8 +5,8 @@ Watchy, designed by SQFMI and published at
 [sqfmi/watchy-cases](https://github.com/sqfmi/watchy-cases) under the MIT licence.
 
 Buy it from [SQFMI](https://shop.sqfmi.com/products/watchy-cnc-anodized-aluminum-case)
-unless you need a colour they do not sell. Everything here exists because the
-Genesis edition is orange, which meant machining it.
+unless you need a colour they do not sell. A colour of your own means machining
+the case, and that is what the files below are for.
 
 ## What is here
 
