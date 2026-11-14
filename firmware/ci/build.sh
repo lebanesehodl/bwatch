@@ -124,6 +124,8 @@ flash="$(cd "$flash" && pwd)"
   0x10000 "$app.bin"
 (cd "$root/firmware" && python3 -m zipfile -c "$flash/$name-sketch.zip" BitcoinChronograph)
 
+full_end="$(printf '0x%x' "$(( $(wc -c < "$flash/$name-full.bin") ))")"
+
 if command -v sha256sum >/dev/null; then sha256=(sha256sum); else sha256=(shasum -a 256); fi
 (cd "$flash" && "${sha256[@]}" "$name"-* > SHA256SUMS)
 {
@@ -134,8 +136,16 @@ if command -v sha256sum >/dev/null; then sha256=(sha256sum); else sha256=(shasum
   echo "Update a watch that already runs BWATCH firmware, keeping its settings"
   echo "(Wi-Fi, wallet, Lightning address, time zone, battery calibration):"
   echo "  esptool.py --chip $mcu write_flash 0xe000 $name-update.bin"
-  echo "New watch, or a clean start. This ERASES all of those settings:"
+  echo "New watch, or starting over. This ERASES all of those settings:"
   echo "  esptool.py --chip $mcu write_flash 0x0 $name-full.bin"
+  echo "It writes 0x0 up to $full_end, the end of the app. The other app slot,"
+  echo "spiffs and coredump keep what they held; nothing here uses them."
+  echo "For a blank chip, run esptool.py --chip $mcu erase_flash first"
+  echo "(that erases the settings too)."
+  echo
+  echo "esptool finds the watch's port itself. With more than one ESP32 plugged"
+  echo "in, add --port: /dev/ttyACM0 on Linux, /dev/cu.usbmodem... on macOS,"
+  echo "COM5 (or whichever) on Windows."
   echo
   echo "SHA-256:"
   cat "$flash/SHA256SUMS"
