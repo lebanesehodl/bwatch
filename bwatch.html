@@ -391,7 +391,7 @@ nav .div{color:var(--orange);font-weight:400}
       the chain's measured pace, the retarget, the hashrate.</span></li>
     <li><b>PRC</b><span>price, in twenty currencies &mdash; six of them on the dial out of the
       box, the rest switched on in My Watch &rsaquo; Currency.</span></li>
-    <li><b>SAT</b><span>satoshis per unit of fiat, with Moscow Time in the box.</span></li>
+    <li><b>SAT</b><span>satoshis per unit of fiat, with one satoshi in that currency in the box.</span></li>
     <li><b>CAP</b><span>market capitalisation, and what share of gold's it has taken.</span></li>
     <li><b>FEE</b><span>sat/vB at high, medium and low priority, to two decimals — a quiet mempool runs
       below one sat per byte, and 0.25 is not 0.</span></li>
@@ -439,9 +439,9 @@ nav .div{color:var(--orange);font-weight:400}
   <dl>
     <dt>Block height</dt>
     <dd>While the height data is fresh, the watch shows the height it fetched, not one it inferred,
-      and refreshes it about every fifteen minutes on the default setting. Once that data has gone
+      and refreshes it about every fifteen minutes on the default battery setting. Once that data has gone
       stale, the watch can fall back to dead reckoning: it counts forward at the epoch's
-      measured block time, and the face
+      measured block time, corrected for the projected retarget, and the face
       stops claiming to know the tip — the unit line becomes an estimate with its own error bar,
       <b>EST +36 BLK +/-6</b> after six hours offline. Blocks arrive as a Poisson process, so the
       uncertainty grows as the square root of the blocks estimated: six hours of guessing is
