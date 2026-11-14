@@ -449,12 +449,13 @@ nav .div{color:var(--orange);font-weight:400}
       number that is quietly wrong.</dd>
     <dt>Payment detection</dt>
     <dd>Press UP in wallet mode and the receive QR appears — a watch-only wallet cannot spend, but
-      it can be paid. The watch then stands watch for two minutes, polling the address it just
-      showed, and buzzes the moment sats land. This works even in a parking lot at 1.3% battery.</dd>
+      it can be paid. On the wrist and with network access, the on-chain receive QR starts a
+      two-minute watch for incoming funds. If nothing is detected, it can check again at later
+      fetches for up to an hour. The watch can buzz when it detects a payment, including one not
+      yet confirmed. A buzz is not a confirmation.</dd>
     <dt>Lightning</dt>
-    <dd>LNURL-enabled: press UP again and the watch requests an invoice from your Lightning
-      address, renders it, and polls for settlement. Where the provider supports LNURL-verify it
-      buzzes three times within seconds of being paid.</dd>
+    <dd>Press UP again for a configured Lightning address or offer. The watch shows it as a QR;
+      as shipped, it does not detect Lightning payments.</dd>
     <dt>Supply</dt>
     <dd>Computed on the watch from block height alone. No API is involved; the height is the calendar.</dd>
     <dt>Privacy</dt>
