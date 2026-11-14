@@ -449,9 +449,10 @@ nav .div{color:var(--orange);font-weight:400}
       number that is quietly wrong.</dd>
     <dt>Payment detection</dt>
     <dd>Press UP in wallet mode and the receive QR appears — a watch-only wallet cannot spend, but
-      it can be paid. With network access, the on-chain receive QR starts a two-minute watch for incoming funds,
-      then a check at each update for an hour. The watch can buzz when it detects a payment, including one not yet confirmed. A buzz is
-      not a confirmation.</dd>
+      it can be paid. On the wrist and with network access, the on-chain receive QR starts a
+      two-minute watch for incoming funds. If nothing is detected, it can check again at later
+      fetches for up to an hour. The watch can buzz when it detects a payment, including one not
+      yet confirmed. A buzz is not a confirmation.</dd>
     <dt>Lightning</dt>
     <dd>Press UP again for a configured Lightning address or offer. The watch shows it as a QR;
       as shipped, it does not detect Lightning payments.</dd>
