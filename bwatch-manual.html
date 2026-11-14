@@ -281,8 +281,8 @@ footer a{color:var(--ink)}
 
     <ul class="legend">
       <li><span class="n">1</span><span><b>Freshness tag</b>
-        <span>How old the data is, always. LIVE under twenty minutes, then it counts the age
-        out loud.</span></span></li>
+        <span>How old the data is, always. LIVE under twenty minutes on the default battery setting,
+        then it counts the age out loud.</span></span></li>
       <li><span class="n">2</span><span><b>The number</b>
         <span>Whatever the current instrument measures. Sets smaller as it grows longer, so
         the figure is never abbreviated.</span></span></li>
@@ -408,7 +408,7 @@ footer a{color:var(--ink)}
   </div>
 
   <div class="states">
-    <div class="state"><b>LIVE</b><span>Fetched within the last twenty minutes.</span></div>
+    <div class="state"><b>LIVE</b><span>Fetched within the last twenty minutes, on the default battery setting.</span></div>
     <div class="state"><b>OLD 34M</b><span>The age of the data, in minutes, then hours.</span></div>
     <div class="state"><b>FTCH</b><span>You asked for a refresh and the radio is out.</span></div>
     <div class="state"><b>SCAN</b><span>Walking the wallet's addresses.</span></div>
@@ -420,8 +420,8 @@ footer a{color:var(--ink)}
 
   <div class="note">
     <div class="eyebrow">Off the network</div>
-    <p>After twenty minutes without an update, block height stops being reported and starts
-    being <b>estimated</b> — the unit line reads
+    <p>After twenty minutes without a height update (on the default battery setting), HGT can estimate
+    forward from the last fetched height — the unit line reads
     <span class="mono">EST +36 BLK +/-6</span>, meaning it has counted thirty-six blocks
     forward at the chain's measured pace and could be six either side. The watch would rather
     show you the size of its ignorance than a confident number that is quietly wrong.</p>
@@ -556,9 +556,9 @@ const MODES = [
     box:["+2.4","24H %"],
     txt:"One coin, in twenty currencies. Six on the dial out of the box, the rest in My Watch › Currency. Spelled out in full, whatever the scale.",
     up:"UP: switch currency" },
-  { tag:"SAT", name:"Sats per unit", big:"1,264", unit:"SAT / USD",
-    box:["12:64","MOSCOW"],
-    txt:"How many satoshis a unit of fiat buys, with Moscow Time in the box.",
+  { tag:"SAT", name:"Sats per unit", big:"1,262", unit:"SAT / USD",
+    box:["0.0008","/SAT"],
+    txt:"How many satoshis a unit of fiat buys. The box is the other side of it: one satoshi, in the same currency.",
     up:"UP: switch currency" },
   { tag:"CAP", name:"Market cap", big:"1.60", unit:"TRILLION USD",
     box:["9.4","% GOLD"],
