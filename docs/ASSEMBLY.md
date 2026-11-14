@@ -9,8 +9,11 @@ the one that makes the percentage meaningful, so it is not optional.
 - [ ] Setup WiFi — confirm `Keys 1 of 3` in About
 - [ ] Setup Wallet with a test zpub, confirm a balance, then clear it
 - [ ] Set Timezone
-- [ ] Walk every mode: HGT PRC SAT CAP FEE SUP HLV WAL JOE
-- [ ] Turn every dial: HGT has seven stops until block 1,000,000, six after
+- [ ] Walk every face in the cycle: HGT MEM PRC SAT CAP FEE SUP HLV WAL JOE (ten;
+      the strip shows them as HG ME PR SA CA FE SU HL WA JO)
+- [ ] My Watch › Faces: turn on MKT and BSK, walk both, then turn them **off**
+      again — they ship hidden
+- [ ] Turn every dial: HGT and MEM have seven stops each
 - [ ] Long-press UP — corner should read `FTCH`, then the face refreshes
 - [ ] Time Travel: forward, back, and **hold BACK** to come home
 - [ ] Wear it one day; note the percentage before and after
