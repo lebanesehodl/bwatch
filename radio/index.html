@@ -843,17 +843,24 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
 const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2,deep:0.9,shortwave:1.3,downstroke:0.8};   // even out the stations
 function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
 function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano");if(s==="beats")loadShots("drums");if(s==="nature"){loadShots("nature");setTimeout(()=>{if(!(OBUF.nature&&OBUF.nature.rain))prepareRain()},6000)}
-  if(s==="shortwave"){loadShots("voice");if(playing&&lastIdx>=0)setTimeout(async()=>{if(!(playing&&st==="shortwave"))return;const bk=chain[lastIdx],by=await songBytes(bk),t=ctx.currentTime+0.05;   // the full transmission for the block on air
-      swBusy=transmit(bk.height,by,t,{special:false,always:true})+0.5},1500)}}
+  if(s==="shortwave"){const run=playbackRun;loadShots("voice");if(playing&&lastIdx>=0)setTimeout(async()=>{if(!(playing&&st==="shortwave")||run!==playbackRun||lastIdx<0)return;
+      const bk=chain[lastIdx],by=await songBytes(bk);if(!playing||st!=="shortwave"||run!==playbackRun)return;
+      swBusy=transmit(bk.height,by,ctx.currentTime+0.05,{special:false,always:true})+0.5},1500)}}
 const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
 // ---------- the clock: live or tonight's replay ----------
 const $=id=>document.getElementById(id);
 let mode="live",speed=60,st="shortwave",playing=false,curChord="Dmaj9",pad=null;
 let chain=TONIGHT.slice(),lastIdx=-1,liveOk=null,mempoolCount=null,rStart=0,rVirt0=0;
-let nextBlip=0,nextGrain=0,timer=null,poll=null;
+let nextBlip=0,nextGrain=0,timer=null,poll=null,playbackRun=0;
 function virtNow(){return mode==="live"?Date.now():rVirt0+(ctx.currentTime-rStart)/speed*60000}
-function waitMin(){const b=chain[lastIdx];return b?Math.max(0,(virtNow()-b.time)/60000):0}
+// Keep miner timestamps for the timeline, not as a moving live-playback clock.
+// A future timestamp starts at zero observed age; a wall-clock correction cannot freeze the wait.
+function liveBlock(b){const time=b.timestamp*1000;
+  return {height:b.height,time,tx:b.tx_count,hash:b.id,waitAge:Math.max(0,(Date.now()-time)/60000),seenAt:performance.now()}}
+function waitMin(){const b=chain[lastIdx];if(!b)return 0;
+  if(mode==="live"&&Number.isFinite(b.seenAt))return b.waitAge+Math.max(0,performance.now()-b.seenAt)/60000;
+  return Math.max(0,(virtNow()-b.time)/60000)}
 const tensionOf=w=>1-Math.exp(-w/14);
 function rainRate(){
   if(mode==="live"){const c=mempoolCount||20000;return 1+8*Math.max(0,Math.min(1,Math.log10(c/2000)/2))}
@@ -898,7 +905,7 @@ function recall(notes,t){
     x+=n.d*(st==="deep"||st==="nature"?1.6:1.15)})}
 function harmonyTick(now,ten){
   if(lastIdx<0||!hist.length) return;
-  if(harm.next<now-5) harm.next=now+harmPeriod();
+  // A throttled/late tick still performs one change; scheduling ahead here would starve the progression.
   if(now<harm.next) return;
   const k=Math.max(1,Math.min(hist.length,1+Math.ceil(ten*1.5*(hist.length-1))));const win=hist.slice(-k);
   harm.pos=(harm.pos<0||harm.pos>=win.length-1)?0:harm.pos+1;if(win.length===1)harm.pos=0;
@@ -907,11 +914,10 @@ function harmonyTick(now,ten){
   if(!home&&Math.random()<0.35+0.5*ten) recall(vary(it.notes,harm.count++),now+0.15);
   harm.next=now+harmPeriod()*(home?1.5:1)}
 async function fireBlock(i,t){
-  const close=lastIdx<0?0.3:tensionOf(waitMin());
+  const run=playbackRun,close=lastIdx<0?0.3:tensionOf(waitMin());
   lastIdx=i;const b=chain[i];showBlock(b);
-  const by=await songBytes(b);const nc=nextChord(curChord,by);const notes=motif(by,nc);
-  remember(nc,notes,b.height);
-  if(!playing){curChord=nc;$("chord").textContent=nc;return}
+  const by=await songBytes(b);if(run!==playbackRun||!playing)return;
+  const nc=nextChord(curChord,by),notes=motif(by,nc);remember(nc,notes,b.height);
   const now=Math.max(ctx.currentTime,t);
   setKeyFor(b.height);if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now);$("chord").textContent=nc;$("from").textContent="";
   harm.next=now+harmPeriod()*1.5;harm.pos=-1;
@@ -946,21 +952,32 @@ async function getJSON(url,ms=6000){const c=new AbortController(),to=setTimeout(
   try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw new Error("HTTP "+r.status);const ct=r.headers.get("content-type")||"";return ct.includes("json")?await r.json():await r.text()}finally{clearTimeout(to)}}
 // the difficulty adjustment, from mempool.space: blocks left, the estimate, and the last one's result
 let adj=null;
-async function fetchAdj(){try{const a=await getJSON(API+"/v1/difficulty-adjustment");adj={change:a.difficultyChange,prev:a.previousRetarget};if(lastIdx>=0)showSchedule(chain[lastIdx].height)}catch(e){}}
+async function fetchAdj(run=playbackRun){try{const a=await getJSON(API+"/v1/difficulty-adjustment");if(run!==playbackRun||mode!=="live")return;
+  adj={change:a.difficultyChange,prev:a.previousRetarget};if(lastIdx>=0&&chain[lastIdx])showSchedule(chain[lastIdx].height)}catch(e){}}
 function adjResult(){if(mode==="live") return adj&&typeof adj.prev==="number"?adj.prev:null;return replaySet==="demo"?DEMO_ADJ:null}
-async function liveStart(){
-  try{const arr=await getJSON(API+"/v1/blocks");
-    chain=arr.slice().reverse().map(b=>({height:b.height,time:b.timestamp*1000,tx:b.tx_count,hash:b.id}));
+async function liveStart(run=playbackRun){
+  try{const arr=await getJSON(API+"/v1/blocks");if(run!==playbackRun||mode!=="live")return null;
+    chain=arr.slice().reverse().map(liveBlock);
     liveOk=true;curChord="Dmaj9";hist=[];
-    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i>=chain.length-HIST_MAX)remember(curChord,motif(by,curChord),chain[i].height);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
-    try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}
-    await fetchAdj();
-    return true}catch(e){liveOk=false;return false}}
-function livePoll(){clearInterval(poll);poll=setInterval(async()=>{
-  try{const tip=await getJSON(API+"/blocks/tip/hash");if(tip&&tip.trim()!==chain[chain.length-1].hash){
-    const arr=await getJSON(API+"/v1/blocks");const known=new Set(chain.map(b=>b.hash));await fetchAdj();
-    arr.slice().reverse().filter(b=>!known.has(b.id)).forEach(nb=>{chain.push({height:nb.height,time:nb.timestamp*1000,tx:nb.tx_count,hash:nb.id});if(chain.length>40)chain.shift();fireBlock(chain.length-1,ctx.currentTime)})}}catch(e){}
-  try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}},20000)}
+    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);if(run!==playbackRun||mode!=="live")return null;
+      curChord=nextChord(curChord,by);if(i>=chain.length-HIST_MAX)remember(curChord,motif(by,curChord),chain[i].height);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
+    try{const m=await getJSON(API+"/mempool");if(run===playbackRun)mempoolCount=m.count}catch(e){}
+    if(run!==playbackRun||mode!=="live")return null;
+    await fetchAdj(run);
+    return run===playbackRun?true:null}catch(e){if(run!==playbackRun)return null;liveOk=false;return false}}
+function livePoll(){const run=playbackRun;let busy=false;clearInterval(poll);poll=setInterval(async()=>{
+  if(run!==playbackRun||!playing||busy)return;busy=true;
+  try{
+    try{const tip=await getJSON(API+"/blocks/tip/hash");if(run!==playbackRun||!playing)return;
+      if(tip&&tip.trim()!==chain[chain.length-1].hash){
+        const arr=await getJSON(API+"/v1/blocks");if(run!==playbackRun||!playing)return;
+        const known=new Set(chain.map(b=>b.hash));await fetchAdj(run);if(run!==playbackRun||!playing)return;
+        for(const nb of arr.slice().reverse().filter(b=>!known.has(b.id))){
+          chain.push(liveBlock(nb));if(chain.length>40)chain.shift();await fireBlock(chain.length-1,ctx.currentTime);
+          if(run!==playbackRun||!playing)return}}}catch(e){}
+    if(run!==playbackRun||!playing)return;
+    try{const m=await getJSON(API+"/mempool");if(run===playbackRun)mempoolCount=m.count}catch(e){}
+  }finally{busy=false}},20000)}
 
 // ---------- timeline ----------
 const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -990,22 +1007,27 @@ const REPLAY_NOTE="Tonight's 24 blocks, 975,097 to 975,120 (3:52 to 9:33 PM ET, 
 function setReplayUI(set="tonight"){mode="replay";replaySet=set;press($("srcSeg"),$(set==="demo"?"srcDemo":"srcReplay"));$("speedRow").hidden=false;$("srcNote").textContent=set==="demo"?DEMO_NOTE:REPLAY_NOTE;
   if(set==="demo"){speed=2;press($("speedSeg"),document.querySelector('#speedSeg [data-speed="2"]'))}}
 async function start(){
-  initAudio();unlockAudio();if(ctx.state==="suspended") await ctx.resume();
+  const run=++playbackRun;
+  initAudio();unlockAudio();if(ctx.state!=="running") await ctx.resume();
+  if(run!==playbackRun)return;
   playing=true;$("play").classList.add("on");$("play").setAttribute("aria-pressed","true");$("playLabel").textContent="Stop";
   nextBlip=nextGrain=ctx.currentTime+0.1;
   if(mode==="live"){$("waitText").textContent="Tuning in to mempool.space…";
-    if(!(await liveStart())){setReplayUI();$("srcLive").disabled=true;
+    const ok=await liveStart(run);if(ok===null)return;
+    if(!ok){setReplayUI();$("srcLive").disabled=true;
       $("srcNote").textContent="Live blocks need a connection to mempool.space, which isn't available here. Playing tonight's recorded blocks instead."}}
-  if(!playing) return;
+  if(!playing||run!==playbackRun) return;
   if(mode==="live"){lastIdx=chain.length-1;showBlock(chain[lastIdx]);$("src").innerHTML="<b>● Live</b> · mempool.space";livePoll()}
   else{chain=(replaySet==="demo"?DEMO:TONIGHT).slice();lastIdx=-1;curChord="Dmaj9";hist=[];rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent=replaySet==="demo"?"Demo · simulated blocks":"Tonight · recorded blocks";showSchedule(chain[0].height-1)}
   setKeyFor(chain[Math.max(0,lastIdx)].height);
+  if(pad)pad.stop(ctx.currentTime);
   pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);trim();loadFor(st);
+  harm.next=ctx.currentTime+harmPeriod()*1.5;harm.pos=-1;harm.count=0;
   clearInterval(timer);timer=setInterval(tick,100);tick();presenceOn()}
 function stop(){
   if(playing){playing=false;presenceOff()}
   try{if(unlockEl)unlockEl.pause()}catch(e){}
-  playing=false;clearInterval(timer);clearInterval(poll);
+  playing=false;playbackRun++;clearInterval(timer);clearInterval(poll);
   if(ctx){if(pad){pad.stop(ctx.currentTime);pad=null}stopBed()}try{speechSynthesis.cancel()}catch(e){}
   $("play").classList.remove("on");$("play").setAttribute("aria-pressed","false");$("playLabel").textContent="Play";
   $("waitText").textContent="Press play to listen";$("tension").style.width="0";$("tensionPct").textContent="";draw()}
