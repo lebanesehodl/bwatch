@@ -633,7 +633,7 @@ document.getElementById('finish').addEventListener('click',function(){
   genesis=!genesis;
   caseParts.forEach(function(m){m.material=genesis?matAnod:matAlu});
   screwParts.forEach(function(m){m.material=genesis?matSteel:matOrange});
-  this.textContent='Finish: '+(genesis?'Genesis orange':'natural');
+  this.textContent='Finish: '+(genesis?'orange':'natural');
   this.classList.toggle('on',genesis);
 });
 document.getElementById('theme').addEventListener('click',function(){
