@@ -550,7 +550,7 @@ footer a{color:var(--ink)}
 const MODES = [
   { tag:"HGT", name:"Block height", big:"964,379", unit:"TIMECHAIN TIP",
     box:["3.125","BTC RWD"],
-    txt:"The tip, fetched every fifteen minutes and never inferred while the network is reachable.",
+    txt:"The last fetched chain tip. Once that height data goes stale, HGT can estimate forward from it.",
     up:"UP: reward · miner · retarget · min/blk · txs · hashrate · unconfirmed" },
   { tag:"PRC", name:"Price", big:"79,214", unit:"USD / BTC",
     box:["+2.4","24H %"],
