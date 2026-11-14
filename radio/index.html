@@ -431,22 +431,32 @@ let keyShift=0,octShift=0;
 function keyFor(h){let k=(Math.floor(h/2016)*7)%12;return k>6?k-12:k}                 // round the circle of fifths, one step per epoch
 function octFor(h){return Math.max(-24,Math.min(24,-12*(Math.floor(h/210000)-4)))}      // era 4 (840,000 to 1,049,999) is home
 function setKeyFor(h){keyShift=keyFor(h);octShift=octFor(h)}
+// Shortwave keeps its three-voice organ. The hash chooses the voicing and phrasing;
+// a verified retarget gently biases colour and activity, never gain or the epoch key.
+function shortwavePlan(by,change){by=by||new Uint8Array(32);
+  const x=Number.isFinite(change)?Math.max(-1,Math.min(1,change/10)):0;
+  return {voicing:by[12]%4,broken:!!(by[13]&1),period:18+4*(by[14]%4),chapter:75+15*(by[15]%4),
+    brightness:Math.pow(2,x*0.35),activity:1+x*0.25}}
+function shortwaveSettings(){const b=chain[lastIdx],it=hist[hist.length-1];return shortwavePlan(it&&it.by,retuneChange(b&&b.height))}
 // ---------- a held chord, with one filter the wait opens ----------
 const PADS={sunday:[380,2600],deep:[180,900],musicbox:[1200,600],shortwave:[900,700],heart:[500,500]};
 function makePad(chord,st,t){
   if(!PADS[st]) return null;
   const T=keyShift+octShift;const bass=CH[chord][0]+T,up=CH[chord][1].map(m=>m+T);const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(1,t+3);
   const f=ctx.createBiquadFilter();f.type="lowpass";f.Q.value=0.6;f.frequency.value=PADS[st][0];f.connect(g);g.connect(bus);
-  const oscs=[];const add=(type,freq,det,lvl,dest=f)=>{const o=ctx.createOscillator(),og=ctx.createGain();o.type=type;o.frequency.value=freq;o.detune.value=det;og.gain.value=lvl;o.connect(og);og.connect(dest);o.start(t);oscs.push(o)};
+  const oscs=[];const add=(type,freq,det,lvl,dest=f)=>{const o=ctx.createOscillator(),og=ctx.createGain();o.type=type;o.frequency.value=freq;o.detune.value=det;og.gain.value=lvl;o.connect(og);og.connect(dest);o.start(t);oscs.push(o);return og};
   const notes=[bass,...up];
   if(st==="sunday") notes.forEach((m,i)=>{add("sawtooth",mtof(m),-6,0.016);add("sawtooth",mtof(m),6,0.016);add("sine",mtof(m),0,i?0.03:0.05)});
   if(st==="deep") notes.forEach((m,i)=>{const mm=i?m-12:m;add("triangle",mtof(mm),-4,0.05);add("sine",mtof(mm),5,0.05)});
   if(st==="musicbox") up.forEach(m=>add("sine",mtof(m+12),0,0.012));
-  if(st==="shortwave") [bass+24,up[1]+12,up[2]+12].forEach(m=>add("square",mtof(m),0,0.01));   // up an octave: small speakers barely play the old register
+  if(st==="shortwave"){const p=shortwaveSettings(),voices=[[1,2],[0,3],[2,3],[0,2]][p.voicing];
+    [bass+24,...voices.map(i=>up[i]+12)].forEach((m,i)=>{const v=add("square",mtof(m),0,0.01);
+      if(p.broken){v.gain.setValueAtTime(0,t);v.gain.linearRampToValueAtTime(0.01,t+0.6+i*0.7)}})}   // keep the phone-friendly register
   if(st==="heart"){            // a hum: voices through two vowel formants
     const f1=ctx.createBiquadFilter(),f2=ctx.createBiquadFilter();f1.type=f2.type="bandpass";f1.frequency.value=320;f2.frequency.value=820;f1.Q.value=f2.Q.value=4;
     f1.connect(f);f2.connect(f);up.slice(0,3).forEach(m=>{add("sawtooth",mtof(m-12),-3,0.05,f1);add("sawtooth",mtof(m-12),3,0.03,f2)})}
-  return {tension(x,now){f.frequency.setTargetAtTime(PADS[st][0]+PADS[st][1]*Math.pow(x,1.3),now,0.8)},
+  return {tension(x,now){const colour=st==="shortwave"?shortwaveSettings().brightness:1;f.frequency.setTargetAtTime((PADS[st][0]+PADS[st][1]*Math.pow(x,1.3))*colour,now,0.8)},
+    level(x,now){g.gain.cancelScheduledValues(now);g.gain.setTargetAtTime(x,now,1.5)},
     stop(now){g.gain.cancelScheduledValues(now);g.gain.setValueAtTime(g.gain.value,now);g.gain.linearRampToValueAtTime(0,now+3);oscs.forEach(o=>o.stop(now+3.2))}}
 }
 
@@ -515,15 +525,17 @@ function radioVoice(){ if(radioIn) return radioIn; const bp=ctx.createBiquadFilt
   bp.connect(ws);ws.connect(hp);hp.connect(g);g.connect(bus);return radioIn=bp}
 // the interval signal: before the numbers, a numbers station plays a short tune over and over so you know you've
 // found it. Here the tune is the block's melody, on a thin reed organ, through the same narrow, fading line.
-function intervalSignal(notes,t,reps){const v=radioVoice();const fade=ctx.createGain();fade.connect(v);
+let swBusy=0,swSignal=null;
+function stopSignal(now){if(swSignal){swSignal.stop(now);swSignal=null}}
+function intervalSignal(notes,t,reps,shift=0,level=1){const v=radioVoice();const fade=ctx.createGain();fade.connect(v);
   const len=notes.reduce((a,n)=>a+n.d*1.25,0)+0.45,total=len*reps;
-  for(let k=0;k<=Math.ceil(total/0.8);k++) fade.gain.setValueAtTime(0.55+0.45*Math.sin(k*1.7+t),t+k*0.8);   // the signal drifts in and out
+  for(let k=0;k<=Math.ceil(total/0.8);k++) fade.gain.setValueAtTime(level*(0.55+0.45*Math.sin(k*1.7+t)),t+k*0.8);   // the signal drifts in and out
   const wob=ctx.createOscillator(),wg=ctx.createGain();wob.frequency.value=0.6;wg.gain.value=14;wob.connect(wg);wob.start(t);wob.stop(t+total+1);
   for(let r=0;r<reps;r++){let x=t+r*len;notes.forEach(n=>{const d=n.d*1.25*0.85;
-    [["square",0.05],["triangle",0.09]].forEach(([type,pk])=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type=type;o.frequency.value=mtof(n.m);wg.connect(o.detune);
+    [["square",0.05],["triangle",0.09]].forEach(([type,pk])=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type=type;o.frequency.value=mtof(n.m+shift);wg.connect(o.detune);
       o.connect(g);g.connect(fade);g.gain.setValueAtTime(0,x);g.gain.linearRampToValueAtTime(pk,x+0.015);g.gain.setValueAtTime(pk,x+d-0.05);g.gain.linearRampToValueAtTime(0,x+d);o.start(x);o.stop(x+d+0.05)});
     x+=n.d*1.25})}
-  return total}
+  return {until:t+total,stop(now){fade.gain.cancelScheduledValues(now);fade.gain.setValueAtTime(fade.gain.value,now);fade.gain.linearRampToValueAtTime(0,now+0.03)}}}
 // Morse: each block signs off with a call sign drawn from its hash, keyed at 18 words a minute on a 700 Hz tone
 const MORSE={A:".-",B:"-...",C:"-.-.",D:"-..",E:".",F:"..-.",G:"--.",H:"....",I:"..",J:".---",K:"-.-",L:".-..",M:"--",N:"-.",O:"---",P:".--.",Q:"--.-",R:".-.",S:"...",T:"-",U:"..-",V:"...-",W:".--",X:"-..-",Y:"-.--",Z:"--..",
   "^":"...-.-","0":"-----","1":".----","2":"..---","3":"...--","4":"....-","5":".....","6":"-....","7":"--...","8":"---..","9":"----."};
@@ -535,7 +547,6 @@ function morse(text,t,wpm=18){const dot=1.2/wpm;const o=ctx.createOscillator();o
       key.gain.setValueAtTime(0,x);key.gain.linearRampToValueAtTime(1,x+0.005);key.gain.setValueAtTime(1,x+len-0.005);key.gain.linearRampToValueAtTime(0,x+len);x+=len+dot});x+=dot*2});
   for(let k=0;k<=(x-t)/0.7;k++) fade.gain.setValueAtTime(0.1+0.07*Math.sin(k*1.3+t),t+k*0.7);   // a little fading on the line
   o.start(t);o.stop(x+0.1);return x-t}
-let swBusy=0;
 // the dial turning: static and a whistle sweep across the band, then settle
 function tuneSweep(t){const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.Q.value=2;
   f.frequency.setValueAtTime(400,t);f.frequency.exponentialRampToValueAtTime(3200,t+1.2);f.frequency.exponentialRampToValueAtTime(1100,t+2.4);
@@ -552,6 +563,7 @@ function scheduleCue(h,always){const r=2016-(h%2016),hr=210000-(h%210000);
   return null}
 // one transmission. special: a retarget or halving block gets its own broadcast. signoff: the closing Morse.
 function transmit(h,by,t,{special=true,always=false,signoff="^",adjPct=null}={}){
+  stopSignal(ctx.currentTime);
   const cs=callSign(by),retarget=special&&h%2016===0,halving=special&&h%210000===0;let x=t;
   if(halving){duck(x,3.6);x+=0.9;x+=morse("QRT",x)+1.8}                    // closing down: the era ends
   if(retarget){tuneSweep(x);x+=2.6;x+=morse("QSY",x)+0.5}                  // change frequency: the network retunes
@@ -809,7 +821,7 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){   // blocks faster than a transmission (fast replay): just the pips, so they never pile up
     if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return}
-    swBusy=transmit(b.height,by,t,{adjPct:adjResult()})+0.5;return}
+    swBusy=transmit(b.height,by,t,{adjPct:adjResult(b)})+0.5;return}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
     if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
     else d=thunder(t,size,close);bolt(d);
@@ -843,8 +855,9 @@ function grain(st,t){const p=Math.random()*1.8-0.9;
 const TRIM={lofi:0.45,night:0.28,metro:2.6,sunday:1,nature:1.8,beats:0.5,heart:0.9,musicbox:2,deep:0.9,shortwave:1.3,downstroke:0.8};   // even out the stations
 function trim(){if(out) out.gain.setTargetAtTime(0.9*(TRIM[st]||1),ctx.currentTime,0.4)}
 function loadFor(s){if(s==="lofi")loadInst("upright");if(s==="night")loadInst("fmpiano");if(s==="beats")loadShots("drums");if(s==="nature"){loadShots("nature");setTimeout(()=>{if(!(OBUF.nature&&OBUF.nature.rain))prepareRain()},6000)}
-  if(s==="shortwave"){loadShots("voice");if(playing&&lastIdx>=0)setTimeout(async()=>{if(!(playing&&st==="shortwave"))return;const bk=chain[lastIdx],by=await songBytes(bk),t=ctx.currentTime+0.05;   // the full transmission for the block on air
-      swBusy=transmit(bk.height,by,t,{special:false,always:true})+0.5},1500)}}
+  if(s==="shortwave"){const run=sourceRun;loadShots("voice");if(playing&&lastIdx>=0)setTimeout(async()=>{if(!(playing&&st==="shortwave")||run!==sourceRun||lastIdx<0)return;
+      const version=chainVersion,bk=chain[lastIdx],by=await songBytes(bk);if(run!==sourceRun||version!==chainVersion||!playing||st!=="shortwave")return;
+      swBusy=transmit(bk.height,by,ctx.currentTime+0.05,{special:false,always:true})+0.5},1500)}}
 const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicbox:1,deep:1,shortwave:1,nature:1};
 
 // ---------- the clock: live or tonight's replay ----------
@@ -870,8 +883,9 @@ function bolt(){const b=$("bolt");b.classList.add("on");requestAnimationFrame(()
 // as the wait grows it reaches further back, and each block's chord brings back that block's melody, varied.
 // The next block brings it home and joins the progression; the oldest one leaves it.
 const HIST_MAX=8;let hist=[],harm={next:0,pos:0,count:0};
-function remember(chord,notes,height){hist.push({chord,notes,height});if(hist.length>HIST_MAX)hist.shift();harm.pos=-1}
+function remember(chord,notes,height,by){hist.push({chord,notes,height,by});if(hist.length>HIST_MAX)hist.shift();harm.pos=-1}
 function harmPeriod(){
+  if(st==="shortwave")return shortwaveSettings().period;
   if(st==="lofi") return 8*60/lofi.bpm; if(st==="night") return 8*60/night.bpm;
   if(st==="beats") return 8*60/beat.bpm; if(st==="downstroke") return 16*60/rock.bpm; return 9}
 function setChord(ch,now,fromHeight){
@@ -896,8 +910,23 @@ function recall(notes,t){
     if(st==="nature"||st==="metro") chime(mtof(n.m+(st==="metro"?12:0)),x,0.018,(n.m-74)/14);
     if(st==="heart") tone("sine",mtof(n.m-12),x,0.08,0.035,0.5,(n.m-74)/18);
     x+=n.d*(st==="deep"||st==="nature"?1.6:1.15)})}
+// Longer, block-seeded chapters: settle, explore, answer, then leave the line to the static.
+// Speech/Morse always wins; only one quiet phrase can be active at a time.
+function shortwaveTick(now,ten){
+  if(now<harm.next)return;
+  const p=shortwaveSettings(),latest=hist[hist.length-1],by=latest.by||new Uint8Array(32);
+  const seconds=Math.max(0,waitMin()*60),part=Math.floor(seconds/p.chapter)%4,turn=harm.count++;
+  const k=Math.max(1,Math.min(hist.length,1+Math.ceil(ten*1.5*(hist.length-1)))),win=hist.slice(-k);
+  const home=part===0||part===3||turn%3===0,it=home?latest:win[(by[16+turn%16]+turn)%win.length];
+  setChord(it.chord,now,home?null:it.height);
+  if(pad)pad.level(part===3?0:1,now);
+  const chance=(part===0?0.3:part===1?0.5:0.65)*p.activity;
+  if(part!==3&&now>swBusy+1&&(!swSignal||now>swSignal.until+5)&&(by[16+(turn+7)%16]+turn*37)%256/256<chance){
+    stopSignal(now);swSignal=intervalSignal(vary(it.notes,turn),now+0.15,1,keyShift+octShift,part===2?0.24:0.18)}
+  harm.next=now+p.period*(part===3?1.5:1)/p.activity}
 function harmonyTick(now,ten){
   if(lastIdx<0||!hist.length) return;
+  if(st==="shortwave"){shortwaveTick(now,ten);return}
   if(harm.next<now-5) harm.next=now+harmPeriod();
   if(now<harm.next) return;
   const k=Math.max(1,Math.min(hist.length,1+Math.ceil(ten*1.5*(hist.length-1))));const win=hist.slice(-k);
@@ -907,10 +936,10 @@ function harmonyTick(now,ten){
   if(!home&&Math.random()<0.35+0.5*ten) recall(vary(it.notes,harm.count++),now+0.15);
   harm.next=now+harmPeriod()*(home?1.5:1)}
 async function fireBlock(i,t){
-  const close=lastIdx<0?0.3:tensionOf(waitMin());
+  const run=sourceRun,version=chainVersion,close=lastIdx<0?0.3:tensionOf(waitMin());
   lastIdx=i;const b=chain[i];showBlock(b);
-  const by=await songBytes(b);const nc=nextChord(curChord,by);const notes=motif(by,nc);
-  remember(nc,notes,b.height);
+  const by=await songBytes(b);if(run!==sourceRun||version!==chainVersion)return;const nc=nextChord(curChord,by);const notes=motif(by,nc);
+  remember(nc,notes,b.height,by);if(st==="shortwave")harm.count=0;
   if(!playing){curChord=nc;$("chord").textContent=nc;return}
   const now=Math.max(ctx.currentTime,t);
   setKeyFor(b.height);if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now);$("chord").textContent=nc;$("from").textContent="";
@@ -943,24 +972,107 @@ function tick(){
 }
 // ---------- live data ----------
 async function getJSON(url,ms=6000){const c=new AbortController(),to=setTimeout(()=>c.abort(),ms);
-  try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw new Error("HTTP "+r.status);const ct=r.headers.get("content-type")||"";return ct.includes("json")?await r.json():await r.text()}finally{clearTimeout(to)}}
-// the difficulty adjustment, from mempool.space: blocks left, the estimate, and the last one's result
-let adj=null;
-async function fetchAdj(){try{const a=await getJSON(API+"/v1/difficulty-adjustment");adj={change:a.difficultyChange,prev:a.previousRetarget};if(lastIdx>=0)showSchedule(chain[lastIdx].height)}catch(e){}}
-function adjResult(){if(mode==="live") return adj&&typeof adj.prev==="number"?adj.prev:null;return replaySet==="demo"?DEMO_ADJ:null}
-async function liveStart(){
-  try{const arr=await getJSON(API+"/v1/blocks");
-    chain=arr.slice().reverse().map(b=>({height:b.height,time:b.timestamp*1000,tx:b.tx_count,hash:b.id}));
+  try{const mutable=url.startsWith(API)&&!url.startsWith(API+"/block/");const r=await fetch(url,{signal:c.signal,cache:mutable?"no-store":"default"});if(!r.ok)throw new Error("HTTP "+r.status);const ct=r.headers.get("content-type")||"";return ct.includes("json")?await r.json():await r.text()}finally{clearTimeout(to)}}
+// Mainnet-only numeric consistency helper; NOT a chain/PoW verifier.
+// Caller separately checks height, hashes, linkage, active chain and playback generation.
+// Reference: Bitcoin Core v28.0 (MIT): src/arith_uint256.cpp, src/pow.cpp,
+// src/rpc/blockchain.cpp. Reviewed with Bitcoin; no percentage cutoff.
+const MAINNET_POW_LIMIT = (1n << 224n) - 1n;
+const DIFF_ONE_TARGET = 0xffffn << 208n;
+// JSON/double consistency tolerance, NOT a consensus/retarget tolerance.
+const DIFFICULTY_REL_TOLERANCE = 1e-10;
+function packTarget(target) {
+  if (target === 0n) return 0;
+  let size = Math.ceil(target.toString(16).length / 2);
+  let word = Number(size <= 3 ? target << BigInt(8 * (3 - size)) : target >> BigInt(8 * (size - 3)));
+  if (word & 0x00800000) { word >>>= 8; size++; }
+  return ((size << 24) | word) >>> 0;
+}
+function unpackTarget(bits) {
+  const size = bits >>> 24, word = BigInt(bits & 0x007fffff);
+  return size <= 3 ? word >> BigInt(8 * (3 - size)) : word << BigInt(8 * (size - 3));
+}
+function mainnetTarget(bits) {
+  if (!Number.isInteger(bits) || bits <= 0 || bits > 0xffffffff || (bits & 0x00800000)) return null;
+  const target = unpackTarget(bits);
+  if (target <= 0n || target > MAINNET_POW_LIMIT || packTarget(target) !== bits) return null;
+  return target;
+}
+function difficultyMatches(value, target) {
+  if (!Number.isFinite(value) || value <= 0) return false;
+  const expected = Number(DIFF_ONE_TARGET) / Number(target);
+  return Math.abs(value / expected - 1) <= DIFFICULTY_REL_TOLERANCE;
+}
+function checkedMainnetRetargetPct(oldBits, newBits, oldDifficulty, newDifficulty) {
+  const before = mainnetTarget(oldBits), after = mainnetTarget(newBits);
+  if (before === null || after === null) return null;
+  // Exact integer truncation, powLimit and compact rounding at a boundary.
+  const minTarget = unpackTarget(packTarget(before / 4n)), easiest = before * 4n;
+  const maxTarget = unpackTarget(packTarget(easiest > MAINNET_POW_LIMIT ? MAINNET_POW_LIMIT : easiest));
+  if (after < minTarget || after > maxTarget) return null;
+  if (!difficultyMatches(oldDifficulty, before) || !difficultyMatches(newDifficulty, after)) return null;
+  const pct = 100 * (Number(before) / Number(after) - 1);
+  return Number.isFinite(pct) ? pct : null;
+}
+// End retarget numeric helper.
+// The next-adjustment estimate is display-only; only an associated boundary colours the music.
+let adj=null,retune=null,sourceRun=0,chainVersion=0,retuneRequest=0;
+async function fetchAdj(run=sourceRun){try{const a=await getJSON(API+"/v1/difficulty-adjustment");if(run!==sourceRun||mode!=="live")return;adj={change:a.difficultyChange};if(lastIdx>=0)showSchedule(chain[lastIdx].height)}catch(e){}}
+const blockHash=h=>typeof h==="string"&&/^[0-9a-f]{64}$/.test(h);
+function retargetPair(b,prev,boundary,hash){
+  if(!Number.isSafeInteger(boundary)||boundary<=0||boundary%2016!==0||!blockHash(hash))return null;
+  if(!b||!prev||b.height!==boundary||prev.height!==boundary-1||b.id!==hash||!blockHash(b.previousblockhash)||prev.id!==b.previousblockhash)return null;
+  const change=checkedMainnetRetargetPct(prev.bits,b.bits,prev.difficulty,b.difficulty);
+  return change===null?null:{network:"mainnet",boundary,hash,previous:prev.id,change}}
+// Height lookup + linked records + a second active-chain check bind the percentage to this boundary.
+// A late response from another playback run must never colour the current station.
+async function fetchRetune(tip,run=sourceRun){if(run!==sourceRun)return;const request=++retuneRequest,cached=retune;retune=null;
+  if(!tip||!Number.isSafeInteger(tip.height)||!blockHash(tip.hash))return;
+  const boundary=Math.floor(tip.height/2016)*2016;if(boundary===0)return;
+  try{const raw=await getJSON(API+"/block-height/"+boundary),hash=typeof raw==="string"?raw.trim():null;
+    if(!blockHash(hash)||(tip.height===boundary&&tip.hash!==hash))return;
+    let result=cached&&cached.boundary===boundary&&cached.hash===hash?cached:null;
+    if(!result){const b=await getJSON(API+"/block/"+hash);if(!b||!blockHash(b.previousblockhash))return;
+      const prev=await getJSON(API+"/block/"+b.previousblockhash);result=retargetPair(b,prev,boundary,hash)}
+    if(!result)return;
+    const active=await getJSON(API+"/block-height/"+boundary);
+    if(typeof active!=="string"||active.trim()!==hash)return;
+    if(tip.height!==boundary){const tipActive=await getJSON(API+"/block-height/"+tip.height);
+      if(typeof tipActive!=="string"||tipActive.trim()!==tip.hash)return}
+    if(run===sourceRun&&request===retuneRequest&&playing&&mode==="live")retune={...result,tipHash:tip.hash,observedAt:Date.now()};
+  }catch(e){}}
+function retuneChange(h){
+  if(!Number.isSafeInteger(h))return null;
+  const boundary=Math.floor(h/2016)*2016;
+  if(mode==="live")return retune&&retune.boundary===boundary&&chain.length&&chain[chain.length-1].hash===retune.tipHash?retune.change:null;
+  return replaySet==="demo"&&boundary===975744?DEMO_ADJ:null}
+function adjResult(b){if(!b||!Number.isSafeInteger(b.height))return null;
+  const change=retuneChange(b.height);
+  return mode==="live"?change!==null&&b.height===retune.boundary&&b.hash===retune.hash?change:null:change}
+async function liveStart(run=sourceRun){
+  try{const arr=await getJSON(API+"/v1/blocks");if(run!==sourceRun||mode!=="live")return null;
+    chainVersion++;chain=arr.slice().reverse().map(b=>({height:b.height,time:b.timestamp*1000,tx:b.tx_count,hash:b.id}));
     liveOk=true;curChord="Dmaj9";hist=[];
-    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);curChord=nextChord(curChord,by);if(i>=chain.length-HIST_MAX)remember(curChord,motif(by,curChord),chain[i].height);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
-    try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}
-    await fetchAdj();
-    return true}catch(e){liveOk=false;return false}}
-function livePoll(){clearInterval(poll);poll=setInterval(async()=>{
-  try{const tip=await getJSON(API+"/blocks/tip/hash");if(tip&&tip.trim()!==chain[chain.length-1].hash){
-    const arr=await getJSON(API+"/v1/blocks");const known=new Set(chain.map(b=>b.hash));await fetchAdj();
-    arr.slice().reverse().filter(b=>!known.has(b.id)).forEach(nb=>{chain.push({height:nb.height,time:nb.timestamp*1000,tx:nb.tx_count,hash:nb.id});if(chain.length>40)chain.shift();fireBlock(chain.length-1,ctx.currentTime)})}}catch(e){}
-  try{const m=await getJSON(API+"/mempool");mempoolCount=m.count}catch(e){}},20000)}
+    for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);if(run!==sourceRun||mode!=="live")return null;curChord=nextChord(curChord,by);if(i>=chain.length-HIST_MAX)remember(curChord,motif(by,curChord),chain[i].height,by);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
+    try{const m=await getJSON(API+"/mempool");if(run===sourceRun)mempoolCount=m.count}catch(e){}
+    if(run!==sourceRun||mode!=="live")return null;
+    await Promise.all([fetchAdj(run),fetchRetune(chain[chain.length-1],run)]);
+    return run===sourceRun?true:null}catch(e){if(run!==sourceRun)return null;liveOk=false;return false}}
+function livePoll(){const run=sourceRun;let busy=false;clearInterval(poll);poll=setInterval(async()=>{
+  if(busy||run!==sourceRun||!playing)return;busy=true;
+  try{const raw=await getJSON(API+"/blocks/tip/hash"),tip=typeof raw==="string"?raw.trim():null;if(run!==sourceRun||!playing)return;
+    if(!blockHash(tip))throw new Error("Invalid tip");
+    if(tip!==chain[chain.length-1].hash){retune=null;
+      const arr=await getJSON(API+"/v1/blocks");if(run!==sourceRun||!playing)return;
+      if(!Array.isArray(arr)||!arr.length||arr[0].id!==tip)throw new Error("Tip snapshot changed");
+      const known=new Set(chain.map(b=>b.hash));await Promise.all([fetchAdj(run),fetchRetune({height:arr[0].height,hash:arr[0].id},run)]);
+      if(run!==sourceRun||!playing)return;
+      chainVersion++;arr.slice().reverse().filter(b=>!known.has(b.id)).forEach(nb=>{chain.push({height:nb.height,time:nb.timestamp*1000,tx:nb.tx_count,hash:nb.id});if(chain.length>40)chain.shift();fireBlock(chain.length-1,ctx.currentTime)})}
+    else if(!retune)await fetchRetune(chain[chain.length-1],run);
+  }catch(e){if(run===sourceRun)retune=null}
+  finally{busy=false}
+  if(run!==sourceRun||!playing)return;
+  try{const m=await getJSON(API+"/mempool");if(run===sourceRun)mempoolCount=m.count}catch(e){}},20000)}
 
 // ---------- timeline ----------
 const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -990,13 +1102,16 @@ const REPLAY_NOTE="Tonight's 24 blocks, 975,097 to 975,120 (3:52 to 9:33 PM ET, 
 function setReplayUI(set="tonight"){mode="replay";replaySet=set;press($("srcSeg"),$(set==="demo"?"srcDemo":"srcReplay"));$("speedRow").hidden=false;$("srcNote").textContent=set==="demo"?DEMO_NOTE:REPLAY_NOTE;
   if(set==="demo"){speed=2;press($("speedSeg"),document.querySelector('#speedSeg [data-speed="2"]'))}}
 async function start(){
+  const run=++sourceRun;retune=null;harm.count=0;
   initAudio();unlockAudio();if(ctx.state==="suspended") await ctx.resume();
+  if(run!==sourceRun)return;
   playing=true;$("play").classList.add("on");$("play").setAttribute("aria-pressed","true");$("playLabel").textContent="Stop";
   nextBlip=nextGrain=ctx.currentTime+0.1;
   if(mode==="live"){$("waitText").textContent="Tuning in to mempool.space…";
-    if(!(await liveStart())){setReplayUI();$("srcLive").disabled=true;
+    const ok=await liveStart(run);if(ok===null)return;
+    if(!ok){setReplayUI();$("srcLive").disabled=true;
       $("srcNote").textContent="Live blocks need a connection to mempool.space, which isn't available here. Playing tonight's recorded blocks instead."}}
-  if(!playing) return;
+  if(!playing||run!==sourceRun) return;
   if(mode==="live"){lastIdx=chain.length-1;showBlock(chain[lastIdx]);$("src").innerHTML="<b>● Live</b> · mempool.space";livePoll()}
   else{chain=(replaySet==="demo"?DEMO:TONIGHT).slice();lastIdx=-1;curChord="Dmaj9";hist=[];rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent=replaySet==="demo"?"Demo · simulated blocks":"Tonight · recorded blocks";showSchedule(chain[0].height-1)}
   setKeyFor(chain[Math.max(0,lastIdx)].height);
@@ -1005,7 +1120,8 @@ async function start(){
 function stop(){
   if(playing){playing=false;presenceOff()}
   try{if(unlockEl)unlockEl.pause()}catch(e){}
-  playing=false;clearInterval(timer);clearInterval(poll);
+  playing=false;sourceRun++;retune=null;clearInterval(timer);clearInterval(poll);
+  if(ctx)stopSignal(ctx.currentTime);
   if(ctx){if(pad){pad.stop(ctx.currentTime);pad=null}stopBed()}try{speechSynthesis.cancel()}catch(e){}
   $("play").classList.remove("on");$("play").setAttribute("aria-pressed","false");$("playLabel").textContent="Play";
   $("waitText").textContent="Press play to listen";$("tension").style.width="0";$("tensionPct").textContent="";draw()}
@@ -1018,14 +1134,14 @@ $("speedSeg").addEventListener("click",e=>{const b=e.target.closest("button");if
   const v=ctx&&playing?virtNow():0;speed=Number(b.dataset.speed);if(playing&&mode==="replay"){rVirt0=v;rStart=ctx.currentTime}});
 $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b)return;press($("stations"),b);st=b.dataset.st;
   $("stName").textContent=b.querySelector("b").textContent;if(playing&&typeof presenceOn==="function")presenceOn();
-  if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
+  if(playing){const now=ctx.currentTime;stopSignal(now);if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
 // a block's transmission, on Shortwave: static, three pips, the number read out, then its melody as tones on the same line
 function transmission(h,notes,ch,t,by){loadShots("voice");
   const cs=callSign(by),dur=(cs.length+2)*0.75+0.4+1.3+String(h).length*0.62+0.55+(cs.length+1)*0.75+(h%2016===0?8:0)+(h%210000===0?7:0)+2.5;
   const s=ctx.createBufferSource();s.buffer=noise;s.loop=true;const f=ctx.createBiquadFilter();f.type="bandpass";f.frequency.value=1400;f.Q.value=0.5;
   const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(playing?0:0.03,t+0.3);g.gain.setValueAtTime(playing?0:0.03,t+dur-0.8);g.gain.linearRampToValueAtTime(0,t+dur);
   s.connect(f);f.connect(g);g.connect(bus);s.start(t);s.stop(t+dur+0.1);
-  const go=T=>transmit(h,by,T,{signoff:cs+" ^"});
+  const go=T=>{swBusy=Math.max(swBusy,transmit(h,by,T,{signoff:cs+" ^"})+0.5)};
   if(voiceReady()) go(t+0.3); else setTimeout(()=>go(ctx.currentTime+0.05),1200)}
 $("songForm").addEventListener("submit",async e=>{e.preventDefault();
   const h=parseInt($("songHeight").value.replace(/[^0-9]/g,""),10);if(!(h>=0)){$("songNotes").textContent="Type a block height, like 840000.";return}
