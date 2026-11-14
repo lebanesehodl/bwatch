@@ -440,7 +440,7 @@ nav .div{color:var(--orange);font-weight:400}
     <dd>While the height data is fresh, the watch shows the height it fetched, not one it inferred,
       and refreshes it about every fifteen minutes on the default battery setting. Once that data has gone
       stale, the watch can fall back to dead reckoning: it counts forward at the epoch's
-      measured block time, corrected for the projected retarget, and the face
+      measured block time and, past the next retarget, at the projected new pace, and the face
       stops claiming to know the tip — the unit line becomes an estimate with its own error bar,
       <b>EST +36 BLK +/-6</b> after six hours offline. Blocks arrive as a Poisson process, so the
       uncertainty grows as the square root of the blocks estimated: six hours of guessing is
