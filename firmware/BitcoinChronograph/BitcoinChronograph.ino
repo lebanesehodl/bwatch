@@ -7384,7 +7384,15 @@ public:
     if (dispMode == M_FMKT) {
       i %= 6;
       if (fiMkt[i] <= 0) { snprintf(tag, n, "NO DATA"); return; }
-      if (((fiMktLive >> i) & 1) && wakeMin - fiLiveWake < 45) { snprintf(tag, n, "15M DLY"); return; }
+      // A live quote comes from Stooq, and nothing documents how far behind
+      // the market it is, so the tag says DELAYED and carries no number. The
+      // 45 is how long since WE fetched it (30 min cadence + one fetch
+      // cycle), not the quote's age. An age here needs Stooq's Time column,
+      // which stooqParse() drops, and a documented timezone for it. The
+      // dollar index has no Stooq symbol, so its cell never reads DELAYED:
+      // it shows the date of the FRED close. That is correct; do not invent
+      // a symbol for it.
+      if (((fiMktLive >> i) & 1) && wakeMin - fiLiveWake < 45) { snprintf(tag, n, "DELAYED"); return; }
       uint32_t d = fiMktDate[i];
       snprintf(tag, n, "%s %lu", fiMon(d / 100 % 100), (unsigned long)(d % 100));
     } else {
