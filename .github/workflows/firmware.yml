@@ -26,7 +26,17 @@ concurrency:
 
 jobs:
   compile:
-    name: Compile (esp32 2.0.17, ESP32S3 Dev Module, 8M with spiffs)
+    # customer: what ships. lab: the bench build (DISPLAY_LAB=1), compiled
+    # too so code behind the flag can't rot unseen.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build: customer
+            defines: ""
+          - build: lab
+            defines: "-DDISPLAY_LAB=1"
+    name: Compile ${{ matrix.build }} (esp32 2.0.17, ESP32S3 Dev Module, 8M with spiffs)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -62,6 +72,15 @@ jobs:
         run: firmware/ci/build.sh
         env:
           IMAGE_REF: ${{ github.event.pull_request.number && format('pr{0}', github.event.pull_request.number) || github.ref_name }}
+          BUILD_DEFINES: ${{ matrix.defines }}
+
+      # Bench code stays out of what ships: the lab's serial log lines must
+      # not be in the customer image, and must be in the lab one.
+      - name: Check the display lab is only in the lab build
+        run: |
+          n=$( (grep -a -o '\[lab\]' firmware/ci/.build/out/BitcoinChronograph.ino.bin || true) | wc -l)
+          echo "[lab] strings in the image: $n"
+          if [ "${{ matrix.build }}" = customer ]; then test "$n" -eq 0; else test "$n" -gt 0; fi
 
       # What OP flashes: -update.bin / -full.bin, the sketch zip and FLASH.txt
       # (the commit, where each image goes, SHA-256). Images from main are
@@ -78,7 +97,7 @@ jobs:
       # temporary merge commit, which matches nothing in the branch).
       - uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ github.event.pull_request.head.sha || github.sha }}
+          name: firmware-${{ matrix.build }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             firmware/ci/.build/out/*.bin
             firmware/ci/.build/out/*.elf

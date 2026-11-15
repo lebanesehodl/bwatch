@@ -10,6 +10,11 @@
 # without the IDE; its FLASH.txt says which commit they are and where each
 # one goes. IMAGE_REF names them (CI: pr<N> or main; default: the branch).
 #
+# BUILD_DEFINES adds compiler defines for a bench build, for example
+#   BUILD_DEFINES="-DDISPLAY_LAB=1" firmware/ci/build.sh
+# Left empty, the result is the customer firmware. A bench build's images
+# end in -bench.
+#
 # Your own Arduino setup is left alone. The core and its tools go into a
 # private data folder (firmware/ci/.build/arduino) and the libraries into a
 # private sketchbook that is emptied and refilled every run, so neither the
@@ -62,11 +67,12 @@ done < "$here/libraries.txt"
 
 arduino-cli compile \
   --fqbn "$FQBN" \
+  --build-property "compiler.cpp.extra_flags=${BUILD_DEFINES:-}" \
   --warnings default \
   --output-dir "$out" \
   "$sketch"
 
-# Flashable images, named bwatch-bw1-<ref>-<commit>[-dirty]:
+# Flashable images, named bwatch-bw1-<ref>-<commit>[-dirty][-bench]:
 #   -full.bin    at 0x0, for a new watch or a clean start. It ERASES the
 #                settings: merge_bin fills the gaps between its parts with
 #                0xFF, and NVS (0x9000-0xDFFF) is one of those gaps.
@@ -104,7 +110,9 @@ dirty=""
 if [ -n "$(git -C "$root" status --porcelain -- firmware 2>/dev/null)" ]; then
   dirty="-dirty"
 fi
-name="bwatch-bw1-$ref-${commit:0:7}$dirty"
+bench=""
+if [ -n "${BUILD_DEFINES:-}" ]; then bench="-bench"; fi
+name="bwatch-bw1-$ref-${commit:0:7}$dirty$bench"
 
 flash="$out/flash"
 rm -rf "$flash"
@@ -130,6 +138,9 @@ if command -v sha256sum >/dev/null; then sha256=(sha256sum); else sha256=(shasum
   echo "$name"
   echo "Built from commit $commit ($ref)${dirty:+, plus uncommitted changes in firmware/}."
   echo "esp32 core $CORE_VERSION, $FQBN, libraries from firmware/ci/libraries.txt."
+  if [ -n "$bench" ]; then
+    echo "BENCH BUILD ($BUILD_DEFINES), not customer firmware."
+  fi
   echo
   echo "Update a watch that already runs BWATCH firmware, keeping its settings"
   echo "(Wi-Fi, wallet, Lightning address, time zone, battery calibration):"

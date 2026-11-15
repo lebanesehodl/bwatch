@@ -433,6 +433,13 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // alongside Setup WiFi and Set Time, where settings belong.
 #define SPARK_POINTS    48
 #define HALVING_EPOCH   1839542400UL   // est. 2028-04-17, block 1,050,000
+// ---- bench builds ----
+// DISPLAY_LAB 1 adds the display lab: scripted refresh tests on test cards,
+// opened by a short DOWN on About and logged over serial. A bench tool, not a
+// feature: customer firmware is built with 0. CI compiles both.
+#ifndef DISPLAY_LAB
+#define DISPLAY_LAB      0
+#endif
 
 // ---------------- persisted across deep sleep ----------------
 // RTC LAYOUT GUARD: RTC RAM survives reflashes, but the firmware's
@@ -11419,10 +11426,12 @@ public:
 
 
   // ---------------- DISPLAY LAB (Oct 17) ----------------
-  // About, short DOWN. Scripted refresh sequences on test cards, logged over
+  // About, short DOWN, in a DISPLAY_LAB build only: customer firmware leaves
+  // it out. Scripted refresh sequences on test cards, logged over
   // serial, to MEASURE why images fade and ghost instead of guessing. Each
   // step buzzes and waits for a press (BACK leaves the lab). Photograph the
   // glass at each prompt and ~5 s later.
+  #if DISPLAY_LAB
   uint16_t labBg = GxEPD_BLACK, labFg = GxEPD_WHITE;   // L7+: light cards too
   void labCard(char v, const char *id) {
     display.setFullWindow();
@@ -11600,6 +11609,7 @@ public:
     cleanScreen();
     Serial.println("[lab] ===== done =====");
   }
+  #endif  // DISPLAY_LAB
 
   void myShowAbout() {
     // FreeMonoBold9pt7b advances 11 px, so a 200 px panel fits 18 characters
@@ -11722,12 +11732,17 @@ public:
           dumpVlog(); buzz(30, 2); waitAllRelease();
           continue;
         }
+      #if DISPLAY_LAB
         // a short press: the display lab
         labRun();
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
         showFaceFull();
         return;
+      #else
+        waitAllRelease();               // a short press: nothing, by design
+        continue;
+      #endif
       }
       if (p == UP_BTN_PIN && heldFor(UP_BTN_PIN, 900)) {
         // teach the watch what a terminated charge reads on this board
