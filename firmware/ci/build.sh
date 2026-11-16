@@ -60,6 +60,17 @@ while read -r repo tag _name; do
   mv "$tmp/$dir"/* "$libs/$dir"
 done < "$here/libraries.txt"
 
+# Host test first: the case temperature read (case_temp.h) through the pinned
+# Watchy driver's own conversion, built for this machine. A failure stops the
+# build before the long compile.
+cxx="${CXX:-c++}"
+watchy="$libs/Watchy/src"
+"$cxx" -std=c++11 -x c++ -w -I"$watchy" -c "$watchy/bma4.c" -o "$tmp/bma4.o"
+"$cxx" -std=c++11 -Wall -Wextra -Werror -I"$sketch" -I"$watchy" \
+  -c "$here/case_temp_test.cpp" -o "$tmp/case_temp_test.o"
+"$cxx" -o "$tmp/case_temp_test" "$tmp/case_temp_test.o" "$tmp/bma4.o"
+"$tmp/case_temp_test"
+
 arduino-cli compile \
   --fqbn "$FQBN" \
   --warnings default \

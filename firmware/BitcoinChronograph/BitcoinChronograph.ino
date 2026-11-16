@@ -35,6 +35,7 @@
 // (docked mode uses fast HTTP polling — no websocket library needed)
 #include <Bitcoin.h>            // uBitcoin: watch-only address derivation
 #include <Hash.h>               // uBitcoin: doubleSha, for the genesis boot
+#include "case_temp.h"          // the case temperature and its modes
 #include "qrcodegen_local.h"    // ricmoo/QRCode, vendored into the sketch
                                 // folder because the ESP32 core ships its
                                 // own qrcode.h that shadows the library
@@ -654,25 +655,8 @@ RTC_DATA_ATTR uint32_t fiBskWake       = 0;     // wakeMin of the basket fetch
 RTC_DATA_ATTR uint32_t fiCloseDate     = 0;     // the newest S&P close FRED has given
 RTC_DATA_ATTR uint32_t fiCloseFor      = 0;     // the session close being waited for
 RTC_DATA_ATTR uint8_t  fiCloseTries    = 0;     // tries for it (a holiday never comes)
-// ---- the case temperature (Nov 8): the accelerometer's thermometer ----
-// The panel picks its waveform from its own sensor; in direct sun the glass
-// runs hotter than that and the ink comes out washed out, and in the cold
-// the ink is sluggish and the cell sags. The case reading (whole degrees,
-// lagging the face by minutes) sets a mode, with hysteresis so it does not
-// flicker at the edge:
-//   HOT  at >= 38 C, off at <= 35 C: a wrist alone keeps the case ~28-34 C
-//   COLD at <=  5 C, off at >=  8 C: a car, a windowsill, a coat pocket
-// Starting values, to be tuned from what About shows in the wild.
-// HOT RETIRED (Nov 8): the sun fade is light breaking the full refresh's
-// waveform (labs 5-6 under a phone LED), not heat; and docked, a charging,
-// awake watch read HOT and froze in a HOT refresh. Out of reach until the
-// mode is either proven or removed.
-#define TEMP_HOT_ON  127
-#define TEMP_HOT_OFF  35
-#define TEMP_COLD_ON   5
-#define TEMP_COLD_OFF  8
-#define TEMP_PANEL_C  25      // what the panel is told while HOT
-enum { TEMP_OK = 0, TEMP_HOT = 1, TEMP_COLD = 2 };
+// ---- the case temperature: thresholds, modes and the sensor's sign fix in
+// case_temp.h (tested on the build machine by firmware/ci/build.sh) ----
 RTC_DATA_ATTR int8_t   caseTempC       = 99;    // last reading (99: none yet)
 RTC_DATA_ATTR uint8_t  tempMode        = TEMP_OK;
 RTC_DATA_ATTR uint8_t  coldLowVolt     = 0;     // cold: low readings in a row
@@ -6834,21 +6818,16 @@ public:
     if (was && !now) facePartials = FACE_SETTLE;   // and once more next minute
   }
   // Read the case temperature and move between the modes. Called once per
-  // wake, before anything is drawn. A failed read (the sensor answers 0 when
-  // it has nothing) keeps the last mode rather than guessing.
+  // wake, before anything is drawn. A failed read keeps the last mode rather
+  // than guessing. Below 23 C the driver's reading needs its sign put right
+  // (caseTempFromBma(), case_temp.h): without that every cold reading was
+  // 85 C and COLD never came.
   void updateTempMode() {
-    float t = sensor.readTemperature();
-    if (t == 0.0f && caseTempC != 99 && abs(caseTempC) > 4) return;  // no valid read
-    caseTempC = (int8_t)constrain((int)lroundf(t), -40, 85);
+    int8_t c;
+    if (!caseTempFromBma(sensor.readTemperature(), caseTempC, &c)) return;  // no valid read
+    caseTempC = c;
     uint8_t was = tempMode;
-    if (tempMode == TEMP_HOT  && caseTempC <= TEMP_HOT_OFF)  tempMode = TEMP_OK;
-    if (tempMode == TEMP_HOT  && TEMP_HOT_ON > 100)          tempMode = TEMP_OK;  // retired: a watch
-                                       // that froze in HOT keeps it in RTC memory
-    if (tempMode == TEMP_COLD && caseTempC >= TEMP_COLD_OFF) tempMode = TEMP_OK;
-    if (tempMode == TEMP_OK) {
-      if (caseTempC >= TEMP_HOT_ON)  tempMode = TEMP_HOT;
-      if (caseTempC <= TEMP_COLD_ON) tempMode = TEMP_COLD;
-    }
+    tempMode = tempModeNext(tempMode, caseTempC);
     if (tempMode != TEMP_COLD) coldLowVolt = 0;
     if (tempMode != was)
       Serial.printf("[temp] case %d C: %s -> %s\n", caseTempC,
