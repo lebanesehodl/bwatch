@@ -9,3 +9,5 @@ with the Adafruit GFX classic 5x7 font. `font.py` is copied from `glcdfont.c` in
 starting with today's face (`before-dd6f002`). `strips-6x.png` is the bottom strip of each state at 6x.
 
 This is a mock, not a photo. The wrist test decides how it looks on the glass.
+
+`plain-*.png` and `joe-plain-sheet.png` show the version with no quote (`fw/joe-footer-plain` 7608aba): the full-size digits from dd6f002 above the same strip.
