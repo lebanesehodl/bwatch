@@ -38,6 +38,7 @@
 #include "case_temp.h"          // the case temperature and its modes
 #include "steps_today.h"        // JOE's steps: the accelerometer's count, by day
 #include "moon.h"               // JOE's moon: its age, worked out on the watch
+#include "weather.h"            // JOE's weather: one place, Open-Meteo, the rules
 #include "qrcodegen_local.h"    // ricmoo/QRCode, vendored into the sketch
                                 // folder because the ESP32 core ships its
                                 // own qrcode.h that shadows the library
@@ -447,7 +448,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0155
+#define RTC_LAYOUT_MAGIC 0xB17C0156
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -666,6 +667,14 @@ RTC_DATA_ATTR uint32_t realFullWake    = 0;     // wakeMin of the last real full
 // ---- JOE's steps: the accelerometer's own counter cut into local days, the
 // rules in steps_today.h (tested on the build machine by build.sh) ----
 RTC_DATA_ATTR StepSpan stepSpan        = {0, 0, 0, 0, 0, 0};
+// ---- JOE's weather: the place (from NVS) and the last reading, the rules in
+// weather.h (tested on the build machine by build.sh) ----
+RTC_DATA_ATTR int16_t  wxLat10         = WX_NONE;   // the place, tenths of a
+RTC_DATA_ATTR int16_t  wxLon10         = WX_NONE;   // degree; WX_NONE: no weather
+RTC_DATA_ATTR bool     wxF             = false;     // in Fahrenheit
+RTC_DATA_ATTR bool     wxLoaded        = false;     // the three read from NVS
+RTC_DATA_ATTR WxReading wxNow          = {0, -1, 0};
+RTC_DATA_ATTR uint32_t wxTry           = 0;         // UTC of the last fetch tried
 RTC_DATA_ATTR bool     fiatAsk         = false; // fetch the FIAT data at the next
                                                 // chance: after a boot, or a FIAT
                                                 // face just turned on
@@ -1589,6 +1598,11 @@ public:
         }
       }
       http.end();
+    }
+    // JOE's weather, with a place set: hourly by the clock, or when asked for
+    if (wxOn() && (all || wxDue())) {
+      wxTry = (uint32_t)nowUtc64();
+      fetchWeather(client);
     }
 
     // ---- mempool.space: one TLS session for everything it serves ----
@@ -6464,6 +6478,8 @@ public:
     fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
     caseTempC = 99; tempMode = TEMP_OK; coldLowVolt = 0; realFullWake = 0;
     memset(&stepSpan, 0, sizeof stepSpan);   // no count, and setup unchecked
+    wxLat10 = WX_NONE; wxLon10 = WX_NONE; wxF = false; wxLoaded = false;  // NVS reloads
+    wxNow = {0, -1, 0}; wxTry = 0;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
@@ -7943,6 +7959,7 @@ public:
     }
     if (paintedDark != themeDark) fullOnClose();           // back from a card
     paintedDark = themeDark;
+    joeWeather();                                          // seconds, hourly at most
     RTC.read(currentTime);
     time_t lt = makeTime(currentTime);
     if (tzIndex > 0) {
@@ -8081,10 +8098,81 @@ public:
   }
   void drawSegText(const GFXfont *f, int x, int y, const char *s, int ghost) {
     for (; *s; s++) {
-      if (*s == ' ' || (*s >= '0' && *s <= '9')) segGlyph(f, '8', x, y, ghost);
+      if (ghost > 1 && (*s == ' ' || (*s >= '0' && *s <= '9'))) segGlyph(f, '8', x, y, ghost);
       if (*s != ' ') segGlyph(f, *s, x, y, 1);
       x += segAdvance(f, *s);
     }
+  }
+
+  // ---------------- JOE's weather ----------------
+  // What leaves the watch, and what the face may show, is in weather.h.
+  void wxLoad() {
+    if (wxLoaded) return;
+    Preferences p; p.begin("btcchrono", true);
+    wxLat10 = p.getShort("wxLat", WX_NONE);
+    wxLon10 = p.getShort("wxLon", WX_NONE);
+    wxF = p.getBool("wxF", false);
+    p.end();
+    wxLoaded = true;
+  }
+  bool wxOn() { wxLoad(); return wxLat10 != WX_NONE && wxLon10 != WX_NONE; }
+  // an hour since the last try, by the clock (JOE's wakes do not move wakeMin)
+  bool wxDue() {
+    tmElements_t dt;
+    if (!wxOn() || !localDate(dt)) return false;      // no place, or no clock
+    uint32_t now = (uint32_t)nowUtc64();
+    return wxTry == 0 || now < wxTry || now - wxTry >= WX_EVERY_MIN * 60UL;
+  }
+  // One request over a session the caller opened. A bad or missing answer
+  // leaves the last reading as it was; the face judges its age.
+  bool fetchWeather(WiFiClientSecure &client) {
+    if (!wxOn()) return false;
+    char url[200]; wxUrl(url, sizeof url, wxLat10, wxLon10, wxF);
+    HTTPClient http; http.setConnectTimeout(4000);
+    bool ok = false;
+    int code = -1;
+    if (http.begin(client, url)) {
+      code = http.GET();
+      if (code == 200) ok = wxParseBody(http.getString().c_str(), wxF, &wxNow);
+    }
+    http.end();
+    Serial.printf("[wx] %s (http %d): %.1f %s, code %d, timed %lu\n",
+                  ok ? "ok" : "FAILED", code, wxNow.temp10 / 10.0, wxF ? "F" : "C",
+                  (int)wxNow.code, (unsigned long)wxNow.obsUtc);
+    return ok;
+  }
+  // JOE fetches nothing else, so its weather goes out on its own: on a minute
+  // wake, at most once an hour whether it worked or not, never in the
+  // wearer's night or in the cold, never docked, and only with a place set.
+  // The other faces' backoff runs on wakeMin, which JOE does not move, so it
+  // is left alone: the hour is this one's backoff.
+  void joeWeather() {
+    if (buttonWake || prePaint || inDocked || !wxDue()) return;
+    if (inNightWindow() || tempMode == TEMP_COLD) return;
+    wxTry = (uint32_t)nowUtc64();
+    unsigned long t0 = millis();
+    bool ok = false;
+    if (myConnectWiFi()) { WiFiClientSecure c; c.setInsecure(); ok = fetchWeather(c); }
+    WiFi.mode(WIFI_OFF); btStop();
+    Serial.printf("[wx] JOE fetch %s, radio on %lu ms\n", ok ? "done" : "failed",
+                  millis() - t0);
+  }
+  // the pictures, 14 x 11: one row a word, the left column the top bit
+  void drawWxIcon(int x, int y, int which) {
+    static const uint16_t ICON[7][11] = {
+      { 0x0080, 0x0888, 0x0410, 0x01C0, 0x03E0, 0x3BEE, 0x03E0, 0x01C0, 0x0410, 0x0888, 0x0080 },   // sun
+      { 0x0010, 0x0082, 0x0038, 0x03BC, 0x047C, 0x1832, 0x2008, 0x2004, 0x2004, 0x1FF8, 0x0000 },   // sun and cloud
+      { 0x0000, 0x0000, 0x01C0, 0x0220, 0x0C18, 0x1004, 0x2002, 0x2002, 0x2002, 0x1FFC, 0x0000 },   // cloud
+      { 0x0000, 0x0000, 0x3EFE, 0x0000, 0x1FBE, 0x0000, 0x3DFF, 0x0000, 0x0FEE, 0x0000, 0x0000 },   // fog
+      { 0x01C0, 0x0220, 0x0C18, 0x1004, 0x2002, 0x1FFC, 0x0000, 0x0444, 0x0888, 0x1110, 0x0000 },   // rain
+      { 0x01C0, 0x0220, 0x0C18, 0x1004, 0x2002, 0x1FFC, 0x0000, 0x0888, 0x0000, 0x0222, 0x0000 },   // snow
+      { 0x01C0, 0x0220, 0x0C18, 0x1004, 0x2002, 0x1FFC, 0x0060, 0x00C0, 0x01E0, 0x0060, 0x0080 },   // storm
+    };
+    if (which < WXI_SUN || which > WXI_STORM) return;
+    const uint16_t *rows = ICON[which - WXI_SUN];
+    for (int r = 0; r < 11; r++)
+      for (int c = 0; c < 14; c++)
+        if (rows[r] & (0x2000 >> c)) display.drawPixel(x + c, y + r, fg());
   }
 
   // The moon at `age` days, a disc r px round: the lit part solid, the dark
@@ -8120,6 +8208,21 @@ public:
 
     // the sky: the moon, worked out from the clock (UTC)
     drawMoon(24, 37, 10, moonAgeDays(nowUtc64()));
+    // and the weather beside it, once a place is set: the last reading while
+    // it is fresh, "--" once it is not, nothing at all without a place
+    if (wxOn()) {
+      const GFXfont *TF = &DSEG7_Classic_Bold_14;
+      bool fresh = wxFresh(&wxNow, (uint32_t)nowUtc64());
+      char t[8];
+      if (fresh) {
+        drawWxIcon(40, 32, wxIcon(wxNow.code));
+        snprintf(t, sizeof t, "%ld", lroundf(wxNow.temp10 / 10.0f));
+      } else snprintf(t, sizeof t, "--");
+      drawSegText(TF, 57, 46, t, 3);
+      int x = 57 + segWidth(TF, t);
+      display.drawCircle(x + 3, 34, 2, fg());          // the degree
+      display.setCursor(x + 7, 32); display.print(wxF ? "F" : "C");
+    }
     // the calendar: the day over the date in segments
     display.setCursor(184 - segWidth(SF, "88-88"), 23);  // over the date's left edge
     display.print(DAYS[(dt.Wday >= 1 && dt.Wday <= 7) ? dt.Wday - 1 : 0]);
@@ -10202,6 +10305,17 @@ public:
     WiFiManagerParameter pB3("bd3", "Birthday 4", bdCur[3], 23);
     wm.addParameter(&pB0); wm.addParameter(&pB1);
     wm.addParameter(&pB2); wm.addParameter(&pB3);
+    // JOE's weather: one place, as numbers, rounded on the way in. Blank: no
+    // weather, and nothing is ever sent
+    wxLoad();
+    static char wxCur[24], wxUcur[3];
+    wxPlaceText(wxCur, sizeof wxCur, wxLat10, wxLon10);
+    snprintf(wxUcur, sizeof wxUcur, "%s", wxF ? "F" : "C");
+    WiFiManagerParameter pWx("wxloc",
+      "Weather place (optional): LATITUDE, LONGITUDE, e.g. 33.9, 35.5. Kept to about 10 km "
+      "and sent with each weather request, hourly at most. Blank: no weather", wxCur, 23);
+    WiFiManagerParameter pWu("wxunit", "Weather in C or F", wxUcur, 2);
+    wm.addParameter(&pWx); wm.addParameter(&pWu);
 
     wsTitle("WALLET");
     wsAt("ON YOUR PHONE, JOIN WIFI", 10, 38);
@@ -10260,6 +10374,26 @@ public:
         pplMile[i] = 0;
       }
       if (changed) savePeople(); }
+    { const char *v = pWx.getValue(), *u = pWu.getValue();
+      bool f = u && (u[0] == 'F' || u[0] == 'f');
+      bool placeEdited = v && strcmp(v, wxCur);
+      if (placeEdited || f != wxF) {
+        int16_t la = wxLat10, lo = wxLon10;
+        bool blank = !v || strspn(v, " ") == strlen(v);
+        if (blank) la = lo = WX_NONE;                     // no weather
+        else if (placeEdited && !wxParsePlace(v, &la, &lo))
+          Serial.printf("[wx] place not understood, kept: %s\n", v);
+        Preferences p; p.begin("btcchrono", false);
+        if (la != WX_NONE) { p.putShort("wxLat", la); p.putShort("wxLon", lo); }
+        else { p.remove("wxLat"); p.remove("wxLon"); }
+        p.putBool("wxF", f);
+        p.end();
+        if (la != wxLat10 || lo != wxLon10 || f != wxF) {
+          wxNow = {0, -1, 0}; wxTry = 0;      // another place or unit: fetch afresh
+        }
+        wxLat10 = la; wxLon10 = lo; wxF = f;
+        Serial.printf("[wx] place %s, %s\n", la != WX_NONE ? "set" : "none", f ? "F" : "C");
+      } }
     const char *lv = pLn.getValue();
     if (lv && strchr(lv, '@')) {
       strncpy(lnAddrBuf, lv, 63); lnAddrBuf[63] = 0;
@@ -10966,6 +11100,7 @@ public:
     p.remove("face"); p.remove("faceV"); p.remove("batt"); p.remove("wpriv");   // My Watch
     p.remove("cur"); p.remove("curOn");
     p.remove("bootPick");                           // back to Random
+    p.remove("wxLat"); p.remove("wxLon"); p.remove("wxF");   // the weather's place
     p.end();
     WiFi.persistent(true);                         // the radio's own stored
     WiFi.mode(WIFI_STA);                           // credentials too: erasing

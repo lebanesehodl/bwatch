@@ -89,6 +89,12 @@ cc="${CC:-cc}"
   -o "$tmp/moon_test" "$here/moon_test.cpp"
 "$tmp/moon_test"
 
+# And JOE's weather (weather.h): Open-Meteo's own answer read through the
+# pinned ArduinoJson, the answers it must refuse, the place, the request.
+"$cxx" -std=c++11 -Wall -Wextra -Werror -I"$sketch" -I"$libs/ArduinoJson/src" \
+  -o "$tmp/weather_test" "$here/weather_test.cpp"
+"$tmp/weather_test"
+
 arduino-cli compile \
   --fqbn "$FQBN" \
   --warnings default \
