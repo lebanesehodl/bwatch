@@ -84,6 +84,11 @@ cc="${CC:-cc}"
   "$tmp/bma4_c.o" "$tmp/bma423_c.o"
 "$tmp/steps_today_test"
 
+# And the moon on JOE (moon.h): its age against real new and full moons.
+"$cxx" -std=c++11 -Wall -Wextra -Werror -I"$sketch" \
+  -o "$tmp/moon_test" "$here/moon_test.cpp"
+"$tmp/moon_test"
+
 arduino-cli compile \
   --fqbn "$FQBN" \
   --warnings default \

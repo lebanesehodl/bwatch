@@ -37,6 +37,7 @@
 #include <Hash.h>               // uBitcoin: doubleSha, for the genesis boot
 #include "case_temp.h"          // the case temperature and its modes
 #include "steps_today.h"        // JOE's steps: the accelerometer's count, by day
+#include "moon.h"               // JOE's moon: its age, worked out on the watch
 #include "qrcodegen_local.h"    // ricmoo/QRCode, vendored into the sketch
                                 // folder because the ESP32 core ships its
                                 // own qrcode.h that shadows the library
@@ -6325,6 +6326,12 @@ public:
       if (joeCardsSeen && themeDark) fullOnClose();   // dark cards only: light
                                                     // ones leave no trace
       joeCardsSeen = false; joeStep = 0; joeLastStep = 0;
+      // JOE's bezel is a big solid band that a partial only half clears: say
+      // the glass held JOE, so the next face (whichever) books the clean that
+      // follows any face change (cleanNext, once nobody is looking). JOE does
+      // not set drawnMode itself, and with two faces in the cycle the one
+      // after JOE could match the one before it.
+      drawnMode = M_JOE;
     }
     dispMode = to;
     walletPeek = false;               // leaving the wallet ends a peek
@@ -6490,70 +6497,6 @@ public:
     menuIndex = 0;                         // WATCHFACE_STATE, top item
     menuLevel = 0;
     alreadyInMenu = true;
-  }
-
-  // Stencil numerals. Each digit is a solid slab with its counters cut back
-  // out of it, the way a stencil is made — not a grid of little bricks. At
-  // 86 x 81 on e-paper that is the difference between a number that reads
-  // across a room and one that reads as texture.
-  //
-  //   TV  an upright's width, as a fraction of the digit's width
-  //   TH  a bar's height, as a fraction of its height
-  //   UY  top of the upper counter        LY  top of the lower counter
-  //   UH  counter height — what is left after three bars
-  //
-  // Heavier since Nov 23 (OP picked it from mocks): uprights 36% and bars 26%,
-  // both 24% before. The 1 now fills its box like the others: a centred
-  // upright 52% wide, with a flag and a full-width foot. Before, it was a 24%
-  // upright on the right, 30% ink against 73-86% for the slabs, and it looked
-  // empty. The 7's bar is as thick as its upright. The joints (the 1's flag
-  // and foot, the 4's crossbar, the 7's bar) are worked out in pixels, so
-  // rounding cannot leave a step where two strokes meet.
-  void drawStencilDigit(int X, int Y, int W, int H, int d) {
-    const float TV = 0.36f, TH = 0.26f;
-    const float UH = (1.0f - 3.0f * TH) / 2.0f;
-    const float UY = TH, LY = (1.0f + TH) / 2.0f;
-    auto px = [](float v) { return (int)(v + 0.5f); };
-    auto fill = [&](float x, float y, float w, float h, uint16_t c) {
-      display.fillRect(X + px(x * W), Y + px(y * H), px(w * W), px(h * H), c);
-    };
-    const int tv = px(TV * W), th = px(TH * H);     // the same, in pixels
-    // (x, width) of each counter: where the digit is open
-    float ux, uw, lx, lw;
-    bool slab = true;
-    switch (d) {
-      case 0: fill(0,0,1,1,fg()); fill(TV,TH,1-2*TV,1-2*TH,bg()); return;
-      case 2: ux=0;   uw=1-TV;   lx=TV;   lw=1-TV;   break;
-      case 3: ux=0;   uw=1-TV;   lx=0;    lw=1-TV;   break;
-      case 5: ux=TV;  uw=1-TV;   lx=0;    lw=1-TV;   break;
-      case 6: ux=TV;  uw=1-TV;   lx=TV;   lw=1-2*TV; break;
-      case 8: ux=TV;  uw=1-2*TV; lx=TV;   lw=1-2*TV; break;
-      case 9: ux=TV;  uw=1-2*TV; lx=0;    lw=1-TV;   break;
-      default: slab = false; break;
-    }
-    if (slab) {
-      fill(0,0,1,1,fg());
-      fill(ux,UY,uw,UH,bg());
-      fill(lx,LY,lw,UH,bg());
-      return;
-    }
-    // the three that are strokes rather than a slab
-    if (d == 1) {
-      int sw = px(0.52f * W), sx = (W - sw) / 2;    // the upright, centred
-      int fx = sx - px(0.264f * W);                 // the flag, out to the left
-      if (fx < 0) fx = 0;                           // (inside the box)
-      display.fillRect(X + sx, Y, sw, H, fg());
-      display.fillRect(X + fx, Y, sx + sw - fx, th, fg());
-      display.fillRect(X, Y + H - th, W, th, fg()); // the foot
-    } else if (d == 4) {
-      int by = px((1 - TH) / 2 * H);                // the crossbar's top
-      display.fillRect(X, Y, tv, by + th, fg());    // down to the bar's foot
-      display.fillRect(X + W - tv, Y, tv, H, fg());
-      display.fillRect(X, Y + by, W, th, fg());
-    } else if (d == 7) {
-      display.fillRect(X, Y, W, tv, fg());          // as thick as the upright
-      display.fillRect(X + W - tv, Y, tv, H, fg());
-    }
   }
 
   // The resting face. Everything on it has to stay true with nobody redrawing
@@ -6948,11 +6891,8 @@ public:
     display.print(s);
   }
 
-  // JOE. Four digits, each one filling a quarter of the panel, with nothing
-  // drawn between them — the gaps do the dividing. Below them two lines of
-  // Satoshi on privacy, then a strip: the mark, the date, the battery and
-  // its figure, and the day's steps from the accelerometer behind a walker.
-  // Nothing here comes off the chain.
+  // JOE: just a watch. Since Nov 23 a classic digital's face (drawJoeClassic):
+  // nothing on it comes off the chain, and nothing says Bitcoin.
   // ---------------- people: ages in blocks ----------------
   // Up to four people (name and birthday), entered on the phone (Setup
   // Wallet's page) or under My Watch > Birthdays, kept in NVS. Someone born
@@ -7962,23 +7902,21 @@ public:
 
   // The strip's steps, after the walker: "4,812 TODAY", "4,812 FROM 09:41",
   // or "--" when there is no count to stand behind. Never a 0 for that.
-  void joeStepsText(char *out, int n) {
-    uint32_t c = 0;
+  // What the steps are now, for either JOE: STEPS_TODAY or STEPS_SINCE with
+  // the count in *c (stepSpan.from says since when), or STEPS_NONE.
+  int joeStepsNow(uint32_t *c) {
+    *c = 0;
     int k = STEPS_NONE;
     bool counting = stepsOk && stepSpan.setup == STEPCTR_ON &&
                     stepChipCounting(&accDev);
     if (counting)
-      k = stepSpanShow(&stepSpan, stepsHw, (uint32_t)localFromUtc((time_t)nowUtc64()), &c);
-    char g[16]; grouped(g, sizeof g, (long long)c);
-    if (k == STEPS_TODAY)      snprintf(out, n, "%s TODAY", g);
-    else if (k == STEPS_SINCE) snprintf(out, n, "%s FROM %02u:%02u", g,
-                                        (unsigned)(stepSpan.from / 60),
-                                        (unsigned)(stepSpan.from % 60));
-    else                       snprintf(out, n, "--");
-    Serial.printf("[steps] %s (read %s, setup %u, chip %s, counter %lu, base %lu)\n",
-                  out, stepsOk ? "ok" : "FAIL", (unsigned)stepSpan.setup,
+      k = stepSpanShow(&stepSpan, stepsHw, (uint32_t)localFromUtc((time_t)nowUtc64()), c);
+    Serial.printf("[steps] %s %lu (read %s, setup %u, chip %s, counter %lu, base %lu)\n",
+                  k == STEPS_TODAY ? "TODAY" : k == STEPS_SINCE ? "FROM" : "--",
+                  (unsigned long)*c, stepsOk ? "ok" : "FAIL", (unsigned)stepSpan.setup,
                   counting ? "counting" : "NOT counting",
                   (unsigned long)stepsHw, (unsigned long)stepSpan.base);
+    return k;
   }
 
   void drawJoeFace() {
@@ -8005,8 +7943,6 @@ public:
     }
     if (paintedDark != themeDark) fullOnClose();           // back from a card
     paintedDark = themeDark;
-    display.fillScreen(bg());
-    display.setTextColor(fg());
     RTC.read(currentTime);
     time_t lt = makeTime(currentTime);
     if (tzIndex > 0) {
@@ -8014,71 +7950,7 @@ public:
       lt = utc + tzOffsetSec(tzIndex, utc);
     }
     tmElements_t dt; breakTime(lt, dt);
-
-    // A digit fills most of its quarter but not all of it. The cell gutter and
-    // the gap between quarters were the same 4 px at first, which made the
-    // four digits merge into one grid — the margin is what separates them.
-    // The quarters are 81 tall, not 90, so the two lines of Satoshi fit
-    // under them.
-    const int QW = 98, QH = 81, GUT = 4;
-    const int DW = 86, DH = 73;                // the digit, inside its quarter
-    int digits[4] = { dt.Hour / 10, dt.Hour % 10,
-                      dt.Minute / 10, dt.Minute % 10 };
-    for (int q = 0; q < 4; q++) {
-      int ox = (q % 2) * (QW + GUT) + (QW - DW) / 2;
-      int oy = (q / 2) * (QH + GUT) + (QH - DH) / 2;
-      drawStencilDigit(ox, oy, DW, DH, digits[q]);
-    }
-
-    // ── Satoshi, on privacy ────────────────────────────────────────
-    // Word for word, each ending at its own full stop; "..." where the
-    // sentence is cut, nothing reworded. A different one each day. A line is
-    // a char[34]: one too wide for the panel (33 of the 6 px characters)
-    // does not compile. Picked and checked against the sources by Voice.
-    display.setFont(NULL);
-    static const char JOE_SAYS[][2][34] = {
-      // cryptography list, 15 Nov 2008: metzdowd.com/pipermail/cryptography/
-      // 2008-November/014860.html
-      { "\"A NEW KEY PAIR IS USED FOR",  "EVERY TRANSACTION.\" - SATOSHI" },
-      // BitcoinTalk, 25 Nov 2009: bitcointalk.org/index.php?topic=8.msg34
-      // ("For greater privacy, it's best to use bitcoin addresses only once.")
-      { "\"...IT'S BEST TO USE BITCOIN", "ADDRESSES ONLY ONCE.\" - SATOSHI" },
-      // the white paper, section 10, "Privacy": bitcoin.org/bitcoin.pdf
-      { "\"...BY KEEPING PUBLIC KEYS",   "ANONYMOUS.\" - SATOSHI" },
-    };
-    const int NSAYS = sizeof JOE_SAYS / sizeof JOE_SAYS[0];
-    const int say = (int)((uint32_t)lt / 86400 % NSAYS);
-    centerSmall(JOE_SAYS[say][0], 167);
-    centerSmall(JOE_SAYS[say][1], 176);
-
-    // ── the strip ──────────────────────────────────────────────────
-    const int SY = 188;
-    drawTinyB(1, SY);                                    // the mark
-
-    char d[10]; snprintf(d, 10, "%02d %02d", dt.Day, dt.Month);
-    display.setCursor(12, SY + 3); display.print(d);
-
-    // The battery as the other faces draw it (drawBattery(): the fill, the
-    // bolt while charging, the low mark), with its figure after it. That's
-    // the same latched figure, and the "~" About uses when it is an estimate.
-    drawBattery(46, SY + 3);                  // 16 wide, the low mark at +19
-    int bp = batteryPctShown();               // sets battEstimated
-    char pc[8] = "";
-    if (bp >= 0) snprintf(pc, sizeof pc, battEstimated ? "~%d%%" : "%d%%", bp);
-
-    // The steps run to the right edge with the walker in front of them. A
-    // count FROM a time with five figures leaves no room for the battery
-    // figure, and then the glyph stands alone. At most 18 characters
-    // ("999,999 FROM 09:41", steps_today.h's ceiling) put the walker at x 84,
-    // clear of the glyph and its low mark.
-    char st[24]; joeStepsText(st, sizeof st);
-    const int PX = 46 + 23;                   // the figure, clear of the low mark
-    int sx = 201 - 6 * (int)strlen(st);       // its last glyph ends at x 199
-    int wx = sx - 2 - WALKER_W;
-    if (PX + 6 * (int)strlen(pc) + 2 > wx) pc[0] = 0;   // 3 px clear, or none
-    display.setCursor(PX, SY + 3); display.print(pc);
-    drawWalker(wx, SY);
-    display.setCursor(sx, SY + 3); display.print(st);
+    drawJoeClassic(dt);
   }
 
   // The steps' walker: 7 x 11, facing right, mid-stride, its feet on the
@@ -8101,6 +7973,187 @@ public:
     for (int r = 0; r < 11; r++)
       for (int c = 0; c < WALKER_W; c++)
         if (ROWS[r] & (0x40 >> c)) display.drawPixel(x + c, y + r, fg());
+  }
+
+  // ---------------- JOE, classic ----------------
+  // JOE's other look, a digital watch's (OP, Nov 23): a bezel round an LCD
+  // window, segment digits whose unlit segments show faintly, the day and
+  // the date above, the battery and the steps below. The same time, date,
+  // battery and steps as the stencil JOE, and nothing on it says Bitcoin.
+
+  // Fill a convex polygon, sampling pixel centres. step 1 fills it; step n
+  // sets only the pixels whose x and y are both multiples of n, which is how
+  // an LCD's unlit segment reads in one bit: a light grey.
+  void fillConvex(const float *px, const float *py, int n, uint16_t c, int step) {
+    float y0 = py[0], y1 = py[0];
+    for (int i = 1; i < n; i++) { if (py[i] < y0) y0 = py[i]; if (py[i] > y1) y1 = py[i]; }
+    for (int y = (int)floorf(y0); y <= (int)ceilf(y1); y++) {
+      if (step > 1 && y % step) continue;
+      float yc = y + 0.5f, xl = 1e9f, xr = -1e9f;
+      for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        float ya = py[i], yb = py[j];
+        if ((ya <= yc && yb > yc) || (yb <= yc && ya > yc)) {
+          float x = px[i] + (yc - ya) * (px[j] - px[i]) / (yb - ya);
+          if (x < xl) xl = x;
+          if (x > xr) xr = x;
+        }
+      }
+      int a = (int)ceilf(xl - 0.5f), b = (int)floorf(xr - 0.5f);
+      if (b < a) continue;
+      if (step == 1) { display.drawFastHLine(a, y, b - a + 1, c); continue; }
+      for (int x = a; x <= b; x++) if (x % step == 0) display.drawPixel(x, y, c);
+    }
+  }
+
+  // One segment digit in the box (x, y, w, h), strokes t thick, its top
+  // sheared right by slant * h. Each segment is a long hexagon, a 1 px gap
+  // short of its neighbours; the unlit ones are ghosts.
+  void drawSegDigit(int x, int y, int w, int h, int t, int d, float slant) {
+    static const uint8_t SEGS[10] = {    // bit 0 a (top), then b c d e f, g
+      0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F };
+    const uint8_t on = (d >= 0 && d <= 9) ? SEGS[d] : 0;
+    const float a = t / 2.0f, g = 1.0f;
+    const float L = x + a, R = x + w - a, T = y + a, M = y + h / 2.0f, B = y + h - a;
+    // a b c d e f g: where each runs, and whether it lies flat
+    const float ends[7][4] = { {L, T, R, T}, {R, T, R, M}, {R, M, R, B}, {L, B, R, B},
+                               {L, M, L, B}, {L, T, L, M}, {L, M, R, M} };
+    for (int k = 0; k < 7; k++) {
+      const float *e = ends[k];
+      float px[6], py[6];
+      if (e[1] == e[3]) {                         // flat: a, d, g
+        const float xs[6] = {e[0] + g, e[0] + g + a, e[2] - g - a, e[2] - g, e[2] - g - a, e[0] + g + a};
+        const float ys[6] = {e[1], e[1] - a, e[1] - a, e[1], e[1] + a, e[1] + a};
+        for (int i = 0; i < 6; i++) { px[i] = xs[i]; py[i] = ys[i]; }
+      } else {                                    // upright: b, c, e, f
+        const float xs[6] = {e[0], e[0] + a, e[0] + a, e[0], e[0] - a, e[0] - a};
+        const float ys[6] = {e[1] + g, e[1] + g + a, e[3] - g - a, e[3] - g, e[3] - g - a, e[1] + g + a};
+        for (int i = 0; i < 6; i++) { px[i] = xs[i]; py[i] = ys[i]; }
+      }
+      for (int i = 0; i < 6; i++) px[i] += slant * (y + h - py[i]);
+      fillConvex(px, py, 6, fg(), (on >> k) & 1 ? 1 : 2);
+    }
+  }
+
+  // HH:MM in segments from x: digits w wide with `gap` between, the colon
+  // cw wide, sheared with the digits.
+  void drawSegTime(int x, int y, int w, int h, int t, int gap, int cw, float slant,
+                   int hh, int mm) {
+    const int d[4] = {hh / 10, hh % 10, mm / 10, mm % 10};
+    for (int i = 0; i < 4; i++) {
+      drawSegDigit(x, y, w, h, t, d[i], slant);
+      x += w + gap;
+      if (i == 1) {
+        for (int k = 0; k < 2; k++) {
+          float cy = y + h * (k ? 0.7f : 0.3f);
+          float cx = x + cw / 2.0f + slant * (y + h - cy);
+          display.fillRect((int)(cx - t / 2.0f), (int)(cy - t / 2.0f), t, t, fg());
+        }
+        x += cw + gap;
+      }
+    }
+  }
+
+  // Text in one of the DSEG7 segment fonts with an LCD's ghosts: under each
+  // digit, and in each ' ', an '8' with one pixel in `ghost` both ways. y is
+  // the baseline, as for print().
+  void segGlyph(const GFXfont *f, char ch, int x, int y, int ghost) {
+    if ((uint8_t)ch < f->first || (uint8_t)ch > f->last) return;
+    const GFXglyph *gl = &f->glyph[(uint8_t)ch - f->first];
+    const uint8_t *bm = f->bitmap + gl->bitmapOffset;
+    uint16_t bit = 0;
+    for (int yy = 0; yy < gl->height; yy++)
+      for (int xx = 0; xx < gl->width; xx++, bit++)
+        if (bm[bit >> 3] & (0x80 >> (bit & 7))) {
+          int X = x + gl->xOffset + xx, Y = y + gl->yOffset + yy;
+          if (ghost <= 1 || (X % ghost == 0 && Y % ghost == 0)) display.drawPixel(X, Y, fg());
+        }
+  }
+  int segAdvance(const GFXfont *f, char ch) {
+    if (ch == ' ') ch = '8';                      // a blank place is an 8 wide
+    if ((uint8_t)ch < f->first || (uint8_t)ch > f->last) return 0;
+    return f->glyph[(uint8_t)ch - f->first].xAdvance;
+  }
+  int segWidth(const GFXfont *f, const char *s) {
+    int w = 0;
+    for (; *s; s++) w += segAdvance(f, *s);
+    return w;
+  }
+  void drawSegText(const GFXfont *f, int x, int y, const char *s, int ghost) {
+    for (; *s; s++) {
+      if (*s == ' ' || (*s >= '0' && *s <= '9')) segGlyph(f, '8', x, y, ghost);
+      if (*s != ' ') segGlyph(f, *s, x, y, 1);
+      x += segAdvance(f, *s);
+    }
+  }
+
+  // The moon at `age` days, a disc r px round: the lit part solid, the dark
+  // part an LCD ghost, inside its rim (moonLit() in moon.h).
+  void drawMoon(int cx, int cy, int r, double age) {
+    for (int y = cy - r; y <= cy + r; y++)
+      for (int x = cx - r; x <= cx + r; x++) {
+        double dx = (x + 0.5 - cx) / r, dy = (y + 0.5 - cy) / r;
+        if (dx * dx + dy * dy > 1) continue;
+        if (moonLit(age, dx, dy) || (x % 2 == 0 && y % 2 == 0)) display.drawPixel(x, y, fg());
+      }
+    display.drawCircle(cx, cy, r, fg());
+  }
+
+  // The window, top to bottom: the day and the date; a row for the sky (the
+  // moon on the right, its age in days beside it, with the left kept for the
+  // weather to come); the time; the battery and the steps.
+  void drawJoeClassic(const tmElements_t &dt) {
+    static const char *DAYS[7] = {"SU", "MO", "TU", "WE", "TH", "FR", "SA"};
+    const GFXfont *SF = &DSEG7_Classic_Bold_18;
+    display.fillScreen(fg());                          // the bezel
+    display.fillRoundRect(6, 20, 188, 160, 10, bg());  // the window
+    display.setFont(NULL);
+    // the bezel's words sit by the buttons they name: UP (top right) is the
+    // next face, MENU is bottom left
+    display.setTextColor(bg());
+    display.setCursor(8, 6);                    display.print("BWATCH");
+    display.setCursor(200 - 6 * 4 - 6, 6);      display.print("MODE");
+    display.setCursor(8, 186);                  display.print("MENU");
+    display.setCursor(200 - 6 * 12 - 6, 186);   display.print("STEP COUNTER");
+    display.setTextColor(fg());
+
+    // the day, and the date in segments
+    display.setTextSize(2);
+    display.setCursor(16, 29);
+    display.print(DAYS[(dt.Wday >= 1 && dt.Wday <= 7) ? dt.Wday - 1 : 0]);
+    display.setTextSize(1);
+    char d[8]; snprintf(d, sizeof d, "%02d-%02d", dt.Day, dt.Month);
+    drawSegText(SF, 184 - segWidth(SF, "88-88"), 46, d, 3);
+    display.fillRect(12, 51, 176, 1, fg());           // the LCD's own rules
+
+    // the sky: the moon, worked out from the clock (UTC)
+    double age = moonAgeDays(nowUtc64());
+    char m[12]; snprintf(m, sizeof m, "MOON %2d", (int)age);
+    display.setCursor(118, 60); display.print(m);
+    drawMoon(176, 63, 8, age);
+    display.fillRect(12, 75, 176, 1, fg());
+
+    drawSegTime(14, 81, 31, 56, 7, 6, 10, 0.08f, dt.Hour, dt.Minute);
+    display.fillRect(12, 142, 176, 1, fg());
+
+    // the battery as everywhere else, and the steps in a five-place field
+    drawBattery(16, 160);
+    int bp = batteryPctShown();                       // sets battEstimated
+    if (bp >= 0) {
+      display.setCursor(16 + 23, 160);                // clear of the low mark
+      display.printf(battEstimated ? "~%d%%" : "%d%%", bp);
+    }
+    drawWalker(80, 156);
+    uint32_t c; int k = joeStepsNow(&c);
+    char lab[16] = "", num[12];
+    if (k == STEPS_TODAY) snprintf(lab, sizeof lab, "TODAY");
+    else if (k == STEPS_SINCE) snprintf(lab, sizeof lab, "FROM %02u:%02u",
+                                        (unsigned)(stepSpan.from / 60),
+                                        (unsigned)(stepSpan.from % 60));
+    if (k == STEPS_NONE) snprintf(num, sizeof num, "%5s", "--");    // never a 0
+    else                 snprintf(num, sizeof num, "%5lu", (unsigned long)c);
+    display.setCursor(185 - 6 * (int)strlen(lab), 147); display.print(lab);
+    drawSegText(SF, 184 - segWidth(SF, num), 174, num, 3);
   }
 
   bool callerFull = false;
