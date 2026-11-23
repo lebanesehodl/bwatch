@@ -68,6 +68,43 @@ def stencil(p, X, Y, W, H, d):
         fill(0, 0, 1, T, 1); fill(1 - T, 0, T, 1, 1)
 
 
+def draw_rect(p, x, y, w, h):          # GFX drawRect: the outline
+    p.fill_rect(x, y, w, 1, 1); p.fill_rect(x, y + h - 1, w, 1, 1)
+    p.fill_rect(x, y, 1, h, 1); p.fill_rect(x + w - 1, y, 1, h, 1)
+
+
+def battery(p, x, y, pct, charging=False):
+    """drawBattery(): outline, nub, proportional fill, '!' under 15%."""
+    draw_rect(p, x, y, 14, 8)
+    p.fill_rect(x + 14, y + 2, 2, 4, 1)
+    if not charging:
+        fill = 11 if pct >= 99 else r(11 * pct / 100.0)
+        if fill > 0:
+            p.fill_rect(x + 2, y + 2, fill, 4, 1)
+    if not charging and pct < 15:
+        p.fill_rect(x + 19, y, 1, 5, 1); p.fill_rect(x + 19, y + 7, 1, 1, 1)
+
+
+WALKER = ["....XX.",
+          "....XX.",
+          "...XX..",
+          "..XXXX.",
+          ".X.XX.X",
+          "X..XX..",
+          "...XXX.",
+          "..X..X.",
+          "..X...X",
+          ".X....X",
+          "X......"]
+
+
+def walker(p, x, y):
+    for rr, row in enumerate(WALKER):
+        for cc, ch in enumerate(row):
+            if ch == 'X':
+                p.fill_rect(x + cc, y + rr, 1, 1, 1)
+
+
 def tiny_b(p, x, y):
     for (a, b, w, h) in [(1, 1, 2, 9), (1, 1, 4, 2), (4, 2, 2, 2), (1, 4, 4, 2),
                          (4, 6, 2, 2), (1, 8, 4, 2), (2, -1, 1, 2), (2, 10, 1, 2)]:
@@ -86,13 +123,26 @@ def joe(path, hh, mm, day, mon, batt, steps, quote, dark=False, scale=3,
     SY = 188
     tiny_b(p, 1, SY)
     p.text(12, SY + 3, "%02d %02d" % (day, mon))
-    cx, cw = cell
-    p.fill_rect(cx, SY, cw, 3, 1)
-    fw = r(cw * batt / 100.0) if batt >= 0 else 0
-    if fw > 0:
-        p.fill_rect(cx, SY + 5, fw, 5, 1)
-    if steps is not None:
-        p.text(201 - 6 * len(steps), SY + 3, steps)
+    if cell == 'glyph':
+        battery(p, 46, SY + 3, batt)
+        pc = '%d%%' % batt
+        px = 46 + 23
+        if steps is not None:
+            sx = 201 - 6 * len(steps)
+            wx = sx - 2 - 7
+            if px + 6 * len(pc) + 2 > wx:
+                pc = ''
+            walker(p, wx, SY)
+            p.text(sx, SY + 3, steps)
+        p.text(px, SY + 3, pc)
+    else:
+        cx, cw = cell
+        p.fill_rect(cx, SY, cw, 3, 1)
+        fw = r(cw * batt / 100.0) if batt >= 0 else 0
+        if fw > 0:
+            p.fill_rect(cx, SY + 5, fw, 5, 1)
+        if steps is not None:
+            p.text(201 - 6 * len(steps), SY + 3, steps)
     if quote is not None and QY is not None:
         for i, line in enumerate(quote):
             p.text((200 - len(line) * 6) // 2, QY[i], line)
@@ -107,12 +157,13 @@ if __name__ == '__main__':
     Q3 = ('"...BY KEEPING PUBLIC KEYS', 'ANONYMOUS." - SATOSHI')
     for q in Q1 + Q2 + Q3:
         assert len(q) <= 33, q
-    # drawJoeFace() at fw/joe-footer 4b7efda: quarters 81, digits 86 x 73, Satoshi at
-    # y 167 and 176, the cell at x 46, 40 wide, steps to the right edge
-    new = dict(QH=81, DH=73, DW=86, QY=(167, 176), cell=(46, 40))
-    joe('before-dd6f002.png', 14, 32, 23, 11, 72, None, None)
-    joe('light-today.png', 14, 32, 23, 11, 72, '4,812 STEPS TODAY', Q1, **new)
-    joe('light-since.png', 9, 58, 23, 11, 72, '1,207 SINCE 09:41', Q2, **new)
-    joe('light-none.png', 14, 32, 23, 11, 72, 'STEPS --', Q3, **new)
-    joe('dark-today.png', 22, 8, 23, 11, 35, '12,345 STEPS TODAY', Q2, dark=True, **new)
-    joe('light-widest.png', 18, 47, 23, 11, 100, '999,999 SINCE 09:41', Q1, **new)
+    # drawJoeFace() at fw/joe-footer (the walker strip): quarters 81, digits 86 x 73, Satoshi at
+    # y 167 and 176; the strip: mark, date, the regular faces' battery glyph
+    # and its percentage, then the walker and the steps to the right edge
+    new = dict(QH=81, DH=73, DW=86, QY=(167, 176), cell='glyph')
+    joe('before-dd6f002.png', 14, 32, 23, 11, 72, None, None, cell=(78, 46))
+    joe('light-today.png', 14, 32, 23, 11, 70, '4,812 TODAY', Q1, **new)
+    joe('light-since.png', 9, 58, 23, 11, 85, '1,207 FROM 09:41', Q2, **new)
+    joe('light-none.png', 14, 32, 23, 11, 10, '--', Q3, **new)
+    joe('dark-today.png', 22, 8, 23, 11, 35, '12,345 TODAY', Q2, dark=True, **new)
+    joe('light-widest.png', 18, 47, 23, 11, 100, '12,345 FROM 09:41', Q1, **new)
