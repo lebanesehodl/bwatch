@@ -6497,28 +6497,38 @@ public:
   // 86 x 81 on e-paper that is the difference between a number that reads
   // across a room and one that reads as texture.
   //
-  //   T   stroke thickness, as a fraction of the digit
+  //   TV  an upright's width, as a fraction of the digit's width
+  //   TH  a bar's height, as a fraction of its height
   //   UY  top of the upper counter        LY  top of the lower counter
-  //   UH  counter height — what is left after three strokes
+  //   UH  counter height — what is left after three bars
+  //
+  // Heavier since Nov 23 (OP picked it from mocks): uprights 36% and bars 26%,
+  // both 24% before. The 1 now fills its box like the others: a centred
+  // upright 52% wide, with a flag and a full-width foot. Before, it was a 24%
+  // upright on the right, 30% ink against 73-86% for the slabs, and it looked
+  // empty. The 7's bar is as thick as its upright. The joints (the 1's flag
+  // and foot, the 4's crossbar, the 7's bar) are worked out in pixels, so
+  // rounding cannot leave a step where two strokes meet.
   void drawStencilDigit(int X, int Y, int W, int H, int d) {
-    const float T = 0.24f;
-    const float UH = (1.0f - 3.0f * T) / 2.0f;
-    const float UY = T, LY = (1.0f + T) / 2.0f;
+    const float TV = 0.36f, TH = 0.26f;
+    const float UH = (1.0f - 3.0f * TH) / 2.0f;
+    const float UY = TH, LY = (1.0f + TH) / 2.0f;
+    auto px = [](float v) { return (int)(v + 0.5f); };
     auto fill = [&](float x, float y, float w, float h, uint16_t c) {
-      display.fillRect(X + (int)(x * W + 0.5f), Y + (int)(y * H + 0.5f),
-                       (int)(w * W + 0.5f),     (int)(h * H + 0.5f), c);
+      display.fillRect(X + px(x * W), Y + px(y * H), px(w * W), px(h * H), c);
     };
+    const int tv = px(TV * W), th = px(TH * H);     // the same, in pixels
     // (x, width) of each counter: where the digit is open
     float ux, uw, lx, lw;
     bool slab = true;
     switch (d) {
-      case 0: fill(0,0,1,1,fg()); fill(T,T,1-2*T,1-2*T,bg()); return;
-      case 2: ux=0;   uw=1-T;   lx=T;   lw=1-T;   break;
-      case 3: ux=0;   uw=1-T;   lx=0;   lw=1-T;   break;
-      case 5: ux=T;   uw=1-T;   lx=0;   lw=1-T;   break;
-      case 6: ux=T;   uw=1-T;   lx=T;   lw=1-2*T; break;
-      case 8: ux=T;   uw=1-2*T; lx=T;   lw=1-2*T; break;
-      case 9: ux=T;   uw=1-2*T; lx=0;   lw=1-T;   break;
+      case 0: fill(0,0,1,1,fg()); fill(TV,TH,1-2*TV,1-2*TH,bg()); return;
+      case 2: ux=0;   uw=1-TV;   lx=TV;   lw=1-TV;   break;
+      case 3: ux=0;   uw=1-TV;   lx=0;    lw=1-TV;   break;
+      case 5: ux=TV;  uw=1-TV;   lx=0;    lw=1-TV;   break;
+      case 6: ux=TV;  uw=1-TV;   lx=TV;   lw=1-2*TV; break;
+      case 8: ux=TV;  uw=1-2*TV; lx=TV;   lw=1-2*TV; break;
+      case 9: ux=TV;  uw=1-2*TV; lx=0;    lw=1-TV;   break;
       default: slab = false; break;
     }
     if (slab) {
@@ -6528,10 +6538,22 @@ public:
       return;
     }
     // the three that are strokes rather than a slab
-    if (d == 1) { fill(1-T,0,T,1,fg()); fill(1-2.1f*T,0,1.1f*T,T,fg()); }
-    else if (d == 4) { fill(0,0,T,(1+T)/2,fg()); fill(1-T,0,T,1,fg());
-                       fill(0,(1-T)/2,1,T,fg()); }
-    else if (d == 7) { fill(0,0,1,T,fg()); fill(1-T,0,T,1,fg()); }
+    if (d == 1) {
+      int sw = px(0.52f * W), sx = (W - sw) / 2;    // the upright, centred
+      int fx = sx - px(0.264f * W);                 // the flag, out to the left
+      if (fx < 0) fx = 0;                           // (inside the box)
+      display.fillRect(X + sx, Y, sw, H, fg());
+      display.fillRect(X + fx, Y, sx + sw - fx, th, fg());
+      display.fillRect(X, Y + H - th, W, th, fg()); // the foot
+    } else if (d == 4) {
+      int by = px((1 - TH) / 2 * H);                // the crossbar's top
+      display.fillRect(X, Y, tv, by + th, fg());    // down to the bar's foot
+      display.fillRect(X + W - tv, Y, tv, H, fg());
+      display.fillRect(X, Y + by, W, th, fg());
+    } else if (d == 7) {
+      display.fillRect(X, Y, W, tv, fg());          // as thick as the upright
+      display.fillRect(X + W - tv, Y, tv, H, fg());
+    }
   }
 
   // The resting face. Everything on it has to stay true with nobody redrawing
@@ -7997,8 +8019,7 @@ public:
     // the gap between quarters were the same 4 px at first, which made the
     // four digits merge into one grid — the margin is what separates them.
     // The quarters are 81 tall, not 90, so the two lines of Satoshi fit
-    // under them; 73 is a height whose rounding leaves every digit clean
-    // (at 72 the 4's crossbar stops a pixel short of its upright).
+    // under them.
     const int QW = 98, QH = 81, GUT = 4;
     const int DW = 86, DH = 73;                // the digit, inside its quarter
     int digits[4] = { dt.Hour / 10, dt.Hour % 10,
