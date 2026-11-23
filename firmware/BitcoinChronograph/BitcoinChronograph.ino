@@ -6949,10 +6949,9 @@ public:
   }
 
   // JOE. Four digits, each one filling a quarter of the panel, with nothing
-  // drawn between them — the gaps do the dividing. Below them two lines of
-  // Satoshi on privacy, then a strip: the mark, the date, the battery and
-  // its figure, and the day's steps from the accelerometer behind a walker.
-  // Nothing here comes off the chain.
+  // drawn between them — the gaps do the dividing. Below them a strip: the
+  // mark, the date, the battery and its figure, and the day's steps from the
+  // accelerometer behind a walker. Nothing here comes off the chain.
   // ---------------- people: ages in blocks ----------------
   // Up to four people (name and birthday), entered on the phone (Setup
   // Wallet's page) or under My Watch > Birthdays, kept in NVS. Someone born
@@ -8018,10 +8017,8 @@ public:
     // A digit fills most of its quarter but not all of it. The cell gutter and
     // the gap between quarters were the same 4 px at first, which made the
     // four digits merge into one grid — the margin is what separates them.
-    // The quarters are 81 tall, not 90, so the two lines of Satoshi fit
-    // under them.
-    const int QW = 98, QH = 81, GUT = 4;
-    const int DW = 86, DH = 73;                // the digit, inside its quarter
+    const int QW = 98, QH = 90, GUT = 4;
+    const int DW = 86, DH = 81;                // the digit, inside its quarter
     int digits[4] = { dt.Hour / 10, dt.Hour % 10,
                       dt.Minute / 10, dt.Minute % 10 };
     for (int q = 0; q < 4; q++) {
@@ -8030,28 +8027,8 @@ public:
       drawStencilDigit(ox, oy, DW, DH, digits[q]);
     }
 
-    // ── Satoshi, on privacy ────────────────────────────────────────
-    // Word for word, each ending at its own full stop; "..." where the
-    // sentence is cut, nothing reworded. A different one each day. A line is
-    // a char[34]: one too wide for the panel (33 of the 6 px characters)
-    // does not compile. Picked and checked against the sources by Voice.
-    display.setFont(NULL);
-    static const char JOE_SAYS[][2][34] = {
-      // cryptography list, 15 Nov 2008: metzdowd.com/pipermail/cryptography/
-      // 2008-November/014860.html
-      { "\"A NEW KEY PAIR IS USED FOR",  "EVERY TRANSACTION.\" - SATOSHI" },
-      // BitcoinTalk, 25 Nov 2009: bitcointalk.org/index.php?topic=8.msg34
-      // ("For greater privacy, it's best to use bitcoin addresses only once.")
-      { "\"...IT'S BEST TO USE BITCOIN", "ADDRESSES ONLY ONCE.\" - SATOSHI" },
-      // the white paper, section 10, "Privacy": bitcoin.org/bitcoin.pdf
-      { "\"...BY KEEPING PUBLIC KEYS",   "ANONYMOUS.\" - SATOSHI" },
-    };
-    const int NSAYS = sizeof JOE_SAYS / sizeof JOE_SAYS[0];
-    const int say = (int)((uint32_t)lt / 86400 % NSAYS);
-    centerSmall(JOE_SAYS[say][0], 167);
-    centerSmall(JOE_SAYS[say][1], 176);
-
     // ── the strip ──────────────────────────────────────────────────
+    display.setFont(NULL);
     const int SY = 188;
     drawTinyB(1, SY);                                    // the mark
 
