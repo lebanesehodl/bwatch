@@ -1,6 +1,6 @@
 # JOE footer mock (PR for `fw/joe-footer`, not for merging)
 
-200x200 renders of `drawJoeFace()` at `fw/joe-footer` 69eb762. `mock.py` repeats the face's
+200x200 renders of `drawJoeFace()` at `fw/joe-footer` 4b7efda. `mock.py` repeats the face's
 rectangle math (`drawStencilDigit()`, `drawTinyB()`, the cell) and draws every line of text
 with the Adafruit GFX classic 5x7 font. `font.py` is copied from `glcdfont.c` in Adafruit GFX
 1.13.0, the pinned version. To re-render, run `python3 mock.py` (needs Pillow).

@@ -102,16 +102,17 @@ def joe(path, hh, mm, day, mon, batt, steps, quote, dark=False, scale=3,
 
 if __name__ == '__main__':
     # the lines, exactly as JOE_SAYS has them (BitcoinChronograph.ino)
-    Q1 = ('"A NEW KEY PAIR SHOULD BE USED', 'FOR EACH TRANSACTION" - SATOSHI')
-    Q2 = ('"...BY KEEPING PUBLIC KEYS', 'ANONYMOUS." - SATOSHI')
-    for q in Q1 + Q2:
+    Q1 = ('"A NEW KEY PAIR IS USED FOR', 'EVERY TRANSACTION." - SATOSHI')
+    Q2 = ('"...IT\'S BEST TO USE BITCOIN', 'ADDRESSES ONLY ONCE." - SATOSHI')
+    Q3 = ('"...BY KEEPING PUBLIC KEYS', 'ANONYMOUS." - SATOSHI')
+    for q in Q1 + Q2 + Q3:
         assert len(q) <= 33, q
-    # drawJoeFace() at fw/joe-footer: quarters 81, digits 86 x 73, Satoshi at
+    # drawJoeFace() at fw/joe-footer 4b7efda: quarters 81, digits 86 x 73, Satoshi at
     # y 167 and 176, the cell at x 46, 40 wide, steps to the right edge
     new = dict(QH=81, DH=73, DW=86, QY=(167, 176), cell=(46, 40))
     joe('before-dd6f002.png', 14, 32, 23, 11, 72, None, None)
     joe('light-today.png', 14, 32, 23, 11, 72, '4,812 STEPS TODAY', Q1, **new)
     joe('light-since.png', 9, 58, 23, 11, 72, '1,207 SINCE 09:41', Q2, **new)
-    joe('light-none.png', 14, 32, 23, 11, 72, 'STEPS --', Q1, **new)
+    joe('light-none.png', 14, 32, 23, 11, 72, 'STEPS --', Q3, **new)
     joe('dark-today.png', 22, 8, 23, 11, 35, '12,345 STEPS TODAY', Q2, dark=True, **new)
     joe('light-widest.png', 18, 47, 23, 11, 100, '999,999 SINCE 09:41', Q1, **new)
