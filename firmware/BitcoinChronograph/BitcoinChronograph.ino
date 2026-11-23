@@ -8010,14 +8010,20 @@ public:
     }
 
     // ── Satoshi, on privacy ────────────────────────────────────────
-    // Word for word from the white paper (bitcoin.org/bitcoin.pdf, section
-    // 10, "Privacy"), cut where shown and nothing reworded. A different one
-    // each day. A line is a char[34]: one too wide for the panel (33 of the
-    // 6 px characters) does not compile.
+    // Word for word, each ending at its own full stop; "..." where the
+    // sentence is cut, nothing reworded. A different one each day. A line is
+    // a char[34]: one too wide for the panel (33 of the 6 px characters)
+    // does not compile. Picked and checked against the sources by Voice.
     display.setFont(NULL);
     static const char JOE_SAYS[][2][34] = {
-      { "\"A NEW KEY PAIR SHOULD BE USED", "FOR EACH TRANSACTION\" - SATOSHI" },
-      { "\"...BY KEEPING PUBLIC KEYS",     "ANONYMOUS.\" - SATOSHI" },
+      // cryptography list, 15 Nov 2008: metzdowd.com/pipermail/cryptography/
+      // 2008-November/014860.html
+      { "\"A NEW KEY PAIR IS USED FOR",  "EVERY TRANSACTION.\" - SATOSHI" },
+      // BitcoinTalk, 25 Nov 2009: bitcointalk.org/index.php?topic=8.msg34
+      // ("For greater privacy, it's best to use bitcoin addresses only once.")
+      { "\"...IT'S BEST TO USE BITCOIN", "ADDRESSES ONLY ONCE.\" - SATOSHI" },
+      // the white paper, section 10, "Privacy": bitcoin.org/bitcoin.pdf
+      { "\"...BY KEEPING PUBLIC KEYS",   "ANONYMOUS.\" - SATOSHI" },
     };
     const int NSAYS = sizeof JOE_SAYS / sizeof JOE_SAYS[0];
     const int say = (int)((uint32_t)lt / 86400 % NSAYS);
