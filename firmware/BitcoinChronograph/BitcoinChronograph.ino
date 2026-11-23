@@ -6320,16 +6320,18 @@ public:
   // everything, BACK comes home from a trip (or, on WAL, hides the balance /
   // verifies the receive address), MENU cleans the screen. The theme lives
   // in My Watch > Theme.
-  // Leaving JOE: the next face goes on with a full (see below).
+  // Leaving JOE with a card on the glass: the next face goes on with a full.
   void leaveFace(int to) {
     if (dispMode == M_JOE && to != M_JOE) {
-      // JOE's bezel is a big solid band that a partial only half clears, and
-      // its dark cards left ghosts too. So the next face goes up with a full
-      // (OP chose that over a faint frame for a minute, Nov 23), and that full
-      // is its clean: drawnMode says so, so no second one is booked.
-      fullOnClose();
-      drawnMode = to;
+      if (joeCardsSeen && themeDark) fullOnClose();   // dark cards only: light
+                                                    // ones leave no trace
       joeCardsSeen = false; joeStep = 0; joeLastStep = 0;
+      // JOE's bezel is a big solid band that a partial only half clears: say
+      // the glass held JOE, so the next face (whichever) books the clean that
+      // follows any face change (cleanNext, once nobody is looking). JOE does
+      // not set drawnMode itself, and with two faces in the cycle the one
+      // after JOE could match the one before it.
+      drawnMode = M_JOE;
     }
     dispMode = to;
     walletPeek = false;               // leaving the wallet ends a peek
