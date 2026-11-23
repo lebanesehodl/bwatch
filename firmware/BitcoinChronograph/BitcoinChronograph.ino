@@ -8099,9 +8099,10 @@ public:
     display.drawCircle(cx, cy, r, fg());
   }
 
-  // The window, top to bottom: the day and the date; a row for the sky (the
-  // moon on the right, its age in days beside it, with the left kept for the
-  // weather to come); the time; the battery and the steps.
+  // The window, top to bottom: the sky on the left (the moon, and the
+  // weather to come) beside the calendar on the right (the day over the
+  // date), as on a tide-and-moon watch; the time; the battery and the steps.
+  // OP's pick of the two layouts, Nov 23.
   void drawJoeClassic(const tmElements_t &dt) {
     static const char *DAYS[7] = {"SU", "MO", "TU", "WE", "TH", "FR", "SA"};
     const GFXfont *SF = &DSEG7_Classic_Bold_18;
@@ -8117,23 +8118,16 @@ public:
     display.setCursor(200 - 6 * 12 - 6, 186);   display.print("STEP COUNTER");
     display.setTextColor(fg());
 
-    // the day, and the date in segments
-    display.setTextSize(2);
-    display.setCursor(16, 29);
-    display.print(DAYS[(dt.Wday >= 1 && dt.Wday <= 7) ? dt.Wday - 1 : 0]);
-    display.setTextSize(1);
-    char d[8]; snprintf(d, sizeof d, "%02d-%02d", dt.Day, dt.Month);
-    drawSegText(SF, 184 - segWidth(SF, "88-88"), 46, d, 3);
-    display.fillRect(12, 51, 176, 1, fg());           // the LCD's own rules
-
     // the sky: the moon, worked out from the clock (UTC)
-    double age = moonAgeDays(nowUtc64());
-    char m[12]; snprintf(m, sizeof m, "MOON %2d", (int)age);
-    display.setCursor(118, 60); display.print(m);
-    drawMoon(176, 63, 8, age);
-    display.fillRect(12, 75, 176, 1, fg());
+    drawMoon(24, 37, 10, moonAgeDays(nowUtc64()));
+    // the calendar: the day over the date in segments
+    display.setCursor(184 - segWidth(SF, "88-88"), 23);  // over the date's left edge
+    display.print(DAYS[(dt.Wday >= 1 && dt.Wday <= 7) ? dt.Wday - 1 : 0]);
+    char d[8]; snprintf(d, sizeof d, "%02d-%02d", dt.Day, dt.Month);
+    drawSegText(SF, 184 - segWidth(SF, "88-88"), 50, d, 3);
+    display.fillRect(12, 56, 176, 1, fg());           // the LCD's own rules
 
-    drawSegTime(14, 81, 31, 56, 7, 6, 10, 0.08f, dt.Hour, dt.Minute);
+    drawSegTime(12, 63, 32, 72, 8, 6, 10, 0.08f, dt.Hour, dt.Minute);
     display.fillRect(12, 142, 176, 1, fg());
 
     // the battery as everywhere else, and the steps in a five-place field
