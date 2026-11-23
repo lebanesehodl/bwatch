@@ -71,6 +71,19 @@ watchy="$libs/Watchy/src"
 "$cxx" -o "$tmp/case_temp_test" "$tmp/case_temp_test.o" "$tmp/bma4.o"
 "$tmp/case_temp_test"
 
+# And JOE's steps (steps_today.h): a fake BMA423 read through the pinned
+# driver, then the day arithmetic. The driver goes in as C here, as it does
+# on the watch, because steps_today.h reaches it through bma423.h's
+# extern "C".
+cc="${CC:-cc}"
+"$cc" -w -I"$watchy" -c "$watchy/bma4.c" -o "$tmp/bma4_c.o"
+"$cc" -w -I"$watchy" -c "$watchy/bma423.c" -o "$tmp/bma423_c.o"
+"$cxx" -std=c++11 -Wall -Wextra -Werror -I"$sketch" -I"$watchy" \
+  -c "$here/steps_today_test.cpp" -o "$tmp/steps_today_test.o"
+"$cxx" -o "$tmp/steps_today_test" "$tmp/steps_today_test.o" \
+  "$tmp/bma4_c.o" "$tmp/bma423_c.o"
+"$tmp/steps_today_test"
+
 arduino-cli compile \
   --fqbn "$FQBN" \
   --warnings default \

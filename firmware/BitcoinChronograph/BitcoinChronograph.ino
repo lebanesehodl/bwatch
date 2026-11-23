@@ -36,6 +36,7 @@
 #include <Bitcoin.h>            // uBitcoin: watch-only address derivation
 #include <Hash.h>               // uBitcoin: doubleSha, for the genesis boot
 #include "case_temp.h"          // the case temperature and its modes
+#include "steps_today.h"        // JOE's steps: the accelerometer's count, by day
 #include "qrcodegen_local.h"    // ricmoo/QRCode, vendored into the sketch
                                 // folder because the ESP32 core ships its
                                 // own qrcode.h that shadows the library
@@ -445,7 +446,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0153
+#define RTC_LAYOUT_MAGIC 0xB17C0155
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -661,6 +662,9 @@ RTC_DATA_ATTR int8_t   caseTempC       = 99;    // last reading (99: none yet)
 RTC_DATA_ATTR uint8_t  tempMode        = TEMP_OK;
 RTC_DATA_ATTR uint8_t  coldLowVolt     = 0;     // cold: low readings in a row
 RTC_DATA_ATTR uint32_t realFullWake    = 0;     // wakeMin of the last real full
+// ---- JOE's steps: the accelerometer's own counter cut into local days, the
+// rules in steps_today.h (tested on the build machine by build.sh) ----
+RTC_DATA_ATTR StepSpan stepSpan        = {0, 0, 0, 0, 0, 0};
 RTC_DATA_ATTR bool     fiatAsk         = false; // fetch the FIAT data at the next
                                                 // chance: after a boot, or a FIAT
                                                 // face just turned on
@@ -6452,6 +6456,7 @@ public:
     for (int k = 0; k < 4; k++) fiM2Halv[k] = 0;
     fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
     caseTempC = 99; tempMode = TEMP_OK; coldLowVolt = 0; realFullWake = 0;
+    memset(&stepSpan, 0, sizeof stepSpan);   // no count, and setup unchecked
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
     joeStep = 0; evAgeWho = -1; evAgeN = 0;
@@ -6922,8 +6927,10 @@ public:
   }
 
   // JOE. Four digits, each one filling a quarter of the panel, with nothing
-  // drawn between them — the gaps do the dividing. Below them a strip: the
-  // date, the cell as a bar, and the mark. Nothing here comes off the chain.
+  // drawn between them — the gaps do the dividing. Below them two lines of
+  // Satoshi on privacy, then a strip: the mark, the date, the cell as a bar,
+  // and the day's steps from the accelerometer. Nothing here comes off the
+  // chain.
   // ---------------- people: ages in blocks ----------------
   // Up to four people (name and birthday), entered on the phone (Setup
   // Wallet's page) or under My Watch > Birthdays, kept in NVS. Someone born
@@ -7886,6 +7893,72 @@ public:
     return false;
   }
 
+  // ---------------- JOE's steps ----------------
+  // How a day's count works, and what counts as no count, is in
+  // steps_today.h. Every wake that draws a face reads the counter, whatever
+  // face is up, so the first wake of a day is the one that notes where the
+  // day began. Only JOE shows it.
+  // A read this close before midnight still lets the new day count from
+  // midnight: a minute wake, or a day rest's wake (the watch lying still).
+  static const uint32_t STEP_GAP_S = (REST_WAKE_MIN + 1) * 60;
+  bool stepsBootSeen = false;      // this run, not RTC: a boot is handled once
+  bool stepsOk = false;            // this wake read the counter
+  uint32_t stepsHw = 0;            // and this is what it read
+  void stepsTick() {
+    stepsOk = false;
+    if (!stepsBootSeen) {
+      stepsBootSeen = true;
+      if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {
+        // a real boot: the library has just zeroed the chip (_bmaConfig()),
+        // so nothing noted before it belongs to today, and the setup it
+        // just did is asked about again
+        stepSpanForget(&stepSpan);
+        stepSpan.setup = STEPCTR_UNKNOWN;
+      }
+    }
+    RTC.read(currentTime);                         // as JOE reads it
+    tmElements_t dt;
+    if (!localDate(dt)) return;                    // no date, no day to count
+    if (!accOpen()) return;
+    if (stepSpan.setup == STEPCTR_UNKNOWN) {
+      stepSpan.setup = stepCounterState(&accDev);
+      Serial.printf("[steps] step counter %s\n",
+                    stepSpan.setup == STEPCTR_ON ? "on" :
+                    stepSpan.setup == STEPCTR_OFF ? "OFF" : "not answering");
+    }
+    uint32_t hw;
+    if (!stepCountRead(&accDev, &hw)) return;
+    uint32_t lt = (uint32_t)localFromUtc((time_t)nowUtc64());
+    uint32_t day0 = stepSpan.day, from0 = stepSpan.from;
+    stepSpanNote(&stepSpan, hw, lt, STEP_GAP_S);
+    stepsOk = true; stepsHw = hw;
+    if (stepSpan.day != day0 || stepSpan.from != from0)
+      Serial.printf("[steps] new count from %02u:%02u, counter %lu\n",
+                    (unsigned)(stepSpan.from / 60), (unsigned)(stepSpan.from % 60),
+                    (unsigned long)hw);
+  }
+
+  // The strip's steps: "4,812 STEPS TODAY", "4,812 SINCE 09:41", or
+  // "STEPS --" when there is no count to stand behind. Never a 0 for that.
+  void joeStepsText(char *out, int n) {
+    uint32_t c = 0;
+    int k = STEPS_NONE;
+    bool counting = stepsOk && stepSpan.setup == STEPCTR_ON &&
+                    stepChipCounting(&accDev);
+    if (counting)
+      k = stepSpanShow(&stepSpan, stepsHw, (uint32_t)localFromUtc((time_t)nowUtc64()), &c);
+    char g[16]; grouped(g, sizeof g, (long long)c);
+    if (k == STEPS_TODAY)      snprintf(out, n, "%s STEPS TODAY", g);
+    else if (k == STEPS_SINCE) snprintf(out, n, "%s SINCE %02u:%02u", g,
+                                        (unsigned)(stepSpan.from / 60),
+                                        (unsigned)(stepSpan.from % 60));
+    else                       snprintf(out, n, "STEPS --");
+    Serial.printf("[steps] %s (read %s, setup %u, chip %s, counter %lu, base %lu)\n",
+                  out, stepsOk ? "ok" : "FAIL", (unsigned)stepSpan.setup,
+                  counting ? "counting" : "NOT counting",
+                  (unsigned long)stepsHw, (unsigned long)stepSpan.base);
+  }
+
   void drawJoeFace() {
     themeDark = darkNow();             // JOE draws before the face sets it
     if (!buttonWake) joeStep = 0;                          // one glance only
@@ -7923,8 +7996,11 @@ public:
     // A digit fills most of its quarter but not all of it. The cell gutter and
     // the gap between quarters were the same 4 px at first, which made the
     // four digits merge into one grid — the margin is what separates them.
-    const int QW = 98, QH = 90, GUT = 4;
-    const int DW = 86, DH = 81;                // the digit, inside its quarter
+    // The quarters are 81 tall, not 90, so the two lines of Satoshi fit
+    // under them; 73 is a height whose rounding leaves every digit clean
+    // (at 72 the 4's crossbar stops a pixel short of its upright).
+    const int QW = 98, QH = 81, GUT = 4;
+    const int DW = 86, DH = 73;                // the digit, inside its quarter
     int digits[4] = { dt.Hour / 10, dt.Hour % 10,
                       dt.Minute / 10, dt.Minute % 10 };
     for (int q = 0; q < 4; q++) {
@@ -7933,19 +8009,40 @@ public:
       drawStencilDigit(ox, oy, DW, DH, digits[q]);
     }
 
-    // ── the strip ──────────────────────────────────────────────────
+    // ── Satoshi, on privacy ────────────────────────────────────────
+    // Word for word from the white paper (bitcoin.org/bitcoin.pdf, section
+    // 10, "Privacy"), cut where shown and nothing reworded. A different one
+    // each day. A line is a char[34]: one too wide for the panel (33 of the
+    // 6 px characters) does not compile.
     display.setFont(NULL);
+    static const char JOE_SAYS[][2][34] = {
+      { "\"A NEW KEY PAIR SHOULD BE USED", "FOR EACH TRANSACTION\" - SATOSHI" },
+      { "\"...BY KEEPING PUBLIC KEYS",     "ANONYMOUS.\" - SATOSHI" },
+    };
+    const int NSAYS = sizeof JOE_SAYS / sizeof JOE_SAYS[0];
+    const int say = (int)((uint32_t)lt / 86400 % NSAYS);
+    centerSmall(JOE_SAYS[say][0], 167);
+    centerSmall(JOE_SAYS[say][1], 176);
+
+    // ── the strip ──────────────────────────────────────────────────
     const int SY = 188;
     drawTinyB(1, SY);                                    // the mark
 
     char d[10]; snprintf(d, 10, "%02d %02d", dt.Day, dt.Month);
     display.setCursor(12, SY + 3); display.print(d);
 
-    // the cell, drawn the way the strip wants it: a rule with a fill under it
-    display.fillRect(78, SY, 46, 3, fg());
+    // the cell, drawn the way the strip wants it: a rule with a fill under it.
+    // 40 wide, right after the date, so the steps fit after it.
+    const int CX = 46, CW = 40;
+    display.fillRect(CX, SY, CW, 3, fg());
     int bp = batteryPctShown();
-    int fw = (bp >= 0) ? (int)(46.0f * bp / 100.0f + 0.5f) : 0;
-    if (fw > 0) display.fillRect(78, SY + 5, fw, 5, fg());
+    int fw = (bp >= 0) ? (int)((float)CW * bp / 100.0f + 0.5f) : 0;
+    if (fw > 0) display.fillRect(CX, SY + 5, fw, 5, fg());
+
+    // the steps, to the right edge: at most 19 characters ("999,999 SINCE
+    // 09:41", steps_today.h's ceiling), from x 87, clear of the cell's 85
+    char st[24]; joeStepsText(st, sizeof st);
+    display.setCursor(201 - 6 * (int)strlen(st), SY + 3); display.print(st);
   }
 
   bool callerFull = false;
@@ -8011,6 +8108,8 @@ public:
       } else if (tempMode == TEMP_COLD && battVoltsTrue() >= 3.36f) coldLowVolt = 0;
     }
 
+    stepsTick();                        // every face: the day's first wake
+                                        // notes where JOE's count begins
     if (dispMode == M_JOE) { drawJoeFace(); return; }
     loadPrefs();
     themeDark = darkNow();
@@ -10808,6 +10907,8 @@ public:
     restState = REST_NONE;
     awakeTill = wakeMin + PRESS_GRACE_MIN;
     sensor.enableAccel();
+    stepSpanForget(&stepSpan);       // the accelerometer was off in the box:
+                                     // what the counter holds is not today's
     forceFetch = true;
     Serial.printf("[ship] awake (%s) after %ld min\n", why, el / 60);
     buzz(50, 4);
