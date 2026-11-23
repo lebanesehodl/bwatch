@@ -12,7 +12,7 @@
 //
 // What the face may then say:
 //   TODAY        the count began at local midnight
-//   SINCE hh:mm  it began later the same day: a boot (the library zeroed
+//   FROM hh:mm   it began later the same day: a boot (the library zeroed
 //                the chip), out of the box (the accelerometer was off),
 //                the counter going backwards, or the clock set back a day
 //   --           no count to stand behind: no reading, a sensor that is not
@@ -39,7 +39,7 @@ enum { STEPCTR_UNKNOWN = 0, STEPCTR_ON = 1, STEPCTR_OFF = 2 };
 // More than this in one day is a bad read, not a walk (~750 km of steps).
 #define STEPS_MAX_DAY 999999UL
 
-// Forget the count: the next read starts a new one, labelled SINCE.
+// Forget the count: the next read starts a new one, labelled FROM.
 static inline void stepSpanForget(StepSpan *s) { s->day = 0; }
 
 // A new count, beginning at this read.
@@ -54,7 +54,7 @@ static inline void stepSpanStart(StepSpan *s, uint32_t hw, uint32_t lt) {
 // last read was no more than gapS earlier: the watch was reading right up
 // to midnight, and what falls between the two reads is at most gapS of
 // walking (a minute while awake; a rest's few minutes, with the watch lying
-// still). Otherwise the day counts from this read (SINCE).
+// still). Otherwise the day counts from this read (FROM).
 static inline void stepSpanNote(StepSpan *s, uint32_t hw, uint32_t lt,
                                 uint32_t gapS) {
   uint32_t day = lt / 86400;

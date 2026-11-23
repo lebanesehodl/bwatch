@@ -6928,9 +6928,9 @@ public:
 
   // JOE. Four digits, each one filling a quarter of the panel, with nothing
   // drawn between them — the gaps do the dividing. Below them two lines of
-  // Satoshi on privacy, then a strip: the mark, the date, the cell as a bar,
-  // and the day's steps from the accelerometer. Nothing here comes off the
-  // chain.
+  // Satoshi on privacy, then a strip: the mark, the date, the battery and
+  // its figure, and the day's steps from the accelerometer behind a walker.
+  // Nothing here comes off the chain.
   // ---------------- people: ages in blocks ----------------
   // Up to four people (name and birthday), entered on the phone (Setup
   // Wallet's page) or under My Watch > Birthdays, kept in NVS. Someone born
@@ -7938,8 +7938,8 @@ public:
                     (unsigned long)hw);
   }
 
-  // The strip's steps: "4,812 STEPS TODAY", "4,812 SINCE 09:41", or
-  // "STEPS --" when there is no count to stand behind. Never a 0 for that.
+  // The strip's steps, after the walker: "4,812 TODAY", "4,812 FROM 09:41",
+  // or "--" when there is no count to stand behind. Never a 0 for that.
   void joeStepsText(char *out, int n) {
     uint32_t c = 0;
     int k = STEPS_NONE;
@@ -7948,11 +7948,11 @@ public:
     if (counting)
       k = stepSpanShow(&stepSpan, stepsHw, (uint32_t)localFromUtc((time_t)nowUtc64()), &c);
     char g[16]; grouped(g, sizeof g, (long long)c);
-    if (k == STEPS_TODAY)      snprintf(out, n, "%s STEPS TODAY", g);
-    else if (k == STEPS_SINCE) snprintf(out, n, "%s SINCE %02u:%02u", g,
+    if (k == STEPS_TODAY)      snprintf(out, n, "%s TODAY", g);
+    else if (k == STEPS_SINCE) snprintf(out, n, "%s FROM %02u:%02u", g,
                                         (unsigned)(stepSpan.from / 60),
                                         (unsigned)(stepSpan.from % 60));
-    else                       snprintf(out, n, "STEPS --");
+    else                       snprintf(out, n, "--");
     Serial.printf("[steps] %s (read %s, setup %u, chip %s, counter %lu, base %lu)\n",
                   out, stepsOk ? "ok" : "FAIL", (unsigned)stepSpan.setup,
                   counting ? "counting" : "NOT counting",
@@ -8037,18 +8037,49 @@ public:
     char d[10]; snprintf(d, 10, "%02d %02d", dt.Day, dt.Month);
     display.setCursor(12, SY + 3); display.print(d);
 
-    // the cell, drawn the way the strip wants it: a rule with a fill under it.
-    // 40 wide, right after the date, so the steps fit after it.
-    const int CX = 46, CW = 40;
-    display.fillRect(CX, SY, CW, 3, fg());
-    int bp = batteryPctShown();
-    int fw = (bp >= 0) ? (int)((float)CW * bp / 100.0f + 0.5f) : 0;
-    if (fw > 0) display.fillRect(CX, SY + 5, fw, 5, fg());
+    // The battery as the other faces draw it (drawBattery(): the fill, the
+    // bolt while charging, the low mark), with its figure after it. That's
+    // the same latched figure, and the "~" About uses when it is an estimate.
+    drawBattery(46, SY + 3);                  // 16 wide, the low mark at +19
+    int bp = batteryPctShown();               // sets battEstimated
+    char pc[8] = "";
+    if (bp >= 0) snprintf(pc, sizeof pc, battEstimated ? "~%d%%" : "%d%%", bp);
 
-    // the steps, to the right edge: at most 19 characters ("999,999 SINCE
-    // 09:41", steps_today.h's ceiling), from x 87, clear of the cell's 85
+    // The steps run to the right edge with the walker in front of them. A
+    // count FROM a time with five figures leaves no room for the battery
+    // figure, and then the glyph stands alone. At most 18 characters
+    // ("999,999 FROM 09:41", steps_today.h's ceiling) put the walker at x 84,
+    // clear of the glyph and its low mark.
     char st[24]; joeStepsText(st, sizeof st);
-    display.setCursor(201 - 6 * (int)strlen(st), SY + 3); display.print(st);
+    const int PX = 46 + 23;                   // the figure, clear of the low mark
+    int sx = 201 - 6 * (int)strlen(st);       // its last glyph ends at x 199
+    int wx = sx - 2 - WALKER_W;
+    if (PX + 6 * (int)strlen(pc) + 2 > wx) pc[0] = 0;   // 3 px clear, or none
+    display.setCursor(PX, SY + 3); display.print(pc);
+    drawWalker(wx, SY);
+    display.setCursor(sx, SY + 3); display.print(st);
+  }
+
+  // The steps' walker: 7 x 11, facing right, mid-stride, its feet on the
+  // strip's baseline.
+  static const int WALKER_W = 7;
+  void drawWalker(int x, int y) {
+    static const uint8_t ROWS[11] = {
+      0b0000110,   // ....##.
+      0b0000110,   // ....##.
+      0b0001100,   // ...##..
+      0b0011110,   // ..####.
+      0b0101101,   // .#.##.#
+      0b1001100,   // #..##..
+      0b0001110,   // ...###.
+      0b0010010,   // ..#..#.
+      0b0010001,   // ..#...#
+      0b0100001,   // .#....#
+      0b1000000,   // #......
+    };
+    for (int r = 0; r < 11; r++)
+      for (int c = 0; c < WALKER_W; c++)
+        if (ROWS[r] & (0x40 >> c)) display.drawPixel(x + c, y + r, fg());
   }
 
   bool callerFull = false;
