@@ -39,6 +39,7 @@
 #include "steps_today.h"        // JOE's steps: the accelerometer's count, by day
 #include "moon.h"               // JOE's moon: its age, worked out on the watch
 #include "weather.h"            // JOE's weather: one place, Open-Meteo, the rules
+#include "weather_roots.h"      // ...and the only roots its TLS trusts
 #include "qrcodegen_local.h"    // ricmoo/QRCode, vendored into the sketch
                                 // folder because the ESP32 core ships its
                                 // own qrcode.h that shadows the library
@@ -1599,12 +1600,6 @@ public:
       }
       http.end();
     }
-    // JOE's weather, with a place set: hourly by the clock, or when asked for
-    if (wxOn() && (all || wxDue())) {
-      wxTry = (uint32_t)nowUtc64();
-      fetchWeather(client);
-    }
-
     // ---- mempool.space: one TLS session for everything it serves ----
     // Each scoped HTTPClient used to close the socket as it went out of
     // scope, so every request paid a fresh handshake. One client, kept
@@ -1715,6 +1710,14 @@ public:
     lateWatchStep();              // a slow sender after the vigil, if any
     trackStep(client);            // a payment on its way in, if any
     fiatStep(all);                // FIAT faces, only when on and due
+    // JOE's weather, while the radio is up: its own checked session, never
+    // this one, so this one closes first (one TLS session's heap at a time).
+    // wxMayTry() alone decides, and `all` is not one of its inputs.
+    if (wxMayTry(wxGate(WXP_FETCH))) {
+      client.stop();
+      wxTry = (uint32_t)nowUtc64();
+      fetchWeather();
+    }
     Serial.printf("[fetch] %s tiers: chart %s gold %s slow %s fng %s\n",
                   all ? "ALL" : "due",
                   candleWake == tierStamp() ? "Y" : "-",
@@ -8116,43 +8119,75 @@ public:
     wxLoaded = true;
   }
   bool wxOn() { wxLoad(); return wxLat10 != WX_NONE && wxLon10 != WX_NONE; }
-  // an hour since the last try, by the clock (JOE's wakes do not move wakeMin)
-  bool wxDue() {
+  // What wxMayTry() (weather.h) needs to know, for either caller. One
+  // attempt an hour by the clock, worked or not: JOE's wakes do not move
+  // wakeMin, so the other faces' backoff can't be this one's.
+  WxGate wxGate(int path) {
     tmElements_t dt;
-    if (!wxOn() || !localDate(dt)) return false;      // no place, or no clock
-    uint32_t now = (uint32_t)nowUtc64();
-    return wxTry == 0 || now < wxTry || now - wxTry >= WX_EVERY_MIN * 60UL;
+    WxGate g;
+    g.path = path;
+    g.placeSet = wxOn();
+    g.clockOk = localDate(dt);
+    g.now = (uint32_t)nowUtc64();
+    g.lastTry = wxTry;
+    g.buttonWake = buttonWake;
+    g.prePaint = prePaint;
+    g.docked = inDocked;
+    g.night = inNightWindow();
+    g.cold = tempMode == TEMP_COLD;
+    return g;
   }
-  // One request over a session the caller opened. A bad or missing answer
-  // leaves the last reading as it was; the face judges its age.
-  bool fetchWeather(WiFiClientSecure &client) {
+  // One request to api.open-meteo.com, checked: its own client with
+  // WX_ROOTS (weather_roots.h) and no setInsecure(), so the chain and the
+  // hostname must verify, and a failure is a failure, never a fallback.
+  // Bounded: DNS (lwIP, 15 s at most), the TCP connect and each send
+  // (WX_CONNECT_MS), the handshake (WX_HANDSHAKE_S, not the core's 120 s),
+  // then everything else by one deadline (WX_READ_MS) and WX_RESP_MAX bytes.
+  // A bad, short, long or late answer leaves wxNow exactly as it was.
+  bool fetchWeather() {
     if (!wxOn()) return false;
-    char url[200]; wxUrl(url, sizeof url, wxLat10, wxLon10, wxF);
-    HTTPClient http; http.setConnectTimeout(4000);
+    static char resp[WX_RESP_MAX + 1];
+    char req[400];
+    if (wxRequest(req, sizeof req, wxLat10, wxLon10, wxF) >= (int)sizeof req) return false;
+    unsigned long t0 = millis();
+    const char *why = "ok";
     bool ok = false;
-    int code = -1;
-    if (http.begin(client, url)) {
-      code = http.GET();
-      if (code == 200) ok = wxParseBody(http.getString().c_str(), wxF, &wxNow);
+    WiFiClientSecure c;
+    c.setCACert(WX_ROOTS);
+    c.setHandshakeTimeout(WX_HANDSHAKE_S);
+    if (!c.connect(WX_HOSTNAME, 443, WX_CONNECT_MS)) {
+      char e[80]; e[0] = 0;
+      c.lastError(e, sizeof e);                   // mbedTLS's words, no place in them
+      Serial.printf("[wx] TLS refused or no connection: %s\n", e);
+      why = "connect";
+    } else if (c.print(req) != strlen(req)) {
+      why = "send";
+    } else {
+      size_t n = 0;
+      int r = wxReadAll(c, resp, WX_RESP_MAX, &n,
+                        [] { return (uint32_t)millis(); }, [] { delay(10); }, WX_READ_MS);
+      const char *body = nullptr;
+      if (r == WXR_TOO_BIG) why = "too big";
+      else if (r == WXR_TIMEOUT) why = "too slow";
+      else if (!wxHttpBody(resp, n, &body)) why = "not a 200 we can read";
+      else if (!wxParseBody(body, wxF, (uint32_t)nowUtc64(), &wxNow)) why = "answer refused";
+      else ok = true;
     }
-    http.end();
-    Serial.printf("[wx] %s (http %d): %.1f %s, code %d, timed %lu\n",
-                  ok ? "ok" : "FAILED", code, wxNow.temp10 / 10.0, wxF ? "F" : "C",
-                  (int)wxNow.code, (unsigned long)wxNow.obsUtc);
+    c.stop();
+    Serial.printf("[wx] %s in %lu ms: %.1f %s, code %d, timed %lu\n", why, millis() - t0,
+                  wxNow.temp10 / 10.0, wxF ? "F" : "C", (int)wxNow.code,
+                  (unsigned long)wxNow.obsUtc);
     return ok;
   }
-  // JOE fetches nothing else, so its weather goes out on its own: on a minute
-  // wake, at most once an hour whether it worked or not, never in the
-  // wearer's night or in the cold, never docked, and only with a place set.
-  // The other faces' backoff runs on wakeMin, which JOE does not move, so it
-  // is left alone: the hour is this one's backoff.
+  // JOE fetches nothing else, so its weather goes out on its own, on a
+  // minute wake, when wxMayTry() says so: never at night, in the cold,
+  // docked, or on a button.
   void joeWeather() {
-    if (buttonWake || prePaint || inDocked || !wxDue()) return;
-    if (inNightWindow() || tempMode == TEMP_COLD) return;
+    if (!wxMayTry(wxGate(WXP_JOE))) return;
     wxTry = (uint32_t)nowUtc64();
     unsigned long t0 = millis();
     bool ok = false;
-    if (myConnectWiFi()) { WiFiClientSecure c; c.setInsecure(); ok = fetchWeather(c); }
+    if (myConnectWiFi()) ok = fetchWeather();
     WiFi.mode(WIFI_OFF); btStop();
     Serial.printf("[wx] JOE fetch %s, radio on %lu ms\n", ok ? "done" : "failed",
                   millis() - t0);
@@ -10312,8 +10347,12 @@ public:
     wxPlaceText(wxCur, sizeof wxCur, wxLat10, wxLon10);
     snprintf(wxUcur, sizeof wxUcur, "%s", wxF ? "F" : "C");
     WiFiManagerParameter pWx("wxloc",
-      "Weather place (optional): LATITUDE, LONGITUDE, e.g. 33.9, 35.5. Kept to about 10 km "
-      "and sent with each weather request, hourly at most. Blank: no weather", wxCur, 23);
+      "Weather place (optional): LATITUDE, LONGITUDE with one decimal, e.g. 33.9, 35.5. "
+      "This setup page is open Wi-Fi without encryption, so type it no more exactly than "
+      "that. The watch keeps it to a tenth of a degree (about 11 km) and sends it to "
+      "Open-Meteo at most once an hour; Open-Meteo also sees your internet address and "
+      "may log both for up to 90 days. Blank: no weather, nothing sent. "
+      "Weather data by Open-Meteo.com (CC BY 4.0)", wxCur, 23);
     WiFiManagerParameter pWu("wxunit", "Weather in C or F", wxUcur, 2);
     wm.addParameter(&pWx); wm.addParameter(&pWu);
 
@@ -10376,23 +10415,20 @@ public:
       if (changed) savePeople(); }
     { const char *v = pWx.getValue(), *u = pWu.getValue();
       bool f = u && (u[0] == 'F' || u[0] == 'f');
-      bool placeEdited = v && strcmp(v, wxCur);
-      if (placeEdited || f != wxF) {
-        int16_t la = wxLat10, lo = wxLon10;
-        bool blank = !v || strspn(v, " ") == strlen(v);
-        if (blank) la = lo = WX_NONE;                     // no weather
-        else if (placeEdited && !wxParsePlace(v, &la, &lo))
-          Serial.printf("[wx] place not understood, kept: %s\n", v);
+      int16_t la = wxLat10, lo = wxLon10;
+      int e = wxPlaceEdit(v, wxCur, &la, &lo);        // weather.h; never logged as typed
+      if (e != WXE_SAME || f != wxF) {
         Preferences p; p.begin("btcchrono", false);
         if (la != WX_NONE) { p.putShort("wxLat", la); p.putShort("wxLon", lo); }
         else { p.remove("wxLat"); p.remove("wxLon"); }
         p.putBool("wxF", f);
         p.end();
         if (la != wxLat10 || lo != wxLon10 || f != wxF) {
-          wxNow = {0, -1, 0}; wxTry = 0;      // another place or unit: fetch afresh
+          wxNow = {0, -1, 0};    // another place or unit: the old reading isn't it.
+                                 // wxTry stays: still one request an hour
         }
         wxLat10 = la; wxLon10 = lo; wxF = f;
-        Serial.printf("[wx] place %s, %s\n", la != WX_NONE ? "set" : "none", f ? "F" : "C");
+        Serial.printf("[wx] %s, %s\n", wxPlaceEditLog(e), f ? "F" : "C");
       } }
     const char *lv = pLn.getValue();
     if (lv && strchr(lv, '@')) {

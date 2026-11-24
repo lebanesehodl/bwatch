@@ -90,10 +90,17 @@ cc="${CC:-cc}"
 "$tmp/moon_test"
 
 # And JOE's weather (weather.h): Open-Meteo's own answer read through the
-# pinned ArduinoJson, the answers it must refuse, the place, the request.
+# pinned ArduinoJson, the answers it must refuse, the HTTP framing, the
+# bounded read, the place, the request, when it may try. Then the roots its
+# TLS trusts (weather_roots.h), against the live server too; in CI an
+# unreachable server is a failure, not a skip.
 "$cxx" -std=c++11 -Wall -Wextra -Werror -I"$sketch" -I"$libs/ArduinoJson/src" \
   -o "$tmp/weather_test" "$here/weather_test.cpp"
 "$tmp/weather_test"
+"$cxx" -std=c++11 -Wall -Wextra -Werror -I"$sketch" -I"$libs/ArduinoJson/src" \
+  -o "$tmp/wx_live_probe" "$here/wx_live_probe.cpp"
+WX_PROBE="$tmp/wx_live_probe" WX_LIVE_REQUIRED="${WX_LIVE_REQUIRED:-${GITHUB_ACTIONS:+1}}" \
+  "$here/wx_roots_check.sh"
 
 arduino-cli compile \
   --fqbn "$FQBN" \
