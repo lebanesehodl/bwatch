@@ -214,7 +214,7 @@ int main() {
   check(!bodyOf(http("ICY 200 OK", body), &out) && !bodyOf("", &out), "not HTTP, or nothing");
   std::string chunked = "1a\r\n" + body.substr(0, 26) + "\r\n" + std::to_string(0) + "\r\n\r\n";
   { char sz[16]; snprintf(sz, sizeof sz, "%zx", body.size() - 26);
-    chunked = "1a;ext=1\r\n" + body.substr(0, 26) + "\r\n" + sz + "\r\n" + body.substr(26) + "\r\n0\r\n\r\n"; }
+    chunked = "1a\r\n" + body.substr(0, 26) + "\r\n" + sz + "\r\n" + body.substr(26) + "\r\n0\r\n\r\n"; }
   check(bodyOf(http("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked", chunked), &out) && out == body,
         "chunked anyway: put back together");
   check(!bodyOf(http("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked", chunked.substr(0, chunked.size() - 5)), &out),
@@ -231,9 +231,16 @@ int main() {
     char sz[16]; snprintf(sz, sizeof sz, "%zx", body.size());
     const std::string one = std::string(sz) + "\r\n" + body + "\r\n";
     check(bodyOf(http(te.c_str(), one + "0\r\n\r\n"), &out) && out == body, "one chunk, then the end");
-    check(bodyOf(http(te.c_str(), one + "0;x=1\r\n\r\n"), &out) && out == body,
-          "a last chunk with an extension");
     struct { const char *end, *what; } endings[] = {
+      // Lead's review of aeee647: what followed a ';' was never checked.
+      // An HTTP/1.0 answer may not be chunked at all, so every extension
+      // is refused, the well-formed ones too.
+      { "0;\r\n\r\n",              "an extension with an empty name" },
+      { "0;=x\r\n\r\n",            "an extension with no name" },
+      { "0;x=\"unfinished\r\n\r\n", "an extension with an unterminated quote" },
+      { "0;x=\x01\r\n\r\n",        "an extension with a control byte" },
+      { "0;x=1\r\n\r\n",           "a well-formed extension" },
+      { "0;x=\"ok\"\r\n\r\n",      "a well-formed quoted extension" },
       { "0\r\n",                "the last chunk without its final CRLF" },
       { "0\r\nGARBAGE",         "the last chunk, then garbage" },
       { "0NOTHEX\r\n\r\n",      "a last chunk size that is not hex" },
@@ -253,6 +260,8 @@ int main() {
     }
     check(!bodyOf(http(te.c_str(), std::string(sz) + " x\r\n" + body + "\r\n0\r\n\r\n"), &out),
           "a chunk size, then something that is not an extension");
+    check(!bodyOf(http(te.c_str(), std::string(sz) + ";x=1\r\n" + body + "\r\n0\r\n\r\n"), &out),
+          "an extension on a data chunk");
     check(!bodyOf(http(te.c_str(), std::string(sz) + "\r\n" + body + "\n0\r\n\r\n"), &out),
           "a chunk's data without its CRLF"); }
   // a raw NUL anywhere: refused, so no C-string check can stop short of it

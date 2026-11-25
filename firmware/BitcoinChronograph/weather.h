@@ -229,9 +229,11 @@ static inline bool wxHttpBody(char *buf, size_t n, const char **body) {
         in++;
       }
       if (!digits) return false;
-      if (in < stop && *in == ';')                              // extensions: skipped
-        while (in < stop && *in != '\r' && *in != '\n') in++;
-      if (stop - in < 2 || in[0] != '\r' || in[1] != '\n') return false;   // size, then CRLF
+      // The size, then CRLF at once. A chunk extension (";...") is refused,
+      // well-formed or not: the request is HTTP/1.0, so no server may chunk
+      // this answer at all (RFC 9112 6.1), and this narrow subset is all a
+      // server that does so anyway gets.
+      if (stop - in < 2 || in[0] != '\r' || in[1] != '\n') return false;
       in += 2;
       if (size == 0) {                 // the last chunk: no trailers, one CRLF, the end
         if (stop - in != 2 || in[0] != '\r' || in[1] != '\n') return false;
