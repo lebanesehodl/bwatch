@@ -20,7 +20,7 @@ The cards' text is what `drawPersonCard()` / `drawWatchCard()` build. Nothing is
   - The name: built-in font at size 2, at (14, 28).
   - A rule at y 50.
   - `l1`, right-aligned at 185, y 58, like JOE's TODAY label.
-  - **The number:** a 7-place field of JOE's hexagon segments (w 21, h 50, t 5, gap 2, slant 0.08), right edge 186, top y 70. Places before the number are ghost 8s. Unlit segments are ghosted every third pixel, which is lighter than the time's every-second: the busier ghost made seven narrow digits hard to read. The two group marks are lit only where the number reaches them. Seven places hold 9,999,999; a 100-year-old is about 5.3 million blocks old.
+  - **The number:** a 7-place field of JOE's hexagon segments (w 21, h 50, t 5, gap 2, slant 0.08), right edge 186, top y 70. Places before the number are ghost 8s. Unlit segments are ghosted every third pixel, which is lighter than the time's every-second: the busier ghost made seven narrow digits hard to read. The two group marks are commas, as OP asked on Nov 25: a 3×4 head on the baseline and a tail leaning back under it. Each is lit only where the number reaches it and ghosted otherwise. Seven places hold 9,999,999; a 100-year-old is about 5.3 million blocks old.
   - A rule at y 130.
   - `l2`, centred at y 148. The longest is 29 chars, 174 px.
 - **Unchanged:** every caller (person, watch, blockday, birthday), the numbers and how they're worked out, the UP/BACK cycle, and the refreshes.

@@ -65,6 +65,14 @@ def ghost_rect(f, x, y, w, h):
 
 PLACES, DW, DH, DT, GAP, SEP, SL = 7, 21, 50, 5, 2, 4, 0.08
 
+def comma(f, x, base, lit):
+    """the group mark as a comma (OP, Nov 25): a 3x4 head on the baseline
+    and a tail that leans back under it, ghosted when the number is short"""
+    parts = [(x, base - 4, 3, 4), (x + 1, base, 2, 2), (x, base + 2, 2, 1)]
+    for (a, b, w, h) in parts:
+        if lit: f.rect(a, b, w, h)
+        else: ghost_rect(f, a, b, w, h)
+
 def seg_number(f, right, y, num):
     """a 7-place LCD field, right-aligned at `right`: lit digits, ghost 8s in
     the places before them, and the two group marks (x,xxx,xxx) lit only
@@ -79,9 +87,7 @@ def seg_number(f, right, y, num):
         left = PLACES - 1 - p                # places after this one
         if left in (6, 3):
             lit = len(s) > left
-            cx = x + SEP / 2.0 + SL * 2
-            if lit: f.rect(int(cx - 2), y + DH - 6, 4, 4)
-            else: ghost_rect(f, int(cx - 2), y + DH - 6, 4, 4)
+            comma(f, int(x + SEP / 2.0 - 1), y + DH, lit)
             x += SEP + GAP
     return right - w
 

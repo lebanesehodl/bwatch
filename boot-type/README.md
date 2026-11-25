@@ -1,4 +1,19 @@
-# BITCOIN IS TIME: three typefaces (mock only, not for merging)
+# BITCOIN IS TIME: typefaces (mock only, not for merging)
+
+**OP, Nov 25:** keep BITCOIN IS TIME and the ship card as they are for now. OP didn't like options A–C and asked for something closer to the brand and website. That is `brand-sheet.png` (`brand.py`), shown first below.
+
+## The brand's typeface: Archivo
+- **Why Archivo:** `bwatch.html` and `index.html` set every heading in Archivo ("it is the brand voice and it matches the mark"). The mark is an Archivo 600 B in a rounded square. The site serves its own `fonts/archivo-600.woff2` and `-500`, and its h1 asks for weight 800.
+- **Source:** google/fonts `ofl/archivo/Archivo[wdth,wght].ttf`, SIL OFL 1.1, with no Reserved Font Name. It's instanced at wght 600 (the font's default and the site's file) and at 800, both at wdth 100, with fontTools, then run through `fontconvert`.
+- **What changes:** only the big type. The screens keep today's white on black and the same words in the same places. The tracking is -1 px, after the site's `letter-spacing: -.045em`.
+- **Sizes:** 18 pt for BITCOIN / IS TIME, 15 pt for BWATCH, and 9 pt for the boot card's bottom line, which stays above y 184.
+- **Flash, A–Z and space:**
+  - 600: 3.5 KB + 2.6 KB + 1.2 KB, about 7.3 KB for all three sizes.
+  - 800: 3.7 KB + 2.8 KB + 1.3 KB.
+  - Fewer sizes cost less.
+- The small labels stay in the built-in 5×7. The site's labels are SF Mono, which is Apple's and can't ship, so the 5×7 stays in its place.
+
+## The first three options (not chosen)
 
 `type-sheet.png` has four columns: the resting screen and the boot card, each in light and dark. The first row is **now** (always white on black), followed by one row per option. `screens.py` draws it from real `fontconvert` output (Adafruit-GFX 1.13.0's, the tool behind every font in the sketch), using GFX's own drawing rules. Small text stays in the built-in 5×7, as it is everywhere else.
 
