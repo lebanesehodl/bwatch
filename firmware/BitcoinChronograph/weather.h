@@ -177,9 +177,11 @@ static inline bool wxValueIs(const char *v, size_t vn, const char *want) {
 // The HTTP answer in buf[0..n) (buf has room for one more byte): a 200,
 // headers we can read, and the body, de-chunked if a server chunks anyway,
 // whole by its Content-Length if it gives one. True puts a NUL-terminated
-// body at *body. Anything else is refused.
+// body at *body. Anything else is refused, a raw NUL anywhere included, so
+// the body's C-string length is its whole length.
 static inline bool wxHttpBody(char *buf, size_t n, const char **body) {
   buf[n] = 0;
+  if (memchr(buf, 0, n)) return false;
   if (n < 12 || (strncmp(buf, "HTTP/1.0 200", 12) && strncmp(buf, "HTTP/1.1 200", 12))) return false;
   if (n > 12 && buf[12] != ' ' && buf[12] != '\r') return false;
   char *end = strstr(buf, "\r\n\r\n");
@@ -227,13 +229,14 @@ static inline bool wxHttpBody(char *buf, size_t n, const char **body) {
         in++;
       }
       if (!digits) return false;
-      while (in < stop && *in != '\r') {                        // chunk extensions
-        if (*in == '\n') return false;
-        in++;
-      }
-      if (stop - in < 2 || in[0] != '\r' || in[1] != '\n') return false;
+      if (in < stop && *in == ';')                              // extensions: skipped
+        while (in < stop && *in != '\r' && *in != '\n') in++;
+      if (stop - in < 2 || in[0] != '\r' || in[1] != '\n') return false;   // size, then CRLF
       in += 2;
-      if (size == 0) break;
+      if (size == 0) {                 // the last chunk: no trailers, one CRLF, the end
+        if (stop - in != 2 || in[0] != '\r' || in[1] != '\n') return false;
+        break;
+      }
       if ((unsigned long)(stop - in) < size + 2) return false;   // cut short
       memmove(out, in, size);
       out += size; in += size;
@@ -310,11 +313,36 @@ static inline bool wxFresh(const WxReading *r, uint32_t now) {
   return now - (r->obsUtc > now ? now : r->obsUtc) <= (uint32_t)WX_STALE_S;
 }
 
-// Open-Meteo's answer, checked whole before anything is kept: GMT with no
-// offset, the unit that was asked for, a temperature in range for it, a
-// code we have a picture for, a timestamp of the exact shape, fresh at `now`
-// and no older than the reading already held. False leaves *r exactly as it
-// was: a bad answer never replaces a good reading.
+// ArduinoJson reads the answer through this, so the bytes it took are
+// counted. It reads none past the object's closing brace; weather_test's
+// "one byte after the object" holds the pinned version to that.
+struct WxCountedReader {
+  const char *p;
+  size_t n, at;
+  int read() { return at < n ? (unsigned char)p[at++] : -1; }
+  size_t readBytes(char *out, size_t k) {
+    size_t m = n - at < k ? n - at : k;
+    memcpy(out, p + at, m);
+    at += m;
+    return m;
+  }
+};
+
+// A JSON string with no NUL inside it, or nullptr. A "\u0000" would hide
+// whatever follows it from every C-string check below.
+static inline const char *wxStr(JsonVariantConst v) {
+  if (!v.is<const char *>()) return nullptr;
+  JsonString s = v.as<JsonString>();
+  if (s.isNull() || strlen(s.c_str()) != s.size()) return nullptr;
+  return s.c_str();
+}
+
+// Open-Meteo's answer, checked whole before anything is kept: one JSON
+// object and nothing after it but whitespace, GMT with no offset, the unit
+// that was asked for, a temperature in range for it, a code we have a
+// picture for, a timestamp of the exact shape, fresh at `now` and no older
+// than the reading already held. False leaves *r exactly as it was: a bad
+// answer never replaces a good reading.
 static inline bool wxParseBody(const char *body, bool fahrenheit, uint32_t now, WxReading *r) {
   JsonDocument filter;
   filter["utc_offset_seconds"] = true;
@@ -324,15 +352,19 @@ static inline bool wxParseBody(const char *body, bool fahrenheit, uint32_t now, 
   filter["current"]["temperature_2m"] = true;
   filter["current"]["weather_code"] = true;
   JsonDocument doc;
-  if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) return false;
+  if (!body) return false;
+  WxCountedReader in = {body, strlen(body), 0};
+  if (deserializeJson(doc, in, DeserializationOption::Filter(filter))) return false;
+  for (size_t i = in.at; i < in.n; i++)                         // one document, nothing after
+    if (body[i] != ' ' && body[i] != '\t' && body[i] != '\r' && body[i] != '\n') return false;
   if (!doc["utc_offset_seconds"].is<int>() || doc["utc_offset_seconds"].as<int>() != 0) return false;
-  if (!doc["timezone"].is<const char *>() || strcmp(doc["timezone"].as<const char *>(), "GMT")) return false;
-  JsonVariant unit = doc["current_units"]["temperature_2m"];
-  if (!unit.is<const char *>() ||
-      strcmp(unit.as<const char *>(), fahrenheit ? "\xC2\xB0" "F" : "\xC2\xB0" "C")) return false;
+  const char *zone = wxStr(doc["timezone"]);
+  if (!zone || strcmp(zone, "GMT")) return false;
+  const char *unit = wxStr(doc["current_units"]["temperature_2m"]);
+  if (!unit || strcmp(unit, fahrenheit ? "\xC2\xB0" "F" : "\xC2\xB0" "C")) return false;
   JsonVariant cur = doc["current"];
-  if (!cur["temperature_2m"].is<float>() || !cur["weather_code"].is<int>() ||
-      !cur["time"].is<const char *>()) return false;
+  const char *when = wxStr(cur["time"]);
+  if (!cur["temperature_2m"].is<float>() || !cur["weather_code"].is<int>() || !when) return false;
   float t = cur["temperature_2m"].as<float>();
   int code = cur["weather_code"].as<int>();
   float lo = fahrenheit ? -130 : -90, hi = fahrenheit ? 140 : 60;   // Earth's records, about
@@ -340,7 +372,7 @@ static inline bool wxParseBody(const char *body, bool fahrenheit, uint32_t now, 
   WxReading cand;
   cand.temp10 = (int16_t)lroundf(t * 10);
   cand.code = (int8_t)code;
-  cand.obsUtc = wxIsoUtc(cur["time"].as<const char *>());
+  cand.obsUtc = wxIsoUtc(when);
   if (cand.obsUtc == 0 || !wxFresh(&cand, now)) return false;
   if (r->code >= 0 && r->obsUtc != 0 && cand.obsUtc < r->obsUtc) return false;   // older
   *r = cand;

@@ -3,8 +3,8 @@
 // The answer is Open-Meteo's own (fetched 2026-11-23 04:08 UTC for
 // latitude=33.9&longitude=35.5&current=temperature_2m,weather_code&timezone=GMT)
 // read through the pinned ArduinoJson. Then the answers that must be
-// refused with the held reading left exactly as it was (Bitcoin's review of
-// 62ee5b0 among them), the HTTP framing, the bounded read against a fake
+// refused with the held reading left exactly as it was (Bitcoin's reviews of
+// 62ee5b0 and a990bd8 among them), the HTTP framing, the bounded read against a fake
 // peer and clock, the place as typed and what the log may say about it,
 // the request, freshness, and when either caller may try.
 // Exit status: the number of failed checks.
@@ -130,6 +130,19 @@ int main() {
       "\"current\":{\"time\":\"2026-11-23T04:00\",\"weather_code\":0}}", "no temperature" },
     { "{\"utc_offset_seconds\":0,\"timezone\":\"GMT\",\"current_units\":{\"temperature_2m\":\"\xC2\xB0" "C\"},"
       "\"current\":{\"temperature_2m\":19.1,\"weather_code\":0}}", "no time" },
+    // Bitcoin's review of a990bd8: an escaped NUL hid a suffix from the
+    // string checks, and whatever followed the object was never read
+    { answer("2026-11-23T04:00\\u0000junk"),             "a timestamp, an escaped NUL, a suffix" },
+    { answer("2026-11-23T04:00", "C\\u0000junk"),        "a unit, an escaped NUL, a suffix" },
+    { answer("2026-11-23T04:00", "C", 0, "GMT\\u0000junk"), "a timezone, an escaped NUL, a suffix" },
+    { answer("2026-11-23T04:00", "C", 0, "GMT\\u0000"),  "a timezone ending in an escaped NUL" },
+    { "{\"utc_offset_seconds\":0,\"timezone\\u0000x\":\"GMT\",\"current_units\":{\"temperature_2m\":"
+      "\"\xC2\xB0" "C\"},\"current\":{\"time\":\"2026-11-23T04:00\",\"temperature_2m\":19.1,"
+      "\"weather_code\":0}}", "the timezone only under a key with an escaped NUL" },
+    { std::string(REAL) + "BROKEN",                       "bytes after the object" },
+    { std::string(REAL) + "x",                            "one byte after the object" },
+    { std::string(REAL) + " \n{\"error\":true}",          "a second document after it" },
+    { std::string(REAL).substr(0, strlen(REAL) - 1),      "the object never closed" },
   };
   for (auto &h : hostile) {
     r = good;
@@ -146,6 +159,10 @@ int main() {
         && r.temp10 == 189 && r.code == 1 && r.obsUtc == OBS + 900, "a newer reading replaces it");
   // no clock, nothing is fresh
   r = good; check(!wxParseBody(REAL, false, 0, &r) && same(r, good), "no clock: refused");
+  // whitespace around the one object is still the answer
+  { WxReading w = {0, -1, 0};
+    check(wxParseBody((std::string(" \r\n") + REAL + "\r\n\t ").c_str(), false, NOW, &w) && same(w, good),
+          "whitespace before and after the object is taken"); }
   // the unit decides the label and the range
   { WxReading f = {0, -1, 0};
     check(wxParseBody(answer("2026-07-01T12:00", "F", 0, "GMT", "75.2", 2).c_str(), true,
@@ -208,6 +225,40 @@ int main() {
         "chunked, a size past the end");
   check(!bodyOf(http("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 2", chunked), &out),
         "chunked and a length");
+  // Bitcoin's review of a990bd8: the last chunk's ending was never checked.
+  // Each of these, framed and parsed, must leave the held reading whole.
+  { const std::string te = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked";
+    char sz[16]; snprintf(sz, sizeof sz, "%zx", body.size());
+    const std::string one = std::string(sz) + "\r\n" + body + "\r\n";
+    check(bodyOf(http(te.c_str(), one + "0\r\n\r\n"), &out) && out == body, "one chunk, then the end");
+    check(bodyOf(http(te.c_str(), one + "0;x=1\r\n\r\n"), &out) && out == body,
+          "a last chunk with an extension");
+    struct { const char *end, *what; } endings[] = {
+      { "0\r\n",                "the last chunk without its final CRLF" },
+      { "0\r\nGARBAGE",         "the last chunk, then garbage" },
+      { "0NOTHEX\r\n\r\n",      "a last chunk size that is not hex" },
+      { "0\r\n\r\nEXTRA",       "bytes after the end" },
+      { "0\r\nX-Trailer: 1\r\n\r\n", "a trailer field (none is asked for)" },
+      { "0\n\n",                "bare LFs" },
+      { "",                     "no last chunk" },
+    };
+    for (auto &e : endings) {
+      std::string resp = http(te.c_str(), one + e.end);
+      std::vector<char> b(resp.begin(), resp.end()); b.push_back(0);
+      const char *bd = nullptr;
+      r = good;
+      bool took = wxHttpBody(b.data(), resp.size(), &bd) && wxParseBody(bd, false, NOW, &r);
+      char what[120]; snprintf(what, sizeof what, "refused, reading kept whole: %s", e.what);
+      check(!took && same(r, good), what);
+    }
+    check(!bodyOf(http(te.c_str(), std::string(sz) + " x\r\n" + body + "\r\n0\r\n\r\n"), &out),
+          "a chunk size, then something that is not an extension");
+    check(!bodyOf(http(te.c_str(), std::string(sz) + "\r\n" + body + "\n0\r\n\r\n"), &out),
+          "a chunk's data without its CRLF"); }
+  // a raw NUL anywhere: refused, so no C-string check can stop short of it
+  check(!bodyOf(http("HTTP/1.0 200 OK", body + std::string("\0junk", 5)), &out), "a raw NUL in the body");
+  check(!bodyOf(std::string("HTTP/1.0 200 OK\r\nX-A: ") + std::string("\0", 1) + "b\r\n\r\n" + body, &out),
+        "a raw NUL in a header");
   check(!bodyOf(http("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip", body), &out), "another transfer coding");
 
   // ---- the read, bounded ----
