@@ -5287,11 +5287,13 @@ public:
     if (chgFromT != 0) {
       // Off the charger: measure the cell afresh. The latch only ever steps
       // down on the cell, so without this a charge cut short left it stuck at
-      // the level from before the cable went in.
+      // the level from before the cable went in. (From -1 the latch takes
+      // the best of its first few minutes, battery_latch.h: the cable is
+      // often pulled to go straight into setup, and that first reading
+      // comes after the radio.)
       chgFromT = 0; chgFromPct = -1;
-      shownBattPct = rounded;
+      shownBattPct = -1;
       runStartT = rtcNow(); runStartPct = rounded; runProf = battProfile;
-      return rounded;
     }
     return battOnCell(shownBattPct, battWin, rounded, rtcNow() / 60);
   }
