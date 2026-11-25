@@ -40,6 +40,8 @@
 #include "moon.h"               // JOE's moon: its age, worked out on the watch
 #include "weather.h"            // JOE's weather: one place, Open-Meteo, the rules
 #include "weather_roots.h"      // ...and the only roots its TLS trusts
+#define WX_TLS_SELFTEST 1             // TEST IMAGE ONLY (fw/joe-weather-tlstest, never merged)
+#include "wx_tls_selftest.h"
 #include "qrcodegen_local.h"    // ricmoo/QRCode, vendored into the sketch
                                 // folder because the ESP32 core ships its
                                 // own qrcode.h that shadows the library
@@ -8146,6 +8148,9 @@ public:
   // A bad, short, long or late answer leaves wxNow exactly as it was.
   bool fetchWeather() {
     if (!wxOn()) return false;
+#ifdef WX_TLS_SELFTEST
+    wxTlsSelftest();                             // TEST IMAGE ONLY
+#endif
     static char resp[WX_RESP_MAX + 1];
     char req[400];
     if (wxRequest(req, sizeof req, wxLat10, wxLon10, wxF) >= (int)sizeof req) return false;
