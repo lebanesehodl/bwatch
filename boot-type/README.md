@@ -6,6 +6,9 @@
 - **Resting screen:** `restingScreen()` (`.ino:5402` at `1e2ebfc`). It's the screen the watch leaves up when the cell runs out (`battVoltsTrue() < 3.36f`, `:8349`). The words stay the same: BITCOIN / IS TIME, the last block seen, CHARGE TO RESUME.
 - **Boot card:** the card that ends SEGMENT TEST (`bootSegmentTest()`, `:6160–6170`). It has BWATCH, SEGMENT TEST OK, the build stamp, and BITCOIN IS TIME, with that last line kept above y 184 for `bootStatus()`.
 
+## The ship card
+`ship-sheet.png` shows `drawShipCard()` (`.ino:11058`), the card left on the glass in the box, today and with the headline in each typeface. Its text and the sealed block (`drawGrouped()` in DSEG7 25) are unchanged. The block's hash tail here is example data. Today the card is always dark, by design ("the card is always dark"), so the light versions are only for comparison. When there's no block to show, the card has `drawTinyB()` instead of the height, which isn't mocked.
+
 ## The options
 | | typeface | source and licence | sizes | flash, A–Z + space |
 |---|---|---|---|---|

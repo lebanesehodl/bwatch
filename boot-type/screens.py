@@ -89,6 +89,56 @@ def boot(path, o, dark):
     assert 180 + b[3] <= 183, "into the status line"
     f.save(path)
 
+
+# ---------- drawShipCard() (.ino:11058 at 1e2ebfc): what the box shows ----------
+SEG25 = SEG18.replace('18', '25')
+
+def grouped(f, s, y):
+    """drawGrouped() for a whole number in DSEG7 25, line for line"""
+    p = SEG25
+    digits = sum(c.isdigit() for c in s)
+    commas = (digits - 1) // 3 if digits >= 5 else 0
+    commaW = 4
+    adv = gfx2.glyph(p, '0')[1]
+    g0 = gfx2.glyph(p, s[0])[2]; gl = gfx2.glyph(p, s[-1])[2]
+    lead = g0[4]; trail = gl[3] - (gl[4] + gl[1])
+    x = (200 - (len(s) * adv + commas * commaW - lead - trail)) // 2 - lead
+    for i, ch in enumerate(s):
+        gfx2.draw(f, p, x, y, ch)
+        x += adv
+        left = digits - i - 1
+        if left > 0 and left % 3 == 0:
+            cw = (commaW - 2) // 2
+            f.rect(x + cw, y - 3, 2, 3); f.rect(x + cw, y, 1, 1); f.rect(x + cw - 1, y + 1, 1, 1)
+            x += commaW
+
+def tiny_b(f, x, y):
+    for (a, b, w, h) in [(1,1,2,9),(1,1,4,2),(4,2,2,2),(1,4,4,2),(4,6,2,2),(1,8,4,2),(2,-1,1,2),(2,10,1,2)]:
+        f.rect(x + a, y + b, w, h)
+
+SHIP = ["HOLD ANY BUTTON", "FOR 3 SECONDS TO START", "OR PLUG IN TO CHARGE"]
+
+def ship_body(f, top_rule=54):
+    center_small(f, SHIP[0], 68); center_small(f, SHIP[1], 82); center_small(f, SHIP[2], 102)
+    f.rect(40, 120, 120, 1)
+    center_small(f, "SEALED AT BLOCK", 130)
+    grouped(f, "970962", 166)
+    center_small(f, "...3f9a1c2e", 178)
+
+def ship_now(path):
+    f = Face(True)                         # "the card is always dark"
+    f.text((200 - 6 * 18) // 2, 22, "BWATCH", 3)
+    f.rect(40, 54, 120, 1)
+    ship_body(f)
+    f.save(path)
+
+def ship(path, o, dark):
+    f = Face(dark)
+    center_font(f, o['big'], "BWATCH", 48, o)
+    f.rect(40, 54, 120, 1)
+    ship_body(f)
+    f.save(path)
+
 if __name__ == '__main__':
     from PIL import ImageDraw, ImageFont
     out = sys.argv[1] if len(sys.argv) > 1 else 'out'
@@ -115,6 +165,23 @@ if __name__ == '__main__':
         for c, p in enumerate(cells):
             if p: sheet.paste(Image.open(p), (16 + c * (S + 16), y0 + 52))
     sheet.save('%s/type-sheet.png' % out)
+    sh = Image.new('RGB', (3 * (S + 16) + 16, HEAD + len(rows) * (S + 60) + 16), (150, 150, 150))
+    d = ImageDraw.Draw(sh)
+    for col, t in enumerate(["SHIP CARD, light", "SHIP CARD, dark"]):
+        d.text((16 + col * (S + 16), 18), t, fill=(0, 0, 0), font=font)
+    for r, ((label, o), name) in enumerate(zip(rows, names)):
+        y0 = HEAD + r * (S + 60)
+        d.text((16, y0 + 8), label, fill=(0, 0, 0), font=font)
+        if o is None:
+            ship_now('%s/ship-now.png' % out); cells = [None, '%s/ship-now.png' % out]
+        else:
+            cells = []
+            for dark in (False, True):
+                p = '%s/ship-%s-%s.png' % (out, name, 'dark' if dark else 'light'); ship(p, o, dark); cells.append(p)
+        for c, p in enumerate(cells):
+            if p: sh.paste(Image.open(p), (16 + c * (S + 16), y0 + 52))
+    sh = sh.crop((0, 0, 2 * (S + 16) + 16, sh.size[1]))
+    sh.save('%s/ship-sheet.png' % out)
     for n, o in OPTIONS.items():
         bigc = gfx2.cost(o['big'], ' !ABCDEFGHIJKLMNOPQRSTUVWXYZ')
         small = gfx2.cost(o['small'], ' !ABCDEFGHIJKLMNOPQRSTUVWXYZ')
