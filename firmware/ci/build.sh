@@ -89,6 +89,12 @@ cc="${CC:-cc}"
   -o "$tmp/moon_test" "$here/moon_test.cpp"
 "$tmp/moon_test"
 
+# And the battery figure on the cell (battery_latch.h): one figure a minute,
+# and a reading taken low after the radio does not stick.
+"$cxx" -std=c++11 -Wall -Wextra -Werror -I"$sketch" \
+  -o "$tmp/battery_latch_test" "$here/battery_latch_test.cpp"
+"$tmp/battery_latch_test"
+
 # And JOE's weather (weather.h): Open-Meteo's own answer read through the
 # pinned ArduinoJson, the answers it must refuse, the HTTP framing, the
 # bounded read, the place, the request, when it may try. Then the roots its

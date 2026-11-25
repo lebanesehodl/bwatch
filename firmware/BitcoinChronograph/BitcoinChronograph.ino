@@ -36,6 +36,7 @@
 #include <Bitcoin.h>            // uBitcoin: watch-only address derivation
 #include <Hash.h>               // uBitcoin: doubleSha, for the genesis boot
 #include "case_temp.h"          // the case temperature and its modes
+#include "battery_latch.h"      // the battery figure on the cell
 #include "steps_today.h"        // JOE's steps: the accelerometer's count, by day
 #include "moon.h"               // JOE's moon: its age, worked out on the watch
 #include "weather.h"            // JOE's weather: one place, Open-Meteo, the rules
@@ -449,7 +450,7 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // Forgetting is catastrophic-but-subtle: rtcMagic's own bytes may not
 // move, the check passes, and only the NEW variables boot as garbage
 // (field crash: RANGE_LB[garbage] = wild pointer, dead PRC mode).
-#define RTC_LAYOUT_MAGIC 0xB17C0156
+#define RTC_LAYOUT_MAGIC 0xB17C0157
 #define PARTIALS_BEFORE_FULL 30   // minute ticks between full face refreshes
 RTC_DATA_ATTR uint32_t rtcMagic     = 0;
 RTC_DATA_ATTR int      dispMode     = 0;
@@ -747,6 +748,8 @@ RTC_DATA_ATTR int8_t   shownBattPct = -1;   // last percentage About printed.
                                            // a voltage-derived figure jitters,
                                            // and a number that climbs on its
                                            // own reads as a fault
+RTC_DATA_ATTR BattWin  battWin      = {};   // the readings it is held to
+                                           // (battery_latch.h)
 RTC_DATA_ATTR uint32_t lastNtpWake  = 0;    // wake minute of the last NTP
                                            // anchor. the pcf8563 on some
                                            // units runs minutes/day fast;
@@ -5284,22 +5287,15 @@ public:
     if (chgFromT != 0) {
       // Off the charger: measure the cell afresh. The latch only ever steps
       // down on the cell, so without this a charge cut short left it stuck at
-      // the level from before the cable went in.
+      // the level from before the cable went in. (From -1 the latch takes
+      // the best of its first few minutes, battery_latch.h: the cable is
+      // often pulled to go straight into setup, and that first reading
+      // comes after the radio.)
       chgFromT = 0; chgFromPct = -1;
-      shownBattPct = rounded;
+      shownBattPct = -1;
       runStartT = rtcNow(); runStartPct = rounded; runProf = battProfile;
-      return rounded;
     }
-    if (shownBattPct < 0) { shownBattPct = rounded; return rounded; }
-    // A real cell does not fall twenty points between two wakes. If it seems
-    // to, that is a bad reading, not a battery — step down by twenty and let
-    // the next wake confirm it. A genuine collapse still gets there, one wake
-    // later; a glitch never poisons the latch again.
-    if (rounded < shownBattPct) {
-      int step = shownBattPct - rounded;
-      shownBattPct = (step > 20) ? shownBattPct - 20 : rounded;
-    }
-    return shownBattPct;
+    return battOnCell(shownBattPct, battWin, rounded, rtcNow() / 60);
   }
 
   // Battery glyph. Three states, because "high voltage" and "charging" are
@@ -6461,6 +6457,7 @@ public:
     walletPeek = false;
     lastAx = lastAy = lastAz = 0; lastMoveWake = 0; accelSeeded = false;
     shownBattPct = -1;      // let the latch re-learn from the next reading
+    battWin = BattWin{};
     medFee = 0; lowFee = 0;
     wakeMin = 0; failCount = 0; nextTryWake = 0; forceFetch = false;
     zpubBuf[0] = 0; lnAddrBuf[0] = 0;
