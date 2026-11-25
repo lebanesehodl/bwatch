@@ -499,6 +499,15 @@ footer a{color:var(--ink)}
       <li><b>MENU → Setup Wallet</b>
         <span>Same portal. Paste a <b>zpub</b>, never a seed. Add a Lightning address if you
         want to be paid on the wrist.</span></li>
+      <li><b>Weather, if you want it</b>
+        <span>Same portal as the wallet. Type your latitude and longitude with one decimal, as
+        <b>33.9, 35.5</b>, and save. JOE shows the temperature, with a small sky, in Fahrenheit; type <b>C</b> in the
+        unit field for Celsius. Until the first reading arrives, and once a reading is more than
+        three hours old, JOE shows <b>--</b>. To stop it, blank the place and save: with no place,
+        the watch asks for nothing. The setup network is open, so anyone in range can read what you
+        type; the watch keeps one decimal. What leaves the watch is under
+        <a href="bwatch.html">Claims</a> on the product page. Weather data by
+        <a href="https://open-meteo.com/">Open-Meteo.com</a>, CC BY 4.0.</span></li>
       <li><b>MENU → Set Timezone</b>
         <span>Pick a city. The clock itself re-anchors to network time every six hours.</span></li>
       <li><b>Calibrate the battery, once</b>
@@ -582,7 +591,7 @@ const MODES = [
     up:"UP: balance · receive QR · Lightning" },
   { tag:"JOE", name:"Just a watch", big:"10:47", unit:"",
     box:null,
-    txt:"Time, day, date. No height, no strip, no reason for anyone to ask what you are wearing.",
+    txt:"Time, day, date, and the temperature and sky if you set a place. No height, no strip, no reason for anyone to ask what you are wearing.",
     up:"" }
 ];
 

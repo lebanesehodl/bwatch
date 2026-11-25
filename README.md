@@ -69,6 +69,7 @@ vendored.
 | Charge to full | Plug in. Below 95% the watch declines the live dock and sleeps so the cell fills. |
 | WiFi | MENU → Setup WiFi. Holds three networks — add a phone hotspot as one if you'd like. |
 | Wallet | MENU → Setup Wallet. Paste a **zpub**, never a seed. |
+| Weather | Optional. The same page as the wallet: latitude, longitude, one decimal. JOE shows °F; type C for Celsius. Blank the place to turn it off. Data by [Open-Meteo](https://open-meteo.com/) (CC BY 4.0), whose free API is for non-commercial use; see its terms. |
 | Timezone | MENU → Set Timezone. |
 | Battery | Fully charged, open About and **hold UP**. Each board learns its own full-charge reading. |
 

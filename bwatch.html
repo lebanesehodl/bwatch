@@ -403,8 +403,8 @@ nav .div{color:var(--orange);font-weight:400}
       Dow, oil, the US ten-year yield and the dollar index. Hidden until you turn it on.</span></li>
     <li><b>BSK</b><span>the basket: US home and grocery prices in bitcoin and sats, plus US M2
       growth against bitcoin's annualised issuance rate. Hidden until you turn it on.</span></li>
-    <li><b>JOE</b><span>time, day, date. Nothing else — for when you would rather not be asked what
-      you are wearing.</span></li>
+    <li><b>JOE</b><span>time, day, date. Give it a place and it adds the temperature and a small sky. No chain data &mdash;
+      for when you would rather not be asked what you are wearing.</span></li>
   </ul>
   <p>The grammar is deliberately small. <b>MODE selects the instrument, UP turns its crown.</b>
     Every reading is live, computed on-device, or explicitly labelled stale. The watch never
@@ -465,6 +465,15 @@ nav .div{color:var(--orange);font-weight:400}
     <dd>v3 has no dedicated real-time clock, just the ESP32 and a crystal, and it ran about three
       minutes fast a day. The watch now re-anchors to network time every six hours on the back of
       a fetch it was making anyway, so the error stays under a minute.</dd>
+    <dt>Weather</dt>
+    <dd>Optional, and on JOE only. Type a latitude and longitude on the setup page and the watch asks
+      for the temperature and sky at most once an hour. It keeps the place to a tenth of a degree, about
+      11 km, and asks for nothing until you give it one. The request goes to Open-Meteo over a
+      verified connection. Open-Meteo sees that rounded place and the watch's internet address; its
+      privacy policy says its logs, which may include coordinates, are deleted after 90 days.
+      Fahrenheit unless you choose Celsius. Weather data by
+      <a href="https://open-meteo.com/">Open-Meteo.com</a>, under
+      <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</dd>
     <dt>Keys</dt>
     <dd>Watch-only, from a zpub. It derives addresses; it cannot sign. Losing the watch loses nothing.</dd>
   </dl>
@@ -495,7 +504,7 @@ nav .div{color:var(--orange);font-weight:400}
     <dt>Haptics</dt><dd>One buzz when it sees the chain advance (on out of the box; Haptics &rsaquo; Block turns it off), however many blocks it missed since the last look. Two quick pulses for a $1,000 rise, one long for a fall.</dd>
     <dt>Battery</dt><dd>Multi-day on the wrist, deep sleep between minutes. Always awake when docked.</dd>
     <dt>Data</dt><dd>mempool.space, blockstream.info, Coinbase market data, alternative.me —
-      or your own node.</dd>
+      or your own node. Weather, only if you set a place: Open-Meteo.</dd>
     <dt>Setup</dt><dd>From your phone, through the watch's own WiFi portal. Three networks
       remembered and roamed. No app, no account, no mailing list.</dd>
     <dt>Water resistance</dt><dd>Rain proof, not swim proof. It is, however, fully fiat-proof.</dd>
