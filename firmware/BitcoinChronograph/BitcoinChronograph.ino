@@ -6336,8 +6336,10 @@ public:
   // Leaving JOE with a card on the glass: the next face goes on with a full.
   void leaveFace(int to) {
     if (dispMode == M_JOE && to != M_JOE) {
-      if (joeCardsSeen && themeDark) fullOnClose();   // dark cards only: light
-                                                    // ones leave no trace
+      // a card on the glass: the next face goes on with a full. Both themes
+      // since Nov 25: light cards wear JOE's black bezel too, and its words
+      // are the card's, which a partial leaves behind in the black
+      if (joeCardsSeen) fullOnClose();
       joeCardsSeen = false; joeStep = 0; joeLastStep = 0;
       // JOE's bezel is a big solid band that a partial only half clears: say
       // the glass held JOE, so the next face (whichever) books the clean that
@@ -7088,44 +7090,68 @@ public:
     if (dirty) savePeople();
   }
 
-  // The card all of these share: the curiosity cards' layout
+  // The card all of these share (person, watch, blockday, birthday): since
+  // Nov 25 JOE's classic frame, which OP approved from the mock
+  // (fw/joe-footer-mock cards/). The bezel carries `top` and the punchline
+  // l3; the window the name, what the number counts (l1), the number in
+  // JOE's segments, and where it started (l2). The words are the callers'.
   void drawStatCard(const char *top, const char *title, long long num,
                     const char *l1, const char *l2, const char *l3) {
     display.setFullWindow();
-    display.fillScreen(cardBg());
-    display.setTextColor(cardFg());
+    display.fillScreen(cardFg());                          // the bezel
+    display.fillRoundRect(6, 20, 188, 160, 10, cardBg());  // the window
     display.setTextWrap(false);
     display.setFont(NULL); display.setTextSize(1);
-    centerSmall(top, 14);
-    int tl = strlen(title); int sz = tl <= 10 ? 3 : 2;
-    display.setTextSize(sz);
-    display.setCursor((200 - tl * 6 * sz) / 2, 34);
-    display.print(title);
+    display.setTextColor(cardBg());
+    display.setCursor(8, 6); display.print(top);
+    display.setCursor((200 - (int)strlen(l3) * 6) / 2, 186); display.print(l3);
+    display.setTextColor(cardFg());
+    display.setTextSize(2);                                // a name: 8 at most
+    display.setCursor(14, 28); display.print(title);
     display.setTextSize(1);
-    char s[24]; snprintf(s, 24, "%lld", num < 0 ? -num : num);
-    const GFXfont *F = strlen(s) > 7 ? &DSEG7_Classic_Bold_25 : &DSEG7_Classic_Bold_32;
-    int n = strlen(s), cw = 6, w = 0;
-    for (int i = 0; i < n; i++) {
-      w += F->glyph[s[i] - F->first].xAdvance;
-      if ((n - 1 - i) % 3 == 0 && i < n - 1) w += cw;
-    }
-    int x = (200 - w) / 2;
-    display.setFont(F);
-    for (int i = 0; i < n; i++) {
-      char c[2] = {s[i], 0};
-      display.setCursor(x, 104); display.print(c);
-      x += F->glyph[s[i] - F->first].xAdvance;
-      if ((n - 1 - i) % 3 == 0 && i < n - 1) {
-        display.fillRect(x + cw / 2 - 1, 103, 3, 5, cardFg()); x += cw;
+    display.fillRect(12, 50, 176, 1, cardFg());
+    display.setCursor(185 - (int)strlen(l1) * 6, 58); display.print(l1);
+    drawCardNumber(186, 70, num < 0 ? -num : num);         // the sign is l1's
+    display.fillRect(12, 130, 176, 1, cardFg());
+    centerSmall(l2, 148);
+  }
+
+  // The card's number as an LCD field, right edge at `right`, top at y:
+  // seven places (a 100-year-old is 5.3M blocks old), more only if it needs
+  // them, narrower to fit. Ghost 8s before the number, unlit segments every
+  // third pixel (the time's every-second was too busy for digits this
+  // narrow), and a comma at each group boundary, lit where the number
+  // reaches it.
+  void drawCardNumber(int right, int y, long long v) {
+    const int DH = 50, DT = 5, GAP = 2, SEP = 4;
+    const float SL = 0.08f;
+    char s[24]; snprintf(s, sizeof s, "%lld", v);
+    int n = strlen(s), places = n > 7 ? n : 7;
+    int commas = (places - 1) / 3;
+    int dw = (174 - (places - 1) * GAP - commas * (SEP + GAP)) / places;
+    if (dw > 21) dw = 21;
+    int x = right - (places * dw + (places - 1) * GAP + commas * (SEP + GAP));
+    for (int p = 0; p < places; p++) {
+      int k = p - (places - n);                            // < 0: a blank place
+      drawSegDigit(x, y, dw, DH, DT, k >= 0 ? s[k] - '0' : -1, SL, 3);
+      x += dw + GAP;
+      int left = places - 1 - p;
+      if (left > 0 && left % 3 == 0) {
+        cardComma(x + 1, y + DH, n > left);
+        x += SEP + GAP;
       }
     }
-    display.setFont(NULL);
-    centerSmall(l1, 114);
-    display.drawFastHLine(30, 134, 140, cardFg());
-    centerSmall(l2, 146);
-    centerSmall(l3, 160);
-    display.drawRect(0, 0, 200, 200, cardFg());
-    display.drawRect(2, 2, 196, 196, cardFg());
+  }
+  // a 3x4 head on the baseline and a tail that leans back under it
+  void cardComma(int x, int base, bool lit) {
+    static const int8_t P[3][4] = {{0, -4, 3, 4}, {1, 0, 2, 2}, {0, 2, 2, 1}};
+    for (int i = 0; i < 3; i++) {
+      int px = x + P[i][0], py = base + P[i][1];
+      if (lit) { display.fillRect(px, py, P[i][2], P[i][3], cardFg()); continue; }
+      for (int yy = py; yy < py + P[i][3]; yy++)
+        for (int xx = px; xx < px + P[i][2]; xx++)
+          if (xx % 3 == 0 && yy % 3 == 0) display.drawPixel(xx, yy, cardFg());
+    }
   }
 
   // JOE's person card: at the trip's destination when travelling
@@ -7943,9 +7969,11 @@ public:
     // The OTP partial waveform leaves the last card's lines in the black
     // (card 2 showed card 1, card 3 showed both), and a card change is a
     // press the wearer made, so the flash answers it rather than surprises.
-    // (Dark theme only, since Nov 8: in light the cards are light too, and
-    // light-to-light partials were clean.)
-    if (!prePaint && themeDark && joeStep != joeLastStep && (joeStep >= 1 || joeLastStep >= 1))
+    // Since Nov 25 the cards wear JOE's bezel in both themes, and its words
+    // change from card to card; in light that is white type in the black,
+    // where Nov 8's light-to-light partials never had to clear anything. So
+    // both themes take the full now.
+    if (!prePaint && joeStep != joeLastStep && (joeStep >= 1 || joeLastStep >= 1))
       fullOnClose();
     if (!prePaint) joeLastStep = joeStep;
     joeCardsSeen = (joeStep >= 1);
@@ -8025,8 +8053,9 @@ public:
 
   // One segment digit in the box (x, y, w, h), strokes t thick, its top
   // sheared right by slant * h. Each segment is a long hexagon, a 1 px gap
-  // short of its neighbours; the unlit ones are ghosts.
-  void drawSegDigit(int x, int y, int w, int h, int t, int d, float slant) {
+  // short of its neighbours; the unlit ones are ghosts, every ghost-th pixel
+  // (JOE's time: 2). A d outside 0-9 is a blank place: all ghost.
+  void drawSegDigit(int x, int y, int w, int h, int t, int d, float slant, int ghost = 2) {
     static const uint8_t SEGS[10] = {    // bit 0 a (top), then b c d e f, g
       0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F };
     const uint8_t on = (d >= 0 && d <= 9) ? SEGS[d] : 0;
@@ -8048,7 +8077,7 @@ public:
         for (int i = 0; i < 6; i++) { px[i] = xs[i]; py[i] = ys[i]; }
       }
       for (int i = 0; i < 6; i++) px[i] += slant * (y + h - py[i]);
-      fillConvex(px, py, 6, fg(), (on >> k) & 1 ? 1 : 2);
+      fillConvex(px, py, 6, fg(), (on >> k) & 1 ? 1 : ghost);
     }
   }
 
