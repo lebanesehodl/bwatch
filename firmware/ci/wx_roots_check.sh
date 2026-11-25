@@ -5,8 +5,9 @@
 #  2. Against the live server, when this machine can reach it: the chain
 #     api.open-meteo.com sends verifies against WX_ROOTS alone (no system
 #     store), for that hostname; and it does NOT verify against an
-#     unrelated root, or for another hostname. A chain that fails is an
-#     error. A server that can't be reached is skipped, unless
+#     unrelated root, or for another hostname, each refused for its own
+#     certificate error (a refusal that never got that far is a failure).
+#     A chain that fails is an error. A server that can't be reached is skipped, unless
 #     WX_LIVE_REQUIRED is set (build.sh sets it in CI).
 #     With WX_PROBE (build.sh builds it from wx_live_probe.cpp), the
 #     watch's exact request goes over that checked channel and its answer
@@ -76,19 +77,25 @@ if [ -n "${WX_PROBE:-}" ]; then
     exit 1
   fi
 fi
+# The two that must be refused, each for its own certificate error: a
+# failure to connect, resolve or finish in time proves nothing.
 fails=0
+refused() {   # refused <log> <what> <verify error numbers, as an ERE>
+  if grep -q 'Verify return code: 0 (ok)' "$1"; then
+    echo "wx_roots_check: FAIL, $host verified $2" >&2
+    fails=1
+  elif grep -E -q "^verify error:num=($3):" "$1"; then
+    echo "wx_roots_check: refused $2, as it should be: $(grep -E -m1 '^verify error:num=' "$1")"
+  else
+    echo "wx_roots_check: FAIL, the check $2 never reached that certificate error:" >&2
+    head -5 "$1" >&2
+    fails=1
+  fi
+}
+# 2: unable to get issuer, 19: self-signed in the chain, 20: no local issuer
 probe "$wrong_root" "$host" > "$tmp/wrongroot"
-if grep -q 'Verify return code: 0 (ok)' "$tmp/wrongroot"; then
-  echo "wx_roots_check: FAIL, $host also verified against $(basename "$wrong_root")" >&2
-  fails=1
-else
-  echo "wx_roots_check: refused against an unrelated root ($(basename "$wrong_root")), as it should be"
-fi
+refused "$tmp/wrongroot" "against an unrelated root ($(basename "$wrong_root"))" '2|19|20'
+# 62: hostname mismatch
 probe "$tmp/roots.pem" "wrong.example.com" > "$tmp/wronghost"
-if grep -q 'Verify return code: 0 (ok)' "$tmp/wronghost"; then
-  echo "wx_roots_check: FAIL, $host's certificate verified for wrong.example.com" >&2
-  fails=1
-else
-  echo "wx_roots_check: refused for another hostname, as it should be"
-fi
+refused "$tmp/wronghost" "for another hostname" '62'
 exit $fails
