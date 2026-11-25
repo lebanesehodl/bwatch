@@ -6323,8 +6323,10 @@ public:
   // Leaving JOE with a card on the glass: the next face goes on with a full.
   void leaveFace(int to) {
     if (dispMode == M_JOE && to != M_JOE) {
-      if (joeCardsSeen && themeDark) fullOnClose();   // dark cards only: light
-                                                    // ones leave no trace
+      // a card on the glass: the next face goes on with a full. Both themes
+      // since Nov 25: light cards wear JOE's black bezel too, and its words
+      // are the card's, which a partial leaves behind in the black
+      if (joeCardsSeen) fullOnClose();
       joeCardsSeen = false; joeStep = 0; joeLastStep = 0;
       // JOE's bezel is a big solid band that a partial only half clears: say
       // the glass held JOE, so the next face (whichever) books the clean that
