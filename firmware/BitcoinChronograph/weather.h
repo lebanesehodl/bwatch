@@ -24,6 +24,7 @@
 #include <ArduinoJson.h>
 
 #define WX_NONE        INT16_MIN       // no place: no weather, nothing sent
+#define WX_DEFAULT_F   true            // Fahrenheit unless the wearer picks C (OP)
 #define WX_EVERY_MIN   60              // at most one attempt an hour, any path
 #define WX_STALE_S     (3L * 3600)     // older than this: "--"
 #define WX_AHEAD_S     3600L           // timed further ahead than this: refused
@@ -82,6 +83,15 @@ static inline const char *wxPlaceEditLog(int e) {
     case WXE_REFUSED: return "place not understood, the old one kept";
     default:          return "place unchanged";
   }
+}
+
+// The setup page's unit field: Fahrenheit unless it says C, so a blank or
+// unreadable field keeps the default.
+static inline bool wxUnitIsF(const char *u) {
+  while (u && *u == ' ') u++;
+  if (!u || !*u) return WX_DEFAULT_F;
+  if (*u == 'C' || *u == 'c') return false;
+  return true;
 }
 
 // ---------------- the request ----------------

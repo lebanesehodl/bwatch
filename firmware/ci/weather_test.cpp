@@ -285,6 +285,13 @@ int main() {
     check(wxPlaceEdit("   ", "48.9, 2.4", &a, &o) == WXE_CLEARED && a == WX_NONE && o == WX_NONE, "cleared");
     check(wxPlaceEdit("", "", &a, &o) == WXE_SAME && a == WX_NONE, "still none"); }
 
+  // the unit field: Fahrenheit unless it says C (OP's default)
+  check(WX_DEFAULT_F, "Fahrenheit is the default");
+  check(wxUnitIsF("F") && wxUnitIsF("f") && wxUnitIsF(" F"), "F is F");
+  check(!wxUnitIsF("C") && !wxUnitIsF("c") && !wxUnitIsF("  C"), "C is C");
+  check(wxUnitIsF("") && wxUnitIsF("   ") && wxUnitIsF(nullptr), "blank keeps the default");
+  check(wxUnitIsF("x"), "anything else keeps the default");
+
   // ---- the request: the place to a tenth, nothing else about the wearer ----
   { char q[400];
     wxRequest(q, sizeof q, 339, 355, false);

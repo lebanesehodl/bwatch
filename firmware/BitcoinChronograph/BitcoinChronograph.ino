@@ -672,7 +672,7 @@ RTC_DATA_ATTR StepSpan stepSpan        = {0, 0, 0, 0, 0, 0};
 // weather.h (tested on the build machine by build.sh) ----
 RTC_DATA_ATTR int16_t  wxLat10         = WX_NONE;   // the place, tenths of a
 RTC_DATA_ATTR int16_t  wxLon10         = WX_NONE;   // degree; WX_NONE: no weather
-RTC_DATA_ATTR bool     wxF             = false;     // in Fahrenheit
+RTC_DATA_ATTR bool     wxF             = WX_DEFAULT_F;  // in Fahrenheit
 RTC_DATA_ATTR bool     wxLoaded        = false;     // the three read from NVS
 RTC_DATA_ATTR WxReading wxNow          = {0, -1, 0};
 RTC_DATA_ATTR uint32_t wxTry           = 0;         // UTC of the last fetch tried
@@ -6481,7 +6481,7 @@ public:
     fiCloseDate = 0; fiCloseFor = 0; fiCloseTries = 0;
     caseTempC = 99; tempMode = TEMP_OK; coldLowVolt = 0; realFullWake = 0;
     memset(&stepSpan, 0, sizeof stepSpan);   // no count, and setup unchecked
-    wxLat10 = WX_NONE; wxLon10 = WX_NONE; wxF = false; wxLoaded = false;  // NVS reloads
+    wxLat10 = WX_NONE; wxLon10 = WX_NONE; wxF = WX_DEFAULT_F; wxLoaded = false;  // NVS reloads
     wxNow = {0, -1, 0}; wxTry = 0;
     for (int i = 0; i < 5; i++) { fiBsk[i] = 0; fiBskDate[i] = 0;
       for (int k = 0; k < 4; k++) fiBskHalv[i][k] = 0; }
@@ -8114,7 +8114,7 @@ public:
     Preferences p; p.begin("btcchrono", true);
     wxLat10 = p.getShort("wxLat", WX_NONE);
     wxLon10 = p.getShort("wxLon", WX_NONE);
-    wxF = p.getBool("wxF", false);
+    wxF = p.getBool("wxF", WX_DEFAULT_F);
     p.end();
     wxLoaded = true;
   }
@@ -10353,7 +10353,7 @@ public:
       "Open-Meteo at most once an hour; Open-Meteo also sees your internet address and "
       "may log both for up to 90 days. Blank: no weather, nothing sent. "
       "Weather data by Open-Meteo.com (CC BY 4.0)", wxCur, 23);
-    WiFiManagerParameter pWu("wxunit", "Weather in C or F", wxUcur, 2);
+    WiFiManagerParameter pWu("wxunit", "Weather in F or C (F unless you type C)", wxUcur, 2);
     wm.addParameter(&pWx); wm.addParameter(&pWu);
 
     wsTitle("WALLET");
@@ -10414,7 +10414,7 @@ public:
       }
       if (changed) savePeople(); }
     { const char *v = pWx.getValue(), *u = pWu.getValue();
-      bool f = u && (u[0] == 'F' || u[0] == 'f');
+      bool f = wxUnitIsF(u);                          // F unless it says C
       int16_t la = wxLat10, lo = wxLon10;
       int e = wxPlaceEdit(v, wxCur, &la, &lo);        // weather.h; never logged as typed
       if (e != WXE_SAME || f != wxF) {
