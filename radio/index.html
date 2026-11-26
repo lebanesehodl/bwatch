@@ -146,7 +146,11 @@ details[open] summary{margin-bottom:10px}
 .ed small{grid-column:1/3;font:400 12px/1.5 var(--mono);color:var(--dim)}
 .ed .left{color:var(--accent-text)}
 
-/* how it works */
+/* listener's sound guide */
+.sound-guide summary{min-height:44px;padding:12px 0}
+.sound-guide summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sound-guide[open] summary{margin-bottom:14px}
+.sound-guide>.note{margin-top:14px}
 .map{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px}
 @media (max-width:640px){.map{grid-template-columns:1fr}}
 .map div{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -207,7 +211,21 @@ footer a:hover{color:var(--ink)}
           <button data-speed="60" aria-pressed="true">Real time</button>
         </div>
       </div>
-      <p class="note" id="srcNote">The real chain, as it happens. The chord changes when the next block is found, which can take a while.</p>
+      <p class="note" id="srcNote">The real chain, as it happens. A new block sets the chord. Until the next one, the organ drifts back through the last eight. A block can take a while.</p>
+      <details class="sound-guide" id="soundGuide">
+        <summary>What you're hearing</summary>
+        <div class="map">
+          <div><b>Static</b><p>The hiss under everything. It rises the longer the chain goes without a block, and levels off.</p></div>
+          <div><b>Whistle</b><p>A thin tone that climbs in pitch with the same wait. It says how long since the last block. It predicts nothing.</p></div>
+          <div><b>Crackle</b><p>Random pops, timed by chance. The more transactions waiting in the mempool, the more of them per second. If a refresh fails, it keeps the last count. A fixed rate plays only until the first count arrives. Recorded blocks use the next block's transaction count.</p></div>
+          <div><b>Call sign</b><p>Each block opens with a short Morse call sign drawn from its hash. The same block always sends the same one. Recorded blocks use a stand-in hash, so theirs are stand-ins too.</p></div>
+          <div><b>Three pips</b><p>Then the block height, read digit by digit in two groups.</p></div>
+          <div><b>Organ</b><p>A faint chord chosen by the block's hash. While you wait, it revisits the chords of up to the last eight blocks. Two blocks can land on the same chord.</p></div>
+          <div><b>Retune</b><p>On a difficulty adjustment: a sweep across the band, QSY in Morse, then a new key. Countdowns to the next one are read out.</p></div>
+          <div><b>Hush</b><p>On a halving: the line dips for a moment, QRT in Morse, then the organ sits an octave lower. Countdowns are read out here too.</p></div>
+        </div>
+        <p class="note">No prices anywhere in the music. Blocks and transactions only.</p>
+      </details>
     </div>
   </section>
 
@@ -300,18 +318,6 @@ footer a:hover{color:var(--ink)}
         </div>
       </div>
     </div>
-  </section>
-
-  <section class="sec">
-    <h2>How it plays</h2>
-    <div class="map">
-      <div><b>Blocks → numbers</b><p>Each new block is announced the way a numbers station would: three pips, then its height, read in two groups.</p></div>
-      <div><b>Hashes → chords</b><p>Under the static, a faint organ holds the chord the block's hash picked. While it waits, it drifts back through the last eight blocks' chords.</p></div>
-      <div><b>The wait → static</b><p>A block takes ten minutes on average but can take forty. The longer none comes, the louder the hiss and the higher the whistle drifts.</p></div>
-      <div><b>Adjustments → key, halvings → octave</b><p>Every difficulty adjustment, the station retunes on air and the organ moves to a new key. Every halving drops it an octave, for good. Countdowns to both are read out along the way.</p></div>
-      <div><b>Mempool → crackle</b><p>Transactions waiting to be mined crackle on the line. A busy mempool is a storm of static.</p></div>
-    </div>
-    <p class="note">No prices anywhere in the music. Blocks and transactions only.</p>
   </section>
 
   <footer><a href="https://bwatch.xyz/">BWATCH · BTC TECHNOLOGIES</a><span>Live data: mempool.space</span></footer>
@@ -1003,6 +1009,7 @@ const DEMO_ADJ=2.1;
 const DEMO=[975742,975743,975744,975745,1049998,1049999,1050000,1050001].map((h,i)=>({height:h,time:Date.parse("2026-11-08T20:00:00Z")+i*15*60000,tx:3000+(i*977)%3000,hash:null}));
 const DEMO_NOTE="A simulated run: blocks land on the difficulty adjustment at 975,744 and on the halving at 1,050,000, fifteen minutes apart. The blocks and the +2.1% are made up.";
 let replaySet="tonight";
+const LIVE_NOTE=$("srcNote").textContent;
 const REPLAY_NOTE="Tonight's 24 blocks, 975,097 to 975,120 (3:52 to 9:33 PM ET, Nov 8), with their real times and transaction counts. Their songs use a stand-in for each block's hash.";
 function setReplayUI(set="tonight"){mode="replay";replaySet=set;press($("srcSeg"),$(set==="demo"?"srcDemo":"srcReplay"));$("speedRow").hidden=false;$("srcNote").textContent=set==="demo"?DEMO_NOTE:REPLAY_NOTE;
   if(set==="demo"){speed=2;press($("speedSeg"),document.querySelector('#speedSeg [data-speed="2"]'))}}
@@ -1033,7 +1040,7 @@ function stop(){
   $("waitText").textContent="Press play to listen";$("tension").style.width="0";$("tensionPct").textContent="";draw()}
 $("play").addEventListener("click",()=>playing?stop():start());
 $("srcLive").addEventListener("click",()=>{if(mode==="live")return;mode="live";press($("srcSeg"),$("srcLive"));$("speedRow").hidden=true;
-  $("srcNote").textContent="The real chain, as it happens. The chord changes when the next block is found, which can take a while.";if(playing){stop();start()}});
+  $("srcNote").textContent=LIVE_NOTE;if(playing){stop();start()}});
 $("srcReplay").addEventListener("click",()=>{if(mode==="replay"&&replaySet==="tonight")return;setReplayUI("tonight");if(playing){stop();start()}});
 $("srcDemo").addEventListener("click",()=>{if(mode==="replay"&&replaySet==="demo")return;setReplayUI("demo");if(playing){stop();start()}});
 $("speedSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;press($("speedSeg"),b);

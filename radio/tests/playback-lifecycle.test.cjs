@@ -8,7 +8,7 @@ function page(){
   const clock={wall:1_800_000_000_000,mono:0},elements=new Map(),intervals=[],timeouts=[];
   class ClockDate extends Date{static now(){return clock.wall}}
   const canvas=new Proxy({}, {get:()=>()=>{}});
-  const el=id=>{if(!elements.has(id))elements.set(id,{id,value:'',style:{},classList:{add(){},remove(){}},addEventListener(){},setAttribute(){},querySelectorAll(){return []},getBoundingClientRect(){return {width:800}},getContext(){return canvas},closest(){return {hidden:false}}});return elements.get(id)};
+  const el=id=>{if(!elements.has(id))elements.set(id,{id,value:'',textContent:id==='srcNote'?html.match(/<p class="note" id="srcNote">([^<]+)<\/p>/)[1]:'',style:{},listeners:{},classList:{add(){},remove(){}},addEventListener(name,fn){this.listeners[name]=fn},setAttribute(){},querySelectorAll(){return []},getBoundingClientRect(){return {width:800}},getContext(){return canvas},closest(){return {hidden:false}}});return elements.get(id)};
   const env=vm.createContext({console,crypto:webcrypto,TextEncoder,Uint8Array,Float32Array,Date:ClockDate,performance:{now:()=>clock.mono},Math,Number,Promise,AbortController,
     setTimeout:fn=>{timeouts.push(fn);return timeouts.length},clearTimeout(){},setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval(){},
     navigator:{},location:{hostname:'localhost'},requestAnimationFrame:fn=>fn(),getComputedStyle:()=>({getPropertyValue:()=>''}),
@@ -95,4 +95,24 @@ test('an interrupted audio context is resumed from the next Play tap',async()=>{
 test('recorded replay keeps its own speed-scaled timeline',async()=>{
   const p=page();audio(p);p.run(`mode='replay';speed=2;chain=[{height:1,time:1000000}];lastIdx=0;rVirt0=1000000;rStart=100;ctx.currentTime=102`);
   assert.equal(p.run('waitMin()'),1);
+});
+test('returning from recorded or demo mode restores the original live description',()=>{
+  const p=page(),initial=p.elements.get('srcNote').textContent;
+  assert.ok(initial.startsWith('The real chain, as it happens.'));
+  for(const id of ['srcReplay','srcDemo']){
+    p.elements.get(id).listeners.click();
+    assert.notEqual(p.elements.get('srcNote').textContent,initial);
+    p.elements.get('srcLive').listeners.click();
+    assert.equal(p.run('mode'),'live');
+    assert.equal(p.elements.get('srcNote').textContent,initial);
+    assert.equal(p.elements.get('speedRow').hidden,true);
+  }
+});
+test('failed live startup still clearly labels its recorded fallback',async()=>{
+  const p=page();audio(p);p.run(`getJSON=async()=>{throw Error('offline')}`);
+  await p.run('start()');
+  assert.equal(p.run('mode'),'replay');
+  assert.equal(p.elements.get('src').textContent,'Tonight · recorded blocks');
+  assert.match(p.elements.get('srcNote').textContent,/Playing tonight's recorded blocks instead\./);
+  assert.equal(p.elements.get('srcLive').disabled,true);
 });
