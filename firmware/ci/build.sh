@@ -76,9 +76,24 @@ watchy="$libs/Watchy/src"
 "$cxx" -o "$tmp/case_temp_test" "$tmp/case_temp_test.o" "$tmp/bma4.o"
 "$tmp/case_temp_test"
 
+# The commit this builds, stamped into the firmware for About (FW_ID in the
+# sketch) and into the images' names below: the same seven characters.
+commit="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
+dirty=""
+if [ -n "$(git -C "$root" status --porcelain -- firmware 2>/dev/null)" ]; then
+  dirty="-dirty"
+fi
+stamp=""                       # outside git: no stamp, About says FW DEV
+stamp_text="FW DEV"
+if [ "$commit" != unknown ]; then
+  stamp="-DFW_COMMIT=${commit:0:7}"
+  stamp_text="FW ${commit:0:7}"
+  if [ -n "$dirty" ]; then stamp="$stamp -DFW_DIRTY=1"; stamp_text="DEV ${commit:0:7}"; fi
+fi
+
 arduino-cli compile \
   --fqbn "$FQBN" \
-  --build-property "compiler.cpp.extra_flags=${BUILD_DEFINES:-}" \
+  --build-property "compiler.cpp.extra_flags=${BUILD_DEFINES:-} $stamp" \
   --warnings default \
   --output-dir "$out" \
   "$sketch"
@@ -114,13 +129,8 @@ if ! grep -q '^otadata,data,ota,0xe000,' <<<"$table" ||
   exit 1
 fi
 
-commit="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
 ref="${IMAGE_REF:-$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo local)}"
 ref="${ref//[^A-Za-z0-9._-]/-}"
-dirty=""
-if [ -n "$(git -C "$root" status --porcelain -- firmware 2>/dev/null)" ]; then
-  dirty="-dirty"
-fi
 bench=""
 if [ -n "${BUILD_DEFINES:-}" ]; then bench="-bench"; fi
 name="bwatch-bw1-$ref-${commit:0:7}$dirty$bench"
@@ -143,6 +153,18 @@ flash="$(cd "$flash" && pwd)"
   0x10000 "$app.bin"
 (cd "$root/firmware" && python3 -m zipfile -c "$flash/$name-sketch.zip" BitcoinChronograph)
 
+# The stamp is in what gets flashed: both images hold "$stamp_text" once, and
+# no other build stamp. A check that can't fail proves nothing, so it also
+# runs against a copy of the update image whose stamp names another commit,
+# and that has to fail.
+check="$here/check_stamp.py"
+for img in "$flash/$name-update.bin" "$flash/$name-full.bin"; do
+  python3 "$check" "$img" "$stamp_text"
+done
+if [ -n "$stamp" ]; then
+  python3 "$check" --mismatch-control "$flash/$name-update.bin" "$stamp_text"
+fi
+
 full_end="$(printf '0x%x' "$(( $(wc -c < "$flash/$name-full.bin") ))")"
 
 if command -v sha256sum >/dev/null; then sha256=(sha256sum); else sha256=(shasum -a 256); fi
@@ -150,6 +172,7 @@ if command -v sha256sum >/dev/null; then sha256=(sha256sum); else sha256=(shasum
 {
   echo "$name"
   echo "Built from commit $commit ($ref)${dirty:+, plus uncommitted changes in firmware/}."
+  echo "About shows: $stamp_text"
   echo "esp32 core $CORE_VERSION, $FQBN, libraries from firmware/ci/libraries.txt."
   if [ -n "$bench" ]; then
     echo "BENCH BUILD ($BUILD_DEFINES), not customer firmware."
