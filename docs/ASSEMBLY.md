@@ -6,7 +6,8 @@ the one that makes the percentage meaningful, so it is not optional.
 - [ ] Flash `firmware/BitcoinChronograph`
 - [ ] Charge to full on a wall adapter (corner reads `CHG`, then `DOCK` above 95%)
 - [ ] About → **hold UP** to store this board's full-charge reading
-- [ ] Setup WiFi — confirm `Keys 1 of 3` in About
+- [ ] Setup WiFi — confirm the watch reports `Saved to keychain.`, then that About's `Net` line shows
+      that network and not `none`
 - [ ] Setup Wallet with a test zpub, confirm a balance, then clear it
 - [ ] Set Timezone
 - [ ] Walk every face in the cycle: HGT MEM PRC SAT CAP FEE SUP HLV WAL JOE (ten;
