@@ -235,9 +235,6 @@ footer{padding:60px 0 90px}
    promise the watch makes. */
 .status{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;
   margin-top:clamp(20px,2.8vh,34px)}
-.cnt{font-family:"SF Mono",ui-monospace,"Courier New",monospace;font-size:11px;
-  letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
-.cnt b{color:var(--orange);font-weight:700}
 
 .wl{display:flex;gap:8px;margin-top:16px;max-width:470px;flex-wrap:wrap}
 .wl input[type=text]{flex:1 1 200px;min-width:0;padding:13px 14px;
@@ -273,12 +270,6 @@ footer{padding:60px 0 90px}
       Bitcoin's time. No app, no account, no custodian.</p>
     <div class="status">
       <span class="soon">Currently in field testing</span>
-      <!-- One number, and it only ever falls. A list count was here too, but
-           an empty list advertises that nobody is interested yet, and you
-           only launch once. Edited by hand when a watch is actually paid for:
-           a counter that moved when someone joined a list would be
-           manufacturing the scarcity rather than reporting it. -->
-      <span class="cnt"><b id="left">21</b> of 21 unclaimed</span>
     </div>
 
     <form class="wl" action="https://formspree.io/f/xljeaawd" method="POST">
@@ -288,7 +279,7 @@ footer{padding:60px 0 90px}
              autocomplete="email" spellcheck="false"
              pattern="(^[^@\s]+@[^@\s]+\.[^@\s]{2,}$)|(^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$)"
              title="An email address, or an npub beginning npub1">
-      <input type="hidden" name="_subject" value="BWATCH bw-1 — Genesis 21 list">
+      <input type="hidden" name="_subject" value="BWATCH bw-1 list">
       <input type="hidden" name="_next" value="https://bwatch.xyz/thanks.html">
       <button type="submit">Join the list</button>
     </form>

@@ -10,6 +10,11 @@
 # without the IDE; its FLASH.txt says which commit they are and where each
 # one goes. IMAGE_REF names them (CI: pr<N> or main; default: the branch).
 #
+# BUILD_DEFINES adds compiler defines for a bench build, for example
+#   BUILD_DEFINES="-DDISPLAY_LAB=1" firmware/ci/build.sh
+# Left empty, the result is the customer firmware. A bench build's images
+# end in -bench.
+#
 # Your own Arduino setup is left alone. The core and its tools go into a
 # private data folder (firmware/ci/.build/arduino) and the libraries into a
 # private sketchbook that is emptied and refilled every run, so neither the
@@ -108,13 +113,29 @@ cc="${CC:-cc}"
 WX_PROBE="$tmp/wx_live_probe" WX_LIVE_REQUIRED="${WX_LIVE_REQUIRED:-${GITHUB_ACTIONS:+1}}" \
   "$here/wx_roots_check.sh"
 
+# The commit this builds, stamped into the firmware for About (FW_ID in the
+# sketch) and into the images' names below: the same seven characters.
+commit="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
+dirty=""
+if [ -n "$(git -C "$root" status --porcelain -- firmware 2>/dev/null)" ]; then
+  dirty="-dirty"
+fi
+stamp=""                       # outside git: no stamp, About says FW DEV
+stamp_text="FW DEV"
+if [ "$commit" != unknown ]; then
+  stamp="-DFW_COMMIT=${commit:0:7}"
+  stamp_text="FW ${commit:0:7}"
+  if [ -n "$dirty" ]; then stamp="$stamp -DFW_DIRTY=1"; stamp_text="DEV ${commit:0:7}"; fi
+fi
+
 arduino-cli compile \
   --fqbn "$FQBN" \
+  --build-property "compiler.cpp.extra_flags=${BUILD_DEFINES:-} $stamp" \
   --warnings default \
   --output-dir "$out" \
   "$sketch"
 
-# Flashable images, named bwatch-bw1-<ref>-<commit>[-dirty]:
+# Flashable images, named bwatch-bw1-<ref>-<commit>[-dirty][-bench]:
 #   -full.bin    at 0x0, for a new watch or a clean start. It ERASES the
 #                settings: merge_bin fills the gaps between its parts with
 #                0xFF, and NVS (0x9000-0xDFFF) is one of those gaps.
@@ -145,14 +166,11 @@ if ! grep -q '^otadata,data,ota,0xe000,' <<<"$table" ||
   exit 1
 fi
 
-commit="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
 ref="${IMAGE_REF:-$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo local)}"
 ref="${ref//[^A-Za-z0-9._-]/-}"
-dirty=""
-if [ -n "$(git -C "$root" status --porcelain -- firmware 2>/dev/null)" ]; then
-  dirty="-dirty"
-fi
-name="bwatch-bw1-$ref-${commit:0:7}$dirty"
+bench=""
+if [ -n "${BUILD_DEFINES:-}" ]; then bench="-bench"; fi
+name="bwatch-bw1-$ref-${commit:0:7}$dirty$bench"
 
 flash="$out/flash"
 rm -rf "$flash"
@@ -172,18 +190,44 @@ flash="$(cd "$flash" && pwd)"
   0x10000 "$app.bin"
 (cd "$root/firmware" && python3 -m zipfile -c "$flash/$name-sketch.zip" BitcoinChronograph)
 
+# The stamp is in what gets flashed: both images hold "$stamp_text" once, and
+# no other build stamp. A check that can't fail proves nothing, so it also
+# runs against a copy of the update image whose stamp names another commit,
+# and that has to fail.
+check="$here/check_stamp.py"
+for img in "$flash/$name-update.bin" "$flash/$name-full.bin"; do
+  python3 "$check" "$img" "$stamp_text"
+done
+if [ -n "$stamp" ]; then
+  python3 "$check" --mismatch-control "$flash/$name-update.bin" "$stamp_text"
+fi
+
+full_end="$(printf '0x%x' "$(( $(wc -c < "$flash/$name-full.bin") ))")"
+
 if command -v sha256sum >/dev/null; then sha256=(sha256sum); else sha256=(shasum -a 256); fi
 (cd "$flash" && "${sha256[@]}" "$name"-* > SHA256SUMS)
 {
   echo "$name"
   echo "Built from commit $commit ($ref)${dirty:+, plus uncommitted changes in firmware/}."
+  echo "About shows: $stamp_text"
   echo "esp32 core $CORE_VERSION, $FQBN, libraries from firmware/ci/libraries.txt."
+  if [ -n "$bench" ]; then
+    echo "BENCH BUILD ($BUILD_DEFINES), not customer firmware."
+  fi
   echo
   echo "Update a watch that already runs BWATCH firmware, keeping its settings"
   echo "(Wi-Fi, wallet, Lightning address, time zone, battery calibration):"
   echo "  esptool.py --chip $mcu write_flash 0xe000 $name-update.bin"
-  echo "New watch, or a clean start. This ERASES all of those settings:"
+  echo "New watch, or starting over. This ERASES all of those settings:"
   echo "  esptool.py --chip $mcu write_flash 0x0 $name-full.bin"
+  echo "It writes 0x0 up to $full_end, the end of the app. The other app slot,"
+  echo "spiffs and coredump keep what they held; nothing here uses them."
+  echo "For a blank chip, run esptool.py --chip $mcu erase_flash first"
+  echo "(that erases the settings too)."
+  echo
+  echo "esptool finds the watch's port itself. With more than one ESP32 plugged"
+  echo "in, add --port: /dev/ttyACM0 on Linux, /dev/cu.usbmodem... on macOS,"
+  echo "COM5 (or whichever) on Windows."
   echo
   echo "SHA-256:"
   cat "$flash/SHA256SUMS"

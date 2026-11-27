@@ -439,6 +439,31 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 // alongside Setup WiFi and Set Time, where settings belong.
 #define SPARK_POINTS    48
 #define HALVING_EPOCH   1839542400UL   // est. 2028-04-17, block 1,050,000
+// ---- bench builds ----
+// DISPLAY_LAB 1 adds the display lab: scripted refresh tests on test cards,
+// opened by a short DOWN on About and logged over serial. A bench tool, not a
+// feature: customer firmware is built with 0. CI compiles both.
+#ifndef DISPLAY_LAB
+#define DISPLAY_LAB      0
+#endif
+
+// ---- which build this is ----
+// About's top line says FW and the commit it was built from. The commit is
+// not written here by hand, where it would drift: firmware/ci/build.sh passes
+// the one it compiles (-DFW_COMMIT=<7 hex>, and -DFW_DIRTY=1 when firmware/
+// has uncommitted changes), the same seven characters as the image's name,
+// and then checks the image holds this exact text. A build without the stamp
+// (the IDE, a tree outside git) says FW DEV instead of a commit it can't
+// know; a dirty tree says DEV and the commit it started from.
+#define FW_STR2(x) #x
+#define FW_STR(x)  FW_STR2(x)
+#if defined(FW_COMMIT) && !defined(FW_DIRTY)
+static const char FW_ID[] = "FW " FW_STR(FW_COMMIT);
+#elif defined(FW_COMMIT)
+static const char FW_ID[] = "DEV " FW_STR(FW_COMMIT);
+#else
+static const char FW_ID[] = "FW DEV";
+#endif
 
 // ---------------- persisted across deep sleep ----------------
 // RTC LAYOUT GUARD: RTC RAM survives reflashes, but the firmware's
@@ -1521,6 +1546,7 @@ public:
       delay(HOLD[st]);
     }
     drawHalving(v, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     for (int i = 0; i < 4; i++) { buzz(35, 2); delay(140); }
@@ -1540,6 +1566,7 @@ public:
       delay(HOLD[st]);
     }
     drawRetarget(r, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(35, 2); delay(140); buzz(35, 2);
@@ -2601,9 +2628,8 @@ public:
     else if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) p = DOWN_BTN_PIN;
     else if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) p = MENU_BTN_PIN;
     if (p < 0) return false;
-    if (evQueue && evShown && !qrOnGlass()) {    // ANY BUTTON: OK
-      dismissEvent();
-      waitAllRelease();
+    if (evQueue && evShown && !qrOnGlass()) {    // ANY BUTTON: OK (UP: replay)
+      eventPress(p);
     } else if (p == MENU_BTN_PIN) {
       waitAllRelease();
       return true;
@@ -3551,7 +3577,10 @@ public:
 
   // the dial at any size: the face's small EPOC dial, scaled. The arc and
   // ring keep their proportions; the label sits inside when there is room.
-  void drawDialRing(int cx, int cy, int R, float pct, const char *name) {
+  // `word`, when given, takes the name's place inside a big ring and the
+  // number gets its %: the retarget recap reads COMPLETE 100%.
+  void drawDialRing(int cx, int cy, int R, float pct, const char *name,
+                    const char *word = NULL) {
     display.drawCircle(cx, cy, R, cardFg());
     int tk = R > 40 ? 4 : 3;
     for (int a = 0; a < 360; a += 90) {            // the quarter ticks
@@ -3574,7 +3603,9 @@ public:
     char p[8]; snprintf(p, 8, "%d", (int)(pct * 100 + 0.001f));
     display.setFont(NULL); display.setTextSize(1);
     if (R > 40) {
-      char l[16]; snprintf(l, 16, "%s %s", name, p);
+      char l[16];
+      if (word) snprintf(l, 16, "%s %s%%", word, p);
+      else snprintf(l, 16, "%s %s", name, p);
       display.setCursor(cx - (int)strlen(l) * 3, cy + R - 32);
       display.print(l);
     } else {                                       // the face's own layout
@@ -3592,7 +3623,11 @@ public:
     display.setTextColor(cardFg());
     static const int CX[] = {26, 62, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
     int k = stage < 2 ? stage : 2;
-    drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "EPOC");
+    // the recap's ring says COMPLETE 100%: "EPOC 100" under "EPOCH 484"
+    // read as a second epoch number (OP, Nov 27). The growing stages keep
+    // the face dial's EPOC.
+    drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "EPOC",
+                 stage == 4 ? "COMPLETE" : NULL);
     if (stage < 4) return;
 
     char s[34];
@@ -5671,6 +5706,7 @@ public:
       drawCurioCard(h, 3); display.display(true); delay(320);
     }
     drawCurioCard(h, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(35, 2);
@@ -5798,6 +5834,7 @@ public:
       delay(st == 0 ? 500 : st == 3 ? 420 : 260);
     }
     drawSupplyCard(i, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(60, 3);
@@ -10772,7 +10809,10 @@ public:
     }
   }
 
-  void millionScreen() {
+  // The roll, the ten pulses and the card: everything a replay (UP on the
+  // waiting card) plays again. The marking (sawMillion, NVS, the event) is
+  // millionScreen()'s alone, so a replay writes nothing.
+  void millionAnimation() {
     // the odometer rolls over: each carry a partial
     static const long ROLL[8] = {999999L, 999990L, 999900L, 999000L,
                                  990000L, 900000L, 0L, 1000000L};
@@ -10788,8 +10828,13 @@ public:
       buzz(60, 4);
     }
     drawMillionCard(2, 1000000L, 10);
+    drawReplayPrompt();       // it waits: UP plays it again
     displayFull();            // full refresh: this one is worth it
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
+  }
+
+  void millionScreen() {
+    millionAnimation();
     Serial.printf("[1M] block 1,000,000 marked at tip %ld\n", blockHeight);
     sawMillion = true;
     savePrefs();
@@ -11701,11 +11746,13 @@ public:
   // the one thing to do about it.
   void drawEventScreen(uint8_t ev) {
     if (ev == EV_AGE)  { drawAgeCard(); return; }
-    if (ev == EV_RETG) { drawRetarget(heldRetarget(), 4); return; }
-    if (ev == EV_HALV) { drawHalving(heldHalving(), 4); return; }
+    // the celebrations: the animation's last frame, prompt and all
+    if (ev == EV_RETG) { drawRetarget(heldRetarget(), 4); drawReplayPrompt(); return; }
+    if (ev == EV_HALV) { drawHalving(heldHalving(), 4); drawReplayPrompt(); return; }
     if (ev == EV_CURIO) {
       const char *why = curiosity(evCurioH);
       drawCurioFrame(evCurioH, why ? why : "CURIOUS BLOCK");
+      drawReplayPrompt();
       return;
     }
     themeDark = darkNow();
@@ -11808,11 +11855,90 @@ public:
     return true;                                  // otherwise the caller
   }                                               // sends it to the panel
 
+  // the event whose card is on the glass now, if it is still waiting
+  uint8_t visibleEvent() {
+    return (evShown && (evQueue & evShown)) ? evShown : 0;
+  }
+
+  // A press acknowledges the card on the glass, and only that one. It used to
+  // take firstEvent(), the lowest waiting bit. An animation that put a higher
+  // one up over it (a retarget over a block alarm read in the same fetch)
+  // left the two apart until the next draw, and a press in between cleared
+  // the covered card unseen: on the dock that is seconds, the rest of the
+  // poll. Nothing on the glass (a rest ended, a card not drawn yet): nothing
+  // is cleared, and the draw that follows puts the card up.
   void dismissEvent() {
-    uint8_t ev = firstEvent();
-    evQueue &= (uint8_t)~ev;
+    uint8_t ev = visibleEvent();
+    if (ev) evQueue &= (uint8_t)~ev;
     evShown = 0;
     Serial.printf("[alarm] dismissed %u, queue %u\n", ev, evQueue);
+  }
+
+  // ---- replay: UP on a waiting celebration plays it again ----
+  // The cards with an animation of their own (a retarget, a halving, and on
+  // EV_CURIO a curiosity, a supply milestone or block 1,000,000) wait with
+  // UP: REPLAY  BACK: OK at the foot. UP plays the same sequence again, from
+  // what the event saved: no fetch, no event fired, the queue and NVS left as
+  // they are, the cold rule kept (a cold curiosity or milestone is its card
+  // and its buzz). It ends on the same card. Any other button, and any button
+  // on an alarm, PAY or age card, is OK (OP and Lead, Nov 27).
+  bool canReplay(uint8_t ev) {
+    return ev == EV_RETG || ev == EV_HALV || ev == EV_CURIO;
+  }
+
+  // a tab over the foot of the frame (or the ring), the size of its words
+  void drawReplayPrompt() {
+    static const char *P = "UP: REPLAY  BACK: OK";
+    int w = (int)strlen(P) * 6, x = (200 - w) / 2;    // 120 px, from x 40
+    display.fillRect(x - 4, 187, w + 7, 13, cardBg());
+    display.drawRect(x - 4, 187, w + 7, 13, cardFg());
+    display.setFont(NULL); display.setTextSize(1);
+    display.setTextColor(cardFg());
+    display.setCursor(x, 190); display.print(P);
+  }
+
+  // the animation again, as drawCurioFrame() tells the EV_CURIO kinds apart
+  void replayEvent(uint8_t ev) {
+    Serial.printf("[replay] %u (queue %u)\n", ev, evQueue);
+    themeDark = darkNow();        // a press, before any face draw
+    if (ev == EV_RETG) retargetScreen();
+    else if (ev == EV_HALV) halvingScreen();
+    else if (ev == EV_CURIO) {
+      int sm = supMsAt(evCurioH);
+      if (sm >= 0) supplyScreen(sm);
+      else if (evCurioH == 1000000L) millionAnimation();
+      else {
+        const char *why = curiosity(evCurioH);
+        curiosityScreen(evCurioH, why ? why : "CURIOUS BLOCK");
+      }
+    }
+    eventOnGlass = true;          // its own full put the card back up
+    panelOff();
+  }
+
+  // A press with a card waiting, from every path that reads buttons then: the
+  // wake, the fast loop, the vigil and the dock. Returns true for a replay:
+  // the same card is up again and nothing needs drawing. Otherwise the card
+  // on the glass (if any) is acknowledged and the caller draws what is next.
+  bool eventPress(int pin) {
+    uint8_t ev = visibleEvent();
+    waitAllRelease();
+    if (ev && pin == UP_BTN_PIN && canReplay(ev)) {
+      replayEvent(ev);
+      waitAllRelease();
+      return true;
+    }
+    dismissEvent();
+    return false;
+  }
+
+  // the button held now, in the face's order (-1: none)
+  int pressedNow() {
+    if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) return MENU_BTN_PIN;
+    if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) return BACK_BTN_PIN;
+    if (digitalRead(UP_BTN_PIN)   == BTN_ACTIVE) return UP_BTN_PIN;
+    if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) return DOWN_BTN_PIN;
+    return -1;
   }
 
   // ---- late payments ----
@@ -11978,10 +12104,12 @@ public:
 
 
   // ---------------- DISPLAY LAB (Oct 17) ----------------
-  // About, short DOWN. Scripted refresh sequences on test cards, logged over
+  // About, short DOWN, in a DISPLAY_LAB build only: customer firmware leaves
+  // it out. Scripted refresh sequences on test cards, logged over
   // serial, to MEASURE why images fade and ghost instead of guessing. Each
   // step buzzes and waits for a press (BACK leaves the lab). Photograph the
   // glass at each prompt and ~5 s later.
+  #if DISPLAY_LAB
   uint16_t labBg = GxEPD_BLACK, labFg = GxEPD_WHITE;   // L7+: light cards too
   void labCard(char v, const char *id) {
     display.setFullWindow();
@@ -12247,6 +12375,7 @@ public:
     cleanScreen();                       // the controller back as the watch expects it
     Serial.println("[lab] ===== done =====");
   }
+  #endif  // DISPLAY_LAB
 
   void myShowAbout() {
     // FreeMonoBold9pt7b advances 11 px, so a 200 px panel fits 18 characters
@@ -12260,6 +12389,10 @@ public:
 
     int y = 20;
     display.setCursor(0, y); display.print("BWATCH bw-1");
+    // the build, small, to the right of the name, on its baseline
+    display.setFont(NULL);
+    display.setCursor(200 - (int)strlen(FW_ID) * 6, y - 7); display.print(FW_ID);
+    display.setFont(&FreeMonoBold9pt7b);
 
     int cs = chargeState();
     int p  = batteryPctShown();
@@ -12372,12 +12505,17 @@ public:
           dumpVlog(); buzz(30, 2); waitAllRelease();
           continue;
         }
+      #if DISPLAY_LAB
         // a short press: the display lab
         labRun();
         guiState = WATCHFACE_STATE;
         RTC.read(currentTime);
         showFaceFull();
         return;
+      #else
+        waitAllRelease();               // a short press: nothing, by design
+        continue;
+      #endif
       }
       if (p == UP_BTN_PIN && heldFor(UP_BTN_PIN, 900)) {
         // teach the watch what a terminated charge reads on this board
@@ -12871,14 +13009,11 @@ public:
 
       if (checkAlarms()) redraw = true;      // the dock polls on its own
 
-      // ANY BUTTON: OK on an alarm screen, here as on the wrist
-      if (evQueue && evShown && !qrOnGlass() &&
-          (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
-           digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
-           digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
-           digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE)) {
-        dismissEvent();
-        waitAllRelease();
+      // ANY BUTTON: OK on an alarm screen, here as on the wrist (and UP on a
+      // celebration plays it again)
+      int ep = (evQueue && evShown && !qrOnGlass()) ? pressedNow() : -1;
+      if (ep >= 0) {
+        eventPress(ep);
         buttonWake = true;
         drawWatchFace();
         partialRefresh();
@@ -13071,12 +13206,15 @@ public:
     if (guiState == WATCHFACE_STATE && !evQueue && !qrOnGlass() &&
         maybeDateCard()) return;             // the day's first press: the card
     // ANY BUTTON: OK. The press acknowledges the alarm on the glass and does
-    // nothing else; the next one waiting (or the face) takes its place.
+    // nothing else; the next one waiting (or the face) takes its place. UP on
+    // a celebration plays it again instead, and the card stays (eventPress).
     if (evQueue && guiState == WATCHFACE_STATE && !qrOnGlass()) {
-      if (evShown) dismissEvent();     // only what has actually been seen
       pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
       pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
-      waitAllRelease();
+      int pin = (wake & MENU_BTN_MASK) ? MENU_BTN_PIN
+              : (wake & BACK_BTN_MASK) ? BACK_BTN_PIN
+              : (wake & UP_BTN_MASK)   ? UP_BTN_PIN : DOWN_BTN_PIN;
+      if (eventPress(pin)) return;     // only what has actually been seen
       RTC.read(currentTime);
       showFaceFull();
       return;
@@ -13140,7 +13278,14 @@ public:
         lastTimeout = millis();          // and stay awake for what comes next
       }
       else {
-        if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        // a card up (a menu left, a fetch that found something): the press
+        // is the card's, as on the wake above, not the face's beneath it
+        int ep = (guiState == WATCHFACE_STATE && evQueue && !qrOnGlass())
+                 ? pressedNow() : -1;
+        if (ep >= 0) {
+          if (!eventPress(ep)) { RTC.read(currentTime); showFaceFull(); }
+          lastTimeout = millis();      // from the end: a replay runs seconds
+        } else if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
           lastTimeout = millis();
           if (guiState == MAIN_MENU_STATE) dispatchMenu();
           else if (guiState == WATCHFACE_STATE) {

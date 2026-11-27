@@ -349,11 +349,10 @@ nav .div{color:var(--orange);font-weight:400}
   <p class="standfirst second">No app, no account, no custodian.<br>
     Feel the pulse of the timechain.</p>
   <div class="acts">
-    <a class="cta" href="#genesis">Reserve a Genesis Nº</a>
-    <a class="cta ghost" href="mailto:hello@bwatch.xyz?subject=STANDARD%20EDITION">Shop a standard edition</a>
+    <a class="cta" href="#edition">Order the bw–1</a>
   </div>
-  <p class="say">Genesis 21 is the first edition. Further editions to follow.<br>
-    Say <a href="mailto:hello@bwatch.xyz">hello@btctech.xyz</a></p>
+  <p class="say">Made to order.<br>
+    Say <a href="mailto:hello@bwatch.xyz">hello@bwatch.xyz</a></p>
   </div>
   <div class="hero-img" style="background-image:url('img/hero.jpg')"></div>
 </div>
@@ -362,8 +361,8 @@ nav .div{color:var(--orange);font-weight:400}
   <div class="chead"><div class="cnum">00</div><div><h2>Abstract</h2></div></div>
   <p>BWATCH is a wearable instrument for the timechain. It shows the
     height of the Bitcoin timechain, difficulty epochs, halvings, derives issued supply on-device
-    from the block height, carries a watch-only wallet that holds no key, and vibrates once for every block the
-    network finds — roughly one hundred and forty-four times a day. At the moment this page
+    from the block height, carries a watch-only wallet that holds no key, and buzzes once when it sees the chain
+    advance. At the moment this page
     loaded, the tip stood at <span class="live" id="tipa">······</span>.</p>
 
   <div class="chead"><div class="cnum">01</div><div><h2>Introduction</h2></div></div>
@@ -375,20 +374,23 @@ nav .div{color:var(--orange);font-weight:400}
     operator and without permission</b>.</p>
   <p>It has never been early. It has never been late. It has simply continued.</p>
   <p>This is a watch for that clock. <b>It is not a smartwatch.</b> No apps, no notifications, no
-    account, no cloud, no opinion about your step count. Nine instrument modes, four buttons, and
-    one job: to put the state of Bitcoin on your wrist.</p>
+    account, no cloud, no opinion about your step count. Twelve instruments built in, four buttons, and
+    one job: to put the state of Bitcoin on your wrist. Ten are in the cycle out of the box.</p>
   
 
 
 
   <div class="chead"><div class="cnum">02</div><div><h2>The instrument</h2></div></div>
-  <h3>Nine modes.<br><em>One face.</em></h3>
+  <h3>Twelve modes.<br><em>Ten in the cycle.</em></h3>
   <ul>
     <li><b>HGT</b><span>block height, with the last block's reward, the pool that found it, the retarget
-      estimate, the chain's measured minutes per block, how long the current block has stood, and
-      the mempool backlog.</span></li>
-    <li><b>PRC</b><span>price, in six currencies.</span></li>
-    <li><b>SAT</b><span>satoshis per unit of fiat, with Moscow Time in the box.</span></li>
+      estimate, the chain's measured minutes per block, the transactions it carried, the hashrate,
+      and the mempool backlog.</span></li>
+    <li><b>MEM</b><span>the mempool: what is waiting, what the last block carried and paid,
+      the chain's measured pace, the retarget, the hashrate.</span></li>
+    <li><b>PRC</b><span>price, in twenty currencies &mdash; six of them on the dial out of the
+      box, the rest switched on in My Watch &rsaquo; Currency.</span></li>
+    <li><b>SAT</b><span>satoshis per unit of fiat, with one satoshi in that currency in the box.</span></li>
     <li><b>CAP</b><span>market capitalisation, and what share of gold's it has taken.</span></li>
     <li><b>FEE</b><span>sat/vB at high, medium and low priority, to two decimals — a quiet mempool runs
       below one sat per byte, and 0.25 is not 0.</span></li>
@@ -397,6 +399,10 @@ nav .div{color:var(--orange);font-weight:400}
     <li><b>HLV</b><span>the halving almanac: dates and subsidies for the next six halvings.</span></li>
     <li><b>WAL</b><span>balance, receive QR, Lightning QR, and the last payment received. Hold DOWN to
       hide the numbers.</span></li>
+    <li><b>MKT</b><span>the fiat markets compared with bitcoin &mdash; S&amp;P 500, Nasdaq 100,
+      Dow, oil, the US ten-year yield and the dollar index. Hidden until you turn it on.</span></li>
+    <li><b>BSK</b><span>the basket: US home and grocery prices in bitcoin and sats, plus US M2
+      growth against bitcoin's annualised issuance rate. Hidden until you turn it on.</span></li>
     <li><b>JOE</b><span>time, day, date. Nothing else — for when you would rather not be asked what
       you are wearing.</span></li>
   </ul>
@@ -411,7 +417,7 @@ nav .div{color:var(--orange);font-weight:400}
 <div class="figpair four">
   <figure>
     <img loading="lazy" decoding="async" src="img/fig1-price.jpg" alt="Price mode in raking light">
-    <figcaption><b>FIG. 1</b> &nbsp; PRC mode. 71,691 USD per coin, up 8.6% on the day. Six currencies sit on the dial.</figcaption>
+    <figcaption><b>FIG. 1</b> &nbsp; PRC mode. 71,691 USD per coin, up 8.6% on the day. Twenty currencies on the watch, six on the dial out of the box.</figcaption>
   </figure>
   <figure>
     <img loading="lazy" decoding="async" src="img/fig2-supply.jpg" alt="Supply mode, percent of 21 million mined">
@@ -431,9 +437,10 @@ nav .div{color:var(--orange);font-weight:400}
   <h3>Measured, <em>not promised.</em></h3>
   <dl>
     <dt>Block height</dt>
-    <dd>On a network the height is exact — fetched, not inferred, and refreshed every fifteen
-      minutes. Off it, the watch falls back to dead reckoning: it counts forward at the epoch's
-      measured block time, and the face
+    <dd>While the height data is fresh, the watch shows the height it fetched, not one it inferred,
+      and refreshes it about every fifteen minutes on the default battery setting. Once that data has gone
+      stale, the watch can fall back to dead reckoning: it counts forward at the epoch's
+      measured block time and, past the next retarget, at the projected new pace, and the face
       stops claiming to know the tip — the unit line becomes an estimate with its own error bar,
       <b>EST +36 BLK +/-6</b> after six hours offline. Blocks arrive as a Poisson process, so the
       uncertainty grows as the square root of the blocks estimated: six hours of guessing is
@@ -442,12 +449,13 @@ nav .div{color:var(--orange);font-weight:400}
       number that is quietly wrong.</dd>
     <dt>Payment detection</dt>
     <dd>Press UP in wallet mode and the receive QR appears — a watch-only wallet cannot spend, but
-      it can be paid. The watch then stands watch for two minutes, polling the address it just
-      showed, and buzzes the moment sats land. This works even in a parking lot at 1.3% battery.</dd>
+      it can be paid. On the wrist and with network access, the on-chain receive QR starts a
+      two-minute watch for incoming funds. If nothing is detected, it can check again at later
+      fetches for up to an hour. The watch can buzz when it detects a payment, including one not
+      yet confirmed. A buzz is not a confirmation.</dd>
     <dt>Lightning</dt>
-    <dd>LNURL-enabled: press UP again and the watch requests an invoice from your Lightning
-      address, renders it, and polls for settlement. Where the provider supports LNURL-verify it
-      buzzes three times within seconds of being paid.</dd>
+    <dd>Press UP again for a configured Lightning address or offer. The watch shows it as a QR;
+      as shipped, it does not detect Lightning payments.</dd>
     <dt>Supply</dt>
     <dd>Computed on the watch from block height alone. No API is involved; the height is the calendar.</dd>
     <dt>Privacy</dt>
@@ -461,23 +469,16 @@ nav .div{color:var(--orange);font-weight:400}
     <dd>Watch-only, from a zpub. It derives addresses; it cannot sign. Losing the watch loses nothing.</dd>
   </dl>
 
-  <div class="chead" id="genesis"><div class="cnum">04</div><div><h2>Editions</h2></div></div>
-  <h3>Two editions.<br>Both <em>made to order.</em></h3>
-  <p>Both are open now. Genesis 21 is twenty-one units in orange anodised aluminium, machined and
-    finished in a single batch, numbered 1 to 21; each caseback is engraved with its number and
-    the block that confirmed its payment, so every watch is a timestamp of its own purchase. When
-    the twenty-one are gone they are gone. The standard edition is natural bead-blasted aluminium,
-    unnumbered, running the same firmware and carrying the same instrument.</p>
+  <div class="chead" id="edition"><div class="cnum">04</div><div><h2>Edition</h2></div></div>
+  <h3>One watch.<br><em>Made to order.</em></h3>
+  <p>The bw&ndash;1 is natural bead-blasted aluminium, unnumbered, running the open firmware and
+    carrying the instrument described above.</p>
   <dl>
-    <dt>Genesis 21 — <mark class="hl">1,000,000 sats</mark></dt>
-    <dd>Orange anodised, numbered, block-engraved caseback. Twenty-one units, then never again.
-      Three weeks lead time.</dd>
-    <dt>Standard edition — <mark class="hl">500,000 sats</mark></dt>
-    <dd>Natural bead-blasted aluminium, unnumbered. Built in batches as orders come in.
+    <dt>BWATCH bw&ndash;1 &mdash; <mark class="hl">5,000,000 sats</mark></dt>
+    <dd>Natural bead-blasted aluminium. Built in batches as orders come in.
       Four to six weeks lead time.</dd>
   </dl>
-  <p>Reserve a number at
-    <a href="mailto:hello@bwatch.xyz?subject=GENESIS%2021">hello@btctech.xyz</a>.</p>
+  <p>Order at <a href="mailto:hello@bwatch.xyz?subject=BWATCH%20bw-1">hello@bwatch.xyz</a>.</p>
   <p><b>Nothing is held in stock.</b> Each watch is assembled, flashed and field-verified by hand
     after it is paid for. <b>Pure proof of work.</b></p>
   <p>Priced in satoshis, paid in bitcoin, on-chain or over Lightning. No cards, no accounts,
@@ -490,8 +491,8 @@ nav .div{color:var(--orange);font-weight:400}
     <dt>Display</dt><dd>200 × 200 one-bit e-paper, 27.6 mm active. No backlight. Holds its image
       with the power off.</dd>
     <dt>Platform</dt><dd>Watchy by SQFMI, open hardware. ESP32-S3, WiFi, RTC, accelerometer.</dd>
-    <dt>Timekeeping</dt><dd>RTC disciplined by NTP every six hours. Block height is fetched, never inferred, while the network is reachable.</dd>
-    <dt>Haptics</dt><dd>One tick per block. Two quick pulses for a $1,000 rise, one long for a fall.</dd>
+    <dt>Timekeeping</dt><dd>RTC disciplined by NTP every six hours. Block height is the fetched height until that data has gone stale.</dd>
+    <dt>Haptics</dt><dd>One buzz when it sees the chain advance (on out of the box; Haptics &rsaquo; Block turns it off), however many blocks it missed since the last look. Two quick pulses for a $1,000 rise, one long for a fall.</dd>
     <dt>Battery</dt><dd>Multi-day on the wrist, deep sleep between minutes. Always awake when docked.</dd>
     <dt>Data</dt><dd>mempool.space, blockstream.info, Coinbase market data, alternative.me —
       or your own node.</dd>
@@ -601,7 +602,7 @@ nav .div{color:var(--orange);font-weight:400}
     <a href="https://mempool.space">mempool.space</a>. Drawings generated from
     the machined part; see the <a href="bwatch-3d.html">viewer</a>.</p>
   <p>Firmware and this page are MIT licensed. <b>Build your own</b>: everything is on
-    <a href="https://github.com">GitHub</a>, free, forever. The editions are for people who would
+    <a href="https://github.com">GitHub</a>, free, forever. The watch is for people who would
     rather have one made.</p>
   <p>No cookies, no trackers, no accounts. This page is one hand-written file.</p>
 

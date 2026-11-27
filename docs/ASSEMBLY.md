@@ -6,11 +6,15 @@ the one that makes the percentage meaningful, so it is not optional.
 - [ ] Flash `firmware/BitcoinChronograph`
 - [ ] Charge to full on a wall adapter (corner reads `CHG`, then `DOCK` above 95%)
 - [ ] About → **hold UP** to store this board's full-charge reading
-- [ ] Setup WiFi — confirm `Keys 1 of 3` in About
+- [ ] Setup WiFi — confirm the watch reports `Saved to keychain.`, then that About's `Net` line shows
+      that network and not `none`
 - [ ] Setup Wallet with a test zpub, confirm a balance, then clear it
 - [ ] Set Timezone
-- [ ] Walk every mode: HGT PRC SAT CAP FEE SUP HLV WAL JOE
-- [ ] Turn every dial: HGT has seven stops until block 1,000,000, six after
+- [ ] Walk every face in the cycle: HGT MEM PRC SAT CAP FEE SUP HLV WAL JOE (ten;
+      the strip shows them as HG ME PR SA CA FE SU HL WA JO)
+- [ ] My Watch › Faces: turn on MKT and BSK, walk both, then turn them **off**
+      again — they ship hidden
+- [ ] Turn every dial: HGT and MEM have seven stops each
 - [ ] Long-press UP — corner should read `FTCH`, then the face refreshes
 - [ ] Time Travel: forward, back, and **hold BACK** to come home
 - [ ] Wear it one day; note the percentage before and after
@@ -27,6 +31,7 @@ the one that makes the percentage meaningful, so it is not optional.
 | Core | 2.0.17 |
 | Upload speed | 115200 |
 | Libraries | the versions pinned in `firmware/ci/libraries.txt` |
+| Bench flags | none: `DISPLAY_LAB` stays `0` in a customer unit |
 
 CI compiles every firmware PR with these settings (`firmware/ci/build.sh`).
 Each run's artifacts include flashable images and a `FLASH.txt` that names the
