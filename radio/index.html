@@ -215,13 +215,14 @@ footer a:hover{color:var(--ink)}
       <details class="sound-guide" id="soundGuide">
         <summary>What you're hearing</summary>
         <div class="map">
-          <div><b>Static</b><p>The hiss under everything. It rises the longer the chain goes without a block, and levels off.</p></div>
-          <div><b>Whistle</b><p>A thin tone that climbs in pitch with the same wait. It says how long since the last block. It predicts nothing.</p></div>
-          <div><b>Crackle</b><p>Random pops, timed by chance. The more transactions waiting in the mempool, the more of them per second. If a refresh fails, it keeps the last count. A fixed rate plays only until the first count arrives. Recorded blocks use transaction counts from the recording instead.</p></div>
+          <div><b>Static</b><p>The hiss under everything. It resets when a block arrives, then rises the longer the chain goes without one, and levels off.</p></div>
+          <div><b>Whistle</b><p>A thin tone that resets with the static and climbs in pitch as the wait grows. It says how long since the last block. It predicts nothing.</p></div>
+          <div><b>Crackle</b><p>Random pops, timed by chance. The more transactions waiting in the mempool, the more of them per second. If a refresh fails, it keeps the last count. A fixed rate plays only until the first count arrives. A new block does not reset it; it follows the backlog. Recorded blocks use transaction counts from the recording instead.</p></div>
           <div><b>Call sign</b><p>Each block opens with a short Morse call sign drawn from its hash. The same block always sends the same one. Recorded blocks use a stand-in hash, so theirs are stand-ins too.</p></div>
           <div><b>Three pips</b><p>Three pips cue the block height, read digit by digit in two groups.</p></div>
-          <div><b>Organ</b><p>A faint chord chosen by the block's hash. While you wait, it revisits the chords of up to the last eight blocks. Two blocks can land on the same chord.</p></div>
-          <div><b>Retune</b><p>On a difficulty adjustment: a sweep across the band, QSY in Morse, then a new key. Countdowns to the next one are read out.</p></div>
+          <div><b>Organ</b><p>A faint four-tone chord chosen by the block's hash. The hash also leans toward one of three voicings: midrange, open or upper. The organ moves to it by small steps where it can. While waiting for a new block, it revisits the chords, in their chosen voicings, of up to the last eight blocks. The station's set of chords is finite, so one can come round again.</p></div>
+          <div><b>New chords</b><p>Until block 979,776 the station plays eight chords. At that adjustment, and at each of the next fifteen, it adds one that was written in advance: sixteen in all, twenty-four chords by block 1,010,016. Earlier ones stay. After the last, the set stops growing and the station keeps retuning. Recorded blocks from before 979,776 play the original eight.</p></div>
+          <div><b>Retune</b><p>On a difficulty adjustment: a sweep across the band, QSY in Morse, then a new key. When the adjustment adds a chord, the organ holds it through the transmission and for eight seconds after sign-off, with the hiss and whistle kept low. Countdowns to the next adjustment are read out.</p></div>
           <div><b>Hush</b><p>On a halving: the line dips for a moment, QRT in Morse, then the organ sits an octave lower. Countdowns are read out here too.</p></div>
         </div>
         <p class="note">No prices anywhere in the music. Blocks and transactions only.</p>
@@ -374,13 +375,67 @@ const CH={"Dmaj9":[38,[54,57,61,64]],"Bm11":[35,[50,54,57,64]],"Gmaj7#11":[43,[4
 const NEXT={"Dmaj9":["Bm11","Gmaj7#11","Em9","D/F#","Cmaj9"],"Bm11":["Gmaj7#11","Em9","F#m7","Dmaj9"],
 "Gmaj7#11":["Dmaj9","Em9","Asus","D/F#"],"Em9":["Asus","Gmaj7#11","Bm11","Cmaj9"],"Asus":["Dmaj9","Bm11","F#m7","D/F#"],
 "F#m7":["Bm11","Gmaj7#11","Em9"],"Cmaj9":["Dmaj9","Gmaj7#11","Em9"],"D/F#":["Gmaj7#11","Em9","Bm11","Dmaj9"]};
+// Shortwave's opening repertoire is anchored to epoch 485, not to this browser's first visit.
+// One authored colour unlocks per later epoch. After this finite score ends, keep its whole palette;
+// key changes continue, but no existing chord is silently relabelled as a new addition.
+const ORGAN_BASE_EPOCH=485,ORGAN_BASE_NAMES=Object.keys(CH);
+const ORGAN_VOICES={
+  "Dmaj9":[[62,66,73,76],[62,73,76,78],[66,73,74,76]],
+  "Bm11":[[59,62,69,76],[59,69,74,76],[62,69,71,76]],
+  "Gmaj7#11":[[67,71,73,78],[55,71,73,78],[71,73,78,79]],
+  "Em9":[[64,67,74,78],[64,74,78,79],[67,74,76,78]],
+  "Asus":[[57,62,67,71],[57,67,71,74],[62,67,69,71]],
+  "F#m7":[[66,69,73,76],[54,69,73,76],[69,73,76,78]],
+  "Cmaj9":[[60,64,71,74],[60,71,74,76],[64,71,72,74]],
+  "D/F#":[[66,69,74,76],[54,69,74,76],[66,74,76,81]]
+};
+const ORGAN_ADDITIONS=[
+  {name:"Gm6",ch:[43,[58,62,64,67]],voices:[[67,70,74,76],[55,70,74,76],[70,74,76,79]],from:["Dmaj9","Gmaj7#11","Cmaj9","D/F#"],to:["Dmaj9","Em9","Asus"]},
+  {name:"A7b9",ch:[45,[61,64,67,70]],voices:[[57,61,67,70],[57,67,70,73],[61,67,69,70]],from:["Em9","Bm11","Asus"],to:["Dmaj9","Bm11","D/F#"]},
+  {name:"Dmaj13",ch:[38,[54,57,59,61,64]],voices:[[62,66,71,73],[62,71,73,78],[66,71,73,74]],from:["Bm11","Em9","F#m7"],to:["Bm11","Gmaj7#11","Em9","Asus"]},
+  {name:"Bm9",ch:[35,[50,54,57,61]],voices:[[59,62,69,73],[59,69,73,74],[62,69,71,73]],from:["Dmaj9","F#m7","D/F#"],to:["Em9","Gmaj7#11","Asus"]},
+  {name:"Em9b13",ch:[40,[55,59,62,66,72]],voices:[[64,67,72,74],[64,72,74,79],[67,72,74,76]],from:["Dmaj9","Gmaj7#11","Bm11"],to:["Asus","F#m7","Cmaj9"]},
+  {name:"Gmaj9",ch:[43,[59,62,66,69]],voices:[[67,71,78,81],[55,71,78,81],[66,69,71,79]],from:["Dmaj9","Bm11","D/F#"],to:["Em9","Dmaj9","Asus"]},
+  {name:"A13sus",ch:[45,[62,64,67,71,78]],voices:[[57,62,67,78],[57,67,74,78],[62,67,69,78]],from:["Em9","Gmaj7#11","Bm11"],to:["Dmaj9","F#m7","D/F#"]},
+  {name:"F#m9",ch:[42,[57,61,64,68]],voices:[[66,69,76,80],[54,69,76,80],[64,68,69,78]],from:["Dmaj9","Asus","D/F#"],to:["Bm11","Gmaj7#11","Em9"]},
+  {name:"Cmaj7#11",ch:[36,[52,55,59,66]],voices:[[60,64,71,78],[60,71,76,78],[64,71,72,78]],from:["Em9","Gmaj7#11","Cmaj9"],to:["Dmaj9","Gmaj7#11","Em9"]},
+  {name:"E7b9",ch:[40,[56,59,62,65]],voices:[[64,68,74,77],[64,74,77,80],[68,74,76,77]],from:["Bm11","F#m7","Em9"],to:["Asus","Dmaj9","Cmaj9"]},
+  {name:"Bbmaj7#11",ch:[46,[62,65,69,76]],voices:[[58,62,69,76],[58,69,74,76],[62,69,70,76]],from:["Cmaj9","Gmaj7#11","Dmaj9"],to:["Dmaj9","Asus","Em9"]},
+  {name:"Dm9",ch:[38,[53,57,60,64]],voices:[[62,65,72,76],[62,72,76,77],[65,72,74,76]],from:["Dmaj9","Cmaj9","Asus"],to:["Cmaj9","Gmaj7#11","Dmaj9"]},
+  {name:"Fmaj9",ch:[41,[57,60,64,67]],voices:[[65,69,76,79],[65,76,79,81],[64,67,69,77]],from:["Cmaj9","Em9","Gmaj7#11"],to:["Cmaj9","Em9","Asus"]},
+  {name:"B7b13",ch:[47,[63,66,69,79]],voices:[[59,63,69,79],[59,69,75,79],[63,69,71,79]],from:["F#m7","Bm11","Dmaj9"],to:["Em9","Asus","Cmaj9"]},
+  {name:"Ebmaj9",ch:[39,[55,58,62,65]],voices:[[63,67,74,77],[63,74,77,79],[67,74,75,77]],from:["Cmaj9","Gmaj7#11","Em9"],to:["Dmaj9","Cmaj9","Asus"]},
+  {name:"Am9",ch:[45,[60,64,67,71]],voices:[[57,60,67,71],[57,67,71,72],[60,67,69,71]],from:["Cmaj9","Em9","Gmaj7#11"],to:["Dmaj9","Em9","Asus"]}
+];
+for(const a of ORGAN_ADDITIONS){CH[a.name]=a.ch;ORGAN_VOICES[a.name]=a.voices}
+function organCount(h){return Math.max(0,Math.min(ORGAN_ADDITIONS.length,Math.floor(h/2016)-ORGAN_BASE_EPOCH))}
+function organPalette(h){return ORGAN_BASE_NAMES.concat(ORGAN_ADDITIONS.slice(0,organCount(h)).map(a=>a.name))}
+function newOrganChord(h){const n=Math.floor(h/2016)-ORGAN_BASE_EPOCH;return h%2016===0&&n>0&&n<=ORGAN_ADDITIONS.length?ORGAN_ADDITIONS[n-1].name:null}
+function blockChord(cur,by,h){
+  if(st!=="shortwave")return nextChord(cur,by);
+  const debut=newOrganChord(h);if(debut)return debut;
+  const base=NEXT[cur]||(ORGAN_ADDITIONS.find(a=>a.name===cur)||{}).to||NEXT.Dmaj9;
+  const extra=ORGAN_ADDITIONS.slice(0,organCount(h)).filter(a=>a.from.includes(cur)).map(a=>a.name);
+  const choices=extra.length?base.concat(base,extra):base;
+  return choices[by[0]%choices.length];
+}
+function organNotes(ch,index,h){return ORGAN_VOICES[ch][index].map(m=>m+keyFor(h)+octFor(h))}
+function organVariant(ch,by,h,previous){
+  // Midrange/open are the foundation; the upper inversion is a rarer hash choice.
+  const preferred=[0,0,0,0,1,1,1,2][by[7]%8];if(!previous)return preferred;
+  const old=organNotes(previous.chord,previous.organ||0,previous.height);
+  let best=preferred,score=Infinity;
+  ORGAN_VOICES[ch].forEach((_,i)=>{const ns=organNotes(ch,i,h),movement=ns.reduce((s,n,j)=>s+Math.abs(n-old[j]),0);
+    const cost=movement+(i===preferred?0:16);if(cost<score){score=cost;best=i}});
+  return best;
+}
 const PENT=[62,64,66,69,71,74,76,78,81,83,86];
 const NAMES=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
 const mtof=m=>440*Math.pow(2,(m-69)/12);
 async function sha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return new Uint8Array(b)}
 // a block's bytes: SHA-256 of its hash (with no hash: of its height, the stand-in)
 const songBytes=b=>sha(b.hash||String(b.height));
-function nextChord(cur,by){const n=NEXT[cur];return n[by[0]%n.length]}
+function nextChord(cur,by){const n=NEXT[cur]||(ORGAN_ADDITIONS.find(a=>a.name===cur)||{}).to||NEXT.Dmaj9;return n[by[0]%n.length]}
 function motif(by,chord){
   const tones=CH[chord][1].map(m=>m%12);let idx=4+by[1]%4;const n=5+by[2]%3;const out=[];
   for(let j=0;j<n;j++){const hi=by[3+j]>>4,lo=by[3+j]&15;
@@ -439,7 +494,7 @@ function octFor(h){return Math.max(-24,Math.min(24,-12*(Math.floor(h/210000)-4))
 function setKeyFor(h){keyShift=keyFor(h);octShift=octFor(h)}
 // ---------- a held chord, with one filter the wait opens ----------
 const PADS={sunday:[380,2600],deep:[180,900],musicbox:[1200,600],shortwave:[900,700],heart:[500,500]};
-function makePad(chord,st,t){
+function makePad(chord,st,t,organ=0){
   if(!PADS[st]) return null;
   const T=keyShift+octShift;const bass=CH[chord][0]+T,up=CH[chord][1].map(m=>m+T);const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(1,t+3);
   const f=ctx.createBiquadFilter();f.type="lowpass";f.Q.value=0.6;f.frequency.value=PADS[st][0];f.connect(g);g.connect(bus);
@@ -448,7 +503,8 @@ function makePad(chord,st,t){
   if(st==="sunday") notes.forEach((m,i)=>{add("sawtooth",mtof(m),-6,0.016);add("sawtooth",mtof(m),6,0.016);add("sine",mtof(m),0,i?0.03:0.05)});
   if(st==="deep") notes.forEach((m,i)=>{const mm=i?m-12:m;add("triangle",mtof(mm),-4,0.05);add("sine",mtof(mm),5,0.05)});
   if(st==="musicbox") up.forEach(m=>add("sine",mtof(m+12),0,0.012));
-  if(st==="shortwave") [bass+24,up[1]+12,up[2]+12].forEach(m=>add("square",mtof(m),0,0.01));   // up an octave: small speakers barely play the old register
+  if(st==="shortwave"){const ns=ORGAN_VOICES[chord][organ],level=0.01*Math.sqrt(3/ns.length);
+    ns.forEach(m=>add("square",mtof(m+T),0,level))}   // composed mid/open/upper shapes; the key and halving register still apply
   if(st==="heart"){            // a hum: voices through two vowel formants
     const f1=ctx.createBiquadFilter(),f2=ctx.createBiquadFilter();f1.type=f2.type="bandpass";f1.frequency.value=320;f2.frequency.value=820;f1.Q.value=f2.Q.value=4;
     f1.connect(f);f2.connect(f);up.slice(0,3).forEach(m=>{add("sawtooth",mtof(m-12),-3,0.05,f1);add("sawtooth",mtof(m-12),3,0.03,f2)})}
@@ -464,8 +520,8 @@ function startBed(st){
   const nodes=[],gains={};
   const chain=(src,list,name,level)=>{let n=src;list.forEach(x=>{n.connect(x);n=x});const g=ctx.createGain();g.gain.value=level;n.connect(g);g.connect(bus);gains[name]=g;nodes.push(src)};
   const filt=(type,fq,q)=>{const f=ctx.createBiquadFilter();f.type=type;f.frequency.value=fq;f.Q.value=q;return f};
-  if(st==="shortwave"){chain(loopSrc(noise),[filt("bandpass",1400,0.5)],"hiss",0.014);
-    const w=ctx.createOscillator();w.frequency.value=900;w.start();chain(w,[],"whistle",0.004);gains.whistleOsc=w}
+  if(st==="shortwave"){chain(loopSrc(noise),[filt("bandpass",1400,0.5)],"hiss",0);
+    const w=ctx.createOscillator();w.frequency.value=900;w.start();chain(w,[],"whistle",0);gains.whistleOsc=w}
   if(st==="nature"){
     chain(loopSrc(brown),[filt("lowpass",300,0.7)],"roof",0.02);
     const wf=filt("bandpass",350,1.2);chain(loopSrc(noise),[wf],"wind",0.01);gains.windF=wf}
@@ -477,7 +533,8 @@ function stopBed(){ if(!bed) return; const now=ctx.currentTime;
   Object.values(bed.gains).forEach(g=>{if(g.gain) g.gain.setTargetAtTime(0,now,0.3)});
   bed.nodes.forEach(n=>{try{n.stop(now+1.5)}catch(e){}}); bed=null}
 function bedTick(ten,rain,now){ if(!bed) return; const G=bed.gains;
-  if(bed.st==="shortwave"){G.hiss.gain.setTargetAtTime(0.014+0.018*ten,now,0.5);G.whistleOsc.frequency.setTargetAtTime(900+700*ten,now,2)}
+  if(bed.st==="shortwave"){const x=now<organIntroUntil?0:ten;
+    G.hiss.gain.setTargetAtTime(0.032*x,now,0.5);G.whistle.gain.setTargetAtTime(0.004*x,now,0.5);G.whistleOsc.frequency.setTargetAtTime(900+700*x,now,2)}
   if(bed.st==="nature"){const r=Math.min(1,(rain-1)/10);
     const rec=OBUF.nature&&OBUF.nature.rain;
     if(rec&&!G.rec){const s=ctx.createBufferSource();s.buffer=rec;s.loop=true;const f=ctx.createBiquadFilter();f.type="lowpass";f.frequency.value=4000;f.Q.value=0.5;
@@ -814,8 +871,8 @@ writeLofi(new Uint8Array(32),"Dmaj9",3000);writeNight(new Uint8Array(32),"Dmaj9"
 // ---------- what each station does when a block lands ----------
 function playBlock(st,b,notes,t,by,chord,close){
   if(st==="shortwave"){   // blocks faster than a transmission (fast replay): just the pips, so they never pile up
-    if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return}
-    swBusy=transmit(b.height,by,t,{adjPct:adjResult()})+0.5;return}
+    if(t<swBusy){for(let i=0;i<3;i++) tone("sine",1000,t+i*0.32,0.005,0.12,0.04);return swBusy-0.5}
+    const end=transmit(b.height,by,t,{adjPct:adjResult()});swBusy=end+0.5;return end}
   if(st==="nature"){const size=Math.min(1,(b.tx||3000)/7000);let d;
     if(OBUF.nature&&OBUF.nature["thunder"+(by[30]%4)]){d=0.35+(1-close)*3.2;shot("nature","thunder"+(by[30]%4),t+d-0.9,(0.35+0.65*size)*(0.55+0.45*close),0,out)}
     else d=thunder(t,size,close);bolt(d);
@@ -857,13 +914,14 @@ const USES_PULSE={sunday:1,musicbox:1,deep:1},USES_GRAIN={lofi:1,sunday:1,musicb
 // ---------- the clock: live or tonight's replay ----------
 const $=id=>document.getElementById(id);
 let mode="live",speed=60,st="shortwave",playing=false,curChord="Dmaj9",pad=null;
+let currentOrgan=0,organIntroUntil=0;
 let chain=TONIGHT.slice(),lastIdx=-1,liveOk=null,mempoolCount=null,rStart=0,rVirt0=0;
 let nextBlip=0,nextGrain=0,timer=null,poll=null,playbackRun=0;
 function virtNow(){return mode==="live"?Date.now():rVirt0+(ctx.currentTime-rStart)/speed*60000}
 // Keep miner timestamps for the timeline, not as a moving live-playback clock.
 // A future timestamp starts at zero observed age; a wall-clock correction cannot freeze the wait.
-function liveBlock(b){const time=b.timestamp*1000;
-  return {height:b.height,time,tx:b.tx_count,hash:b.id,waitAge:Math.max(0,(Date.now()-time)/60000),seenAt:performance.now()}}
+function liveBlock(b,arrived=false){const time=b.timestamp*1000;
+  return {height:b.height,time,tx:b.tx_count,hash:b.id,waitAge:arrived?0:Math.max(0,(Date.now()-time)/60000),seenAt:performance.now()}}
 function waitMin(){const b=chain[lastIdx];if(!b)return 0;
   if(mode==="live"&&Number.isFinite(b.seenAt))return b.waitAge+Math.max(0,performance.now()-b.seenAt)/60000;
   return Math.max(0,(virtNow()-b.time)/60000)}
@@ -883,13 +941,13 @@ function bolt(){const b=$("bolt");b.classList.add("on");requestAnimationFrame(()
 // as the wait grows it reaches further back, and each block's chord brings back that block's melody, varied.
 // The next block brings it home and joins the progression; the oldest one leaves it.
 const HIST_MAX=8;let hist=[],harm={next:0,pos:0,count:0};
-function remember(chord,notes,height){hist.push({chord,notes,height});if(hist.length>HIST_MAX)hist.shift();harm.pos=-1}
+function remember(chord,notes,height,organ=0){hist.push({chord,notes,height,organ});if(hist.length>HIST_MAX)hist.shift();harm.pos=-1}
 function harmPeriod(){
   if(st==="lofi") return 8*60/lofi.bpm; if(st==="night") return 8*60/night.bpm;
   if(st==="beats") return 8*60/beat.bpm; if(st==="downstroke") return 16*60/rock.bpm; return 9}
-function setChord(ch,now,fromHeight){
-  if(ch!==curChord){curChord=ch;
-    if(PADS[st]){if(pad)pad.stop(now);pad=makePad(ch,st,now)}
+function setChord(ch,now,fromHeight,organ=0){
+  if(ch!==curChord||(st==="shortwave"&&organ!==currentOrgan)){curChord=ch;currentOrgan=organ;
+    if(PADS[st]){if(pad)pad.stop(now);pad=makePad(ch,st,now,organ)}
     if(st==="downstroke"){let r=CH[ch][0];while(r<40)r+=12;while(r>49)r-=12;rock.root=r;rock.third=ch.includes("sus")?5:(/m(?!aj)/.test(ch)?3:4)}
     if(st==="beats"){beat.root=CH[ch][0]<36?CH[ch][0]+12:CH[ch][0]}}
   $("chord").textContent=ch;$("from").textContent=fromHeight?" · from block "+fmt(fromHeight):""}
@@ -912,28 +970,35 @@ function recall(notes,t){
 function harmonyTick(now,ten){
   if(lastIdx<0||!hist.length) return;
   // A throttled/late tick still performs one change; scheduling ahead here would starve the progression.
-  if(now<harm.next) return;
+  if(now<harm.next||now<organIntroUntil) return;
   const k=Math.max(1,Math.min(hist.length,1+Math.ceil(ten*1.5*(hist.length-1))));const win=hist.slice(-k);
   harm.pos=(harm.pos<0||harm.pos>=win.length-1)?0:harm.pos+1;if(win.length===1)harm.pos=0;
   const it=win[harm.pos],home=harm.pos===win.length-1;
-  setChord(it.chord,now,home?null:it.height);
+  setChord(it.chord,now,home?null:it.height,it.organ);
   if(!home&&Math.random()<0.35+0.5*ten) recall(vary(it.notes,harm.count++),now+0.15);
   harm.next=now+harmPeriod()*(home?1.5:1)}
 async function fireBlock(i,t){
   const run=playbackRun,close=lastIdx<0?0.3:tensionOf(waitMin());
   lastIdx=i;const b=chain[i];showBlock(b);
-  const by=await songBytes(b);if(run!==playbackRun||!playing)return;
-  const nc=nextChord(curChord,by),notes=motif(by,nc);remember(nc,notes,b.height);
-  const now=Math.max(ctx.currentTime,t);
-  setKeyFor(b.height);if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now);$("chord").textContent=nc;$("from").textContent="";
+  const by=await songBytes(b);if(run!==playbackRun||!playing||chain[lastIdx]!==b)return;
+  const previous=hist[hist.length-1],nc=blockChord(previous?previous.chord:curChord,by,b.height),notes=motif(by,nc);
+  const debut=st==="shortwave"&&newOrganChord(b.height),organ=debut?0:organVariant(nc,by,b.height,previous);
+  remember(nc,notes,b.height,organ);
+  const now=Math.max(ctx.currentTime,t);organIntroUntil=0;currentOrgan=organ;
+  setKeyFor(b.height);if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now,organ);$("chord").textContent=nc;$("from").textContent="";
   harm.next=now+harmPeriod()*1.5;harm.pos=-1;
-  playBlock(st,b,notes,now+0.05,by,nc,close);flash();
+  const end=playBlock(st,b,notes,now+0.05,by,nc,close);
+  if(debut){organIntroUntil=Math.max(now,Number.isFinite(end)?end:now)+8;harm.next=organIntroUntil+harmPeriod()*1.5}
+  flash();
 }
 function tick(){
   if(!playing) return;const now=ctx.currentTime;
   if(mode==="replay"){const v=virtNow();
     while(lastIdx+1<chain.length&&chain[lastIdx+1].time<=v) fireBlock(lastIdx+1,now);
-    if(v>chain[chain.length-1].time+8*60000){rVirt0=chain[0].time-90000;rStart=now;lastIdx=-1}}
+    if(v>chain[chain.length-1].time+8*60000){
+      rVirt0=chain[0].time-90000;rStart=now;lastIdx=-1;hist=[];curChord="Dmaj9";currentOrgan=0;organIntroUntil=0;
+      setKeyFor(chain[0].height);if(pad)pad.stop(now);pad=makePad(curChord,st,now,currentOrgan);
+      $("chord").textContent=curChord;$("from").textContent="";harm.next=now+harmPeriod()*1.5;harm.pos=-1}}
   const w=lastIdx<0?0:waitMin(),ten=lastIdx<0?0.05:tensionOf(w),rain=rainRate();
   if(pad) pad.tension(ten,now);
   bedTick(ten,rain,now);
@@ -963,10 +1028,13 @@ async function fetchAdj(run=playbackRun){try{const a=await getJSON(API+"/v1/diff
 function adjResult(){if(mode==="live") return adj&&typeof adj.prev==="number"?adj.prev:null;return replaySet==="demo"?DEMO_ADJ:null}
 async function liveStart(run=playbackRun){
   try{const arr=await getJSON(API+"/v1/blocks");if(run!==playbackRun||mode!=="live")return null;
-    chain=arr.slice().reverse().map(liveBlock);
+    chain=arr.slice().reverse().map(b=>liveBlock(b));
     liveOk=true;curChord="Dmaj9";hist=[];
     for(let i=0;i<chain.length;i++){const by=await songBytes(chain[i]);if(run!==playbackRun||mode!=="live")return null;
-      curChord=nextChord(curChord,by);if(i>=chain.length-HIST_MAX)remember(curChord,motif(by,curChord),chain[i].height);if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
+      const h=chain[i].height,previous=hist[hist.length-1];curChord=blockChord(curChord,by,h);
+      currentOrgan=st==="shortwave"&&newOrganChord(h)?0:organVariant(curChord,by,h,previous);
+      remember(curChord,motif(by,curChord),h,currentOrgan);
+      if(i===chain.length-1){writePattern(by,curChord,chain[i].tx);writeRiff(by,curChord,chain[i].tx);writeLofi(by,curChord,chain[i].tx);writeNight(by,curChord,chain[i].tx)}}
     try{const m=await getJSON(API+"/mempool");if(run===playbackRun)mempoolCount=m.count}catch(e){}
     if(run!==playbackRun||mode!=="live")return null;
     await fetchAdj(run);
@@ -979,7 +1047,7 @@ function livePoll(){const run=playbackRun;let busy=false;clearInterval(poll);pol
         const arr=await getJSON(API+"/v1/blocks");if(run!==playbackRun||!playing)return;
         const known=new Set(chain.map(b=>b.hash));await fetchAdj(run);if(run!==playbackRun||!playing)return;
         for(const nb of arr.slice().reverse().filter(b=>!known.has(b.id))){
-          chain.push(liveBlock(nb));if(chain.length>40)chain.shift();await fireBlock(chain.length-1,ctx.currentTime);
+          chain.push(liveBlock(nb,true));if(chain.length>40)chain.shift();await fireBlock(chain.length-1,ctx.currentTime);
           if(run!==playbackRun||!playing)return}}}catch(e){}
     if(run!==playbackRun||!playing)return;
     try{const m=await getJSON(API+"/mempool");if(run===playbackRun)mempoolCount=m.count}catch(e){}
@@ -1006,15 +1074,15 @@ function draw(){
 function press(group,btn){group.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b===btn?"true":"false"))}
 // a simulated run that lands on a difficulty adjustment and on the next halving, so both can be heard tonight
 const DEMO_ADJ=2.1;
-const DEMO=[975742,975743,975744,975745,1049998,1049999,1050000,1050001].map((h,i)=>({height:h,time:Date.parse("2026-11-08T20:00:00Z")+i*15*60000,tx:3000+(i*977)%3000,hash:null}));
-const DEMO_NOTE="A simulated run: blocks land on the difficulty adjustment at 975,744 and on the halving at 1,050,000, fifteen minutes apart. The blocks and the +2.1% are made up.";
+const DEMO=[979774,979775,979776,979777,1049998,1049999,1050000,1050001].map((h,i)=>({height:h,time:Date.parse("2026-11-08T20:00:00Z")+i*15*60000,tx:3000+(i*977)%3000,hash:null}));
+const DEMO_NOTE="A simulated run: blocks land on the difficulty adjustment at 979,776 and on the halving at 1,050,000, fifteen minutes apart. The blocks and the +2.1% are made up.";
 let replaySet="tonight";
 const LIVE_NOTE=$("srcNote").textContent;
 const REPLAY_NOTE="Tonight's 24 blocks, 975,097 to 975,120 (3:52 to 9:33 PM ET, Nov 8), with their real times and transaction counts. Their songs use a stand-in for each block's hash.";
 function setReplayUI(set="tonight"){mode="replay";replaySet=set;press($("srcSeg"),$(set==="demo"?"srcDemo":"srcReplay"));$("speedRow").hidden=false;$("srcNote").textContent=set==="demo"?DEMO_NOTE:REPLAY_NOTE;
   if(set==="demo"){speed=2;press($("speedSeg"),document.querySelector('#speedSeg [data-speed="2"]'))}}
 async function start(){
-  const run=++playbackRun;
+  const run=++playbackRun;currentOrgan=0;organIntroUntil=0;swBusy=0;
   initAudio();unlockAudio();if(ctx.state!=="running") await ctx.resume();
   if(run!==playbackRun)return;
   playing=true;$("play").classList.add("on");$("play").setAttribute("aria-pressed","true");$("playLabel").textContent="Stop";
@@ -1028,13 +1096,13 @@ async function start(){
   else{chain=(replaySet==="demo"?DEMO:TONIGHT).slice();lastIdx=-1;curChord="Dmaj9";hist=[];rVirt0=chain[0].time-90000;rStart=ctx.currentTime;$("src").textContent=replaySet==="demo"?"Demo · simulated blocks":"Tonight · recorded blocks";showSchedule(chain[0].height-1)}
   setKeyFor(chain[Math.max(0,lastIdx)].height);
   if(pad)pad.stop(ctx.currentTime);
-  pad=makePad(curChord,st,ctx.currentTime);$("chord").textContent=curChord;startBed(st);trim();loadFor(st);
+  pad=makePad(curChord,st,ctx.currentTime,currentOrgan);$("chord").textContent=curChord;startBed(st);trim();loadFor(st);
   harm.next=ctx.currentTime+harmPeriod()*1.5;harm.pos=-1;harm.count=0;
   clearInterval(timer);timer=setInterval(tick,100);tick();presenceOn()}
 function stop(){
   if(playing){playing=false;presenceOff()}
   try{if(unlockEl)unlockEl.pause()}catch(e){}
-  playing=false;playbackRun++;clearInterval(timer);clearInterval(poll);
+  playing=false;playbackRun++;organIntroUntil=0;swBusy=0;clearInterval(timer);clearInterval(poll);
   if(ctx){if(pad){pad.stop(ctx.currentTime);pad=null}stopBed()}try{speechSynthesis.cancel()}catch(e){}
   $("play").classList.remove("on");$("play").setAttribute("aria-pressed","false");$("playLabel").textContent="Play";
   $("waitText").textContent="Press play to listen";$("tension").style.width="0";$("tensionPct").textContent="";draw()}
@@ -1047,7 +1115,7 @@ $("speedSeg").addEventListener("click",e=>{const b=e.target.closest("button");if
   const v=ctx&&playing?virtNow():0;speed=Number(b.dataset.speed);if(playing&&mode==="replay"){rVirt0=v;rStart=ctx.currentTime}});
 $("stations").addEventListener("click",e=>{const b=e.target.closest(".st");if(!b)return;press($("stations"),b);st=b.dataset.st;
   $("stName").textContent=b.querySelector("b").textContent;if(playing&&typeof presenceOn==="function")presenceOn();
-  if(playing){const now=ctx.currentTime;if(pad)pad.stop(now);pad=makePad(curChord,st,now);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
+  if(playing){const now=ctx.currentTime;organIntroUntil=0;if(pad)pad.stop(now);pad=makePad(curChord,st,now,currentOrgan);startBed(st);trim();loadFor(st);beat.next=heart.next=rock.next=lofi.next=night.next=night.hatNext=metro.next=0;if(night.subG)night.subG.gain.setTargetAtTime(0,now,0.05)}});
 // a block's transmission, on Shortwave: static, three pips, the number read out, then its melody as tones on the same line
 function transmission(h,notes,ch,t,by){loadShots("voice");
   const cs=callSign(by),dur=(cs.length+2)*0.75+0.4+1.3+String(h).length*0.62+0.55+(cs.length+1)*0.75+(h%2016===0?8:0)+(h%210000===0?7:0)+2.5;
