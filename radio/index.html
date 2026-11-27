@@ -222,7 +222,7 @@ footer a:hover{color:var(--ink)}
           <div><b>Three pips</b><p>Three pips cue the block height, read digit by digit in two groups.</p></div>
           <div><b>Organ</b><p>A faint four-tone chord chosen by the block's hash. The hash also leans toward one of three voicings: midrange, open or upper. The organ moves to it by small steps where it can. While waiting for a new block, it revisits the chords, in their chosen voicings, of up to the last eight blocks. The station's set of chords is finite, so one can come round again.</p></div>
           <div><b>New chords</b><p>Until block 979,776 the station plays eight chords. At that adjustment, and at each of the next fifteen, it adds one that was written in advance: sixteen in all, twenty-four chords by block 1,010,016. Earlier ones stay. After the last, the set stops growing and the station keeps retuning. Recorded blocks from before 979,776 play the original eight.</p></div>
-          <div><b>Retune</b><p>On a difficulty adjustment: a sweep across the band, QSY in Morse, then a new key. When the adjustment adds a chord, the organ holds it through the transmission and for eight seconds after sign-off, with the hiss and whistle kept low. Countdowns to the next adjustment are read out.</p></div>
+          <div><b>Retune</b><p>On a difficulty adjustment: a sweep across the band, QSY in Morse, then a new key. When the adjustment adds a chord, the organ holds it through the transmission and for up to eight seconds after sign-off, with the hiss and whistle off. Countdowns to the next adjustment are read out.</p></div>
           <div><b>Hush</b><p>On a halving: the line dips for a moment, QRT in Morse, then the organ sits an octave lower. Countdowns are read out here too.</p></div>
         </div>
         <p class="note">No prices anywhere in the music. Blocks and transactions only.</p>
@@ -1211,6 +1211,10 @@ window.addEventListener("pagehide",()=>{if(playing)presenceOff()});
 (function(){const onSite=/bwatch\.xyz$/.test(location.hostname),img=$("watchImg");
   img.src="watch-stone.jpg";img.onerror=()=>{img.closest("figure").hidden=true};
   $("orderForm").addEventListener("submit",e=>{if(!onSite){e.preventDefault();$("orderStatus").textContent="Pre-orders go through on bwatch.xyz/radio. This preview doesn't send anything."}})})();
+// An explicit audition link selects labelled synthetic blocks, never autoplay or fake Live data.
+if(/(?:^|[?&])demo=1(?:&|$)/.test(location.search||"")){
+  $("srcDemo").hidden=false;setReplayUI("demo");$("src").textContent="Demo · simulated blocks";showBlock(DEMO[0]);
+}
 window.addEventListener("resize",draw);
 document.fonts&&document.fonts.ready.then(draw);draw();
 </script>

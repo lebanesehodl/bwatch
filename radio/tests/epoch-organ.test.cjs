@@ -3,11 +3,11 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),{webcrypto}=require('node:crypto');
 const html=fs.readFileSync(process.env.RADIO_SOURCE||path.join(__dirname,'../index.html'),'utf8');
 const source=[...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].at(-1)[1];
-function page(){
+function page(search=''){
   const elements=new Map(),clock={wall:1800000000000,mono:0},canvas=new Proxy({},{get:()=>()=>{}});
   class ClockDate extends Date{static now(){return clock.wall}}
   const el=id=>{if(!elements.has(id))elements.set(id,{textContent:id==='srcNote'?html.match(/<p class="note" id="srcNote">([^<]+)<\/p>/)[1]:'',style:{},classList:{add(){},remove(){}},addEventListener(){},setAttribute(){},querySelectorAll(){return []},getBoundingClientRect(){return {width:800}},getContext(){return canvas},closest(){return {hidden:false}}});return elements.get(id)};
-  const env=vm.createContext({console,crypto:webcrypto,TextEncoder,Uint8Array,Float32Array,Date:ClockDate,performance:{now:()=>clock.mono},Math,Number,Promise,AbortController,setTimeout(){},clearTimeout(){},setInterval(){},clearInterval(){},navigator:{},location:{hostname:'localhost'},requestAnimationFrame:fn=>fn(),getComputedStyle:()=>({getPropertyValue:()=>''}),document:{getElementById:el,querySelectorAll:()=>[],querySelector:()=>el('button')},window:{addEventListener(){},devicePixelRatio:1},speechSynthesis:{cancel(){}}});
+  const env=vm.createContext({console,crypto:webcrypto,TextEncoder,Uint8Array,Float32Array,Date:ClockDate,performance:{now:()=>clock.mono},Math,Number,Promise,AbortController,setTimeout(){},clearTimeout(){},setInterval(){},clearInterval(){},navigator:{},location:{hostname:'localhost',search},requestAnimationFrame:fn=>fn(),getComputedStyle:()=>({getPropertyValue:()=>''}),document:{getElementById:el,querySelectorAll:()=>[],querySelector:()=>el('button')},window:{addEventListener(){},devicePixelRatio:1},speechSynthesis:{cancel(){}}});
   vm.runInContext(source,env);return {env,clock,run:s=>vm.runInContext(s,env),json:s=>JSON.parse(vm.runInContext('JSON.stringify('+s+')',env))};
 }
 function audio(p){p.run(`
@@ -96,6 +96,10 @@ test('live startup reconstructs remembered voicings and starts with the tip key,
 test('looping a future demo back to its beginning clears unlocked-chord memory and the old register',()=>{
   const p=page();audio(p);p.run(`mode='replay';playing=true;chain=[{height:979774,time:1000000,tx:3000},{height:1050000,time:2000000,tx:3000}];lastIdx=1;hist=[{chord:'Am9',notes:[],height:1050000,organ:2}];curChord='Am9';currentOrgan=2;organIntroUntil=999;setKeyFor(1050000);pad=makePad(curChord,st,100,2);rVirt0=2540000;rStart=100;tick()`);
   assert.equal(p.run('lastIdx'),-1);assert.equal(p.run('hist.length'),0);assert.equal(p.run('curChord'),'Dmaj9');assert.equal(p.run('currentOrgan'),0);assert.equal(p.run('organIntroUntil'),0);assert.equal(p.run('octShift'),p.run('octFor(979774)'));
+});
+test('the explicit demo link is labelled as simulation and cannot start audio without a tap',()=>{
+  const p=page('?demo=1');assert.equal(p.run('mode'),'replay');assert.equal(p.run('replaySet'),'demo');assert.equal(p.run('playing'),false);assert.equal(p.run('ctx'),null);assert.equal(p.run('$("src").textContent'),'Demo · simulated blocks');assert.match(p.run('$("srcNote").textContent'),/made up/);assert.equal(p.run('$("srcDemo").hidden'),false);
+  const normal=page();assert.equal(normal.run('mode'),'live');assert.equal(normal.run('ctx'),null);
 });
 test('the old recorded set has no future unlocks and the simulated demo actually crosses the first addition',()=>{
   const p=page();assert.equal(p.run('TONIGHT.every(b=>organPalette(b.height).length===8)'),true);assert.equal(p.run(`DEMO.some(b=>newOrganChord(b.height)==='Gm6')`),true);assert.equal(p.run('DEMO.every(b=>b.hash===null)'),true);
