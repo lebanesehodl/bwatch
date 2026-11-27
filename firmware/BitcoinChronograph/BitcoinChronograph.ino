@@ -11996,8 +11996,24 @@ public:
         showFaceFull();
         return;
       #else
-        waitAllRelease();               // a short press: nothing, by design
-        continue;
+        // TEST IMAGE ONLY (#35's wrist test), never merge: a short DOWN on
+        // About plays the retarget takeover exactly as markMoments() does
+        // when a fetch reads one, and leaves its card waiting for a press.
+        // It uses the held recap; a watch holding none gets OP's epoch 484
+        // as his watch read it (fees and transactions unknown).
+        waitAllRelease();
+        if (evRetEpoch <= 0) {
+          evRetEpoch = 484; evRetChange = 7.61f; evRetDays = 13.0f;
+          evRetMined = 6300; evRetFees = -1; evRetTxs = 0;
+        }
+        Serial.printf("[test] retarget card, epoch %ld\n", evRetEpoch);
+        guiState = WATCHFACE_STATE;
+        RTC.read(currentTime);
+        retargetScreen();
+        fireEvent(EV_RETG);
+        evShown = EV_RETG;
+        eventOnGlass = true;
+        return;
       #endif
       }
       if (p == UP_BTN_PIN && heldFor(UP_BTN_PIN, 900)) {
