@@ -3533,7 +3533,10 @@ public:
 
   // the dial at any size: the face's small EPOC dial, scaled. The arc and
   // ring keep their proportions; the label sits inside when there is room.
-  void drawDialRing(int cx, int cy, int R, float pct, const char *name) {
+  // `word`, when given, takes the name's place inside a big ring and the
+  // number gets its %: the retarget recap reads COMPLETE 100%.
+  void drawDialRing(int cx, int cy, int R, float pct, const char *name,
+                    const char *word = NULL) {
     display.drawCircle(cx, cy, R, cardFg());
     int tk = R > 40 ? 4 : 3;
     for (int a = 0; a < 360; a += 90) {            // the quarter ticks
@@ -3556,7 +3559,9 @@ public:
     char p[8]; snprintf(p, 8, "%d", (int)(pct * 100 + 0.001f));
     display.setFont(NULL); display.setTextSize(1);
     if (R > 40) {
-      char l[16]; snprintf(l, 16, "%s %s", name, p);
+      char l[16];
+      if (word) snprintf(l, 16, "%s %s%%", word, p);
+      else snprintf(l, 16, "%s %s", name, p);
       display.setCursor(cx - (int)strlen(l) * 3, cy + R - 32);
       display.print(l);
     } else {                                       // the face's own layout
@@ -3574,7 +3579,11 @@ public:
     display.setTextColor(cardFg());
     static const int CX[] = {26, 62, 100}, CY[] = {80, 90, 100}, RR[] = {16, 52, 95};
     int k = stage < 2 ? stage : 2;
-    drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "EPOC");
+    // the recap's ring says COMPLETE 100%: "EPOC 100" under "EPOCH 484"
+    // read as a second epoch number (OP, Nov 27). The growing stages keep
+    // the face dial's EPOC.
+    drawDialRing(CX[k], CY[k], RR[k], stage < 3 ? 0.97f : 1.0f, "EPOC",
+                 stage == 4 ? "COMPLETE" : NULL);
     if (stage < 4) return;
 
     char s[34];
