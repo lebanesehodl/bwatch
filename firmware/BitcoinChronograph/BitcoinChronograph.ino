@@ -11996,8 +11996,39 @@ public:
         showFaceFull();
         return;
       #else
-        waitAllRelease();               // a short press: nothing, by design
-        continue;
+        // TEST IMAGE ONLY (#35's wrist test), never merge: a short DOWN on
+        // About plays the retarget takeover (retargetScreen()'s stages,
+        // holds and buzz) and holds its final card until a press, 3 min at
+        // most, then goes back to the face. Self-contained: the recap is a
+        // local copy (the held one, or OP's epoch 484 as his watch read it,
+        // fees and transactions unknown, when none is held) and no event is
+        // fired. evQueue, evShown, evWake, eventOnGlass and the held recap
+        // are never written, so the closing press can't acknowledge a real
+        // event; one still waiting comes back up with the face.
+        {
+          waitAllRelease();
+          Retarget r = evRetEpoch > 0 ? heldRetarget()
+                                      : Retarget{484, 7.61f, 13.0f, 6300, -1, 0};
+          Serial.printf("[test] retarget card, epoch %ld, queue %u untouched\n",
+                        r.epoch, evQueue);
+          static const int HOLD[] = {420, 260, 380, 420};
+          for (int st = 0; st < 4; st++) {
+            drawRetarget(r, st);
+            display.display(true);
+            delay(HOLD[st]);
+          }
+          drawRetarget(r, 4);
+          displayFull();
+          paintedDark = themeDark;    // what is on the glass, as retargetScreen()
+          buzz(35, 2); delay(140); buzz(35, 2);
+          waitAllRelease();
+          waitForPress(180000);
+          waitAllRelease();
+          guiState = WATCHFACE_STATE;
+          RTC.read(currentTime);
+          showFaceFull();
+          return;
+        }
       #endif
       }
       if (p == UP_BTN_PIN && heldFor(UP_BTN_PIN, 900)) {
