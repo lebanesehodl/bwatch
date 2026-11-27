@@ -1510,6 +1510,7 @@ public:
       delay(HOLD[st]);
     }
     drawHalving(v, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     for (int i = 0; i < 4; i++) { buzz(35, 2); delay(140); }
@@ -1529,6 +1530,7 @@ public:
       delay(HOLD[st]);
     }
     drawRetarget(r, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(35, 2); delay(140); buzz(35, 2);
@@ -2583,9 +2585,8 @@ public:
     else if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) p = DOWN_BTN_PIN;
     else if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) p = MENU_BTN_PIN;
     if (p < 0) return false;
-    if (evQueue && evShown && !qrOnGlass()) {    // ANY BUTTON: OK
-      dismissEvent();
-      waitAllRelease();
+    if (evQueue && evShown && !qrOnGlass()) {    // ANY BUTTON: OK (UP: replay)
+      eventPress(p);
     } else if (p == MENU_BTN_PIN) {
       waitAllRelease();
       return true;
@@ -5669,6 +5670,7 @@ public:
       drawCurioCard(h, 3); display.display(true); delay(320);
     }
     drawCurioCard(h, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(35, 2);
@@ -5796,6 +5798,7 @@ public:
       delay(st == 0 ? 500 : st == 3 ? 420 : 260);
     }
     drawSupplyCard(i, 4);
+    drawReplayPrompt();           // it waits: UP plays it again
     displayFull();
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
     buzz(60, 3);
@@ -10388,7 +10391,10 @@ public:
     }
   }
 
-  void millionScreen() {
+  // The roll, the ten pulses and the card: everything a replay (UP on the
+  // waiting card) plays again. The marking (sawMillion, NVS, the event) is
+  // millionScreen()'s alone, so a replay writes nothing.
+  void millionAnimation() {
     // the odometer rolls over: each carry a partial
     static const long ROLL[8] = {999999L, 999990L, 999900L, 999000L,
                                  990000L, 900000L, 0L, 1000000L};
@@ -10404,8 +10410,13 @@ public:
       buzz(60, 4);
     }
     drawMillionCard(2, 1000000L, 10);
+    drawReplayPrompt();       // it waits: UP plays it again
     displayFull();            // full refresh: this one is worth it
     paintedDark = themeDark;      // cards follow the theme (Nov 8)
+  }
+
+  void millionScreen() {
+    millionAnimation();
     Serial.printf("[1M] block 1,000,000 marked at tip %ld\n", blockHeight);
     sawMillion = true;
     savePrefs();
@@ -11314,11 +11325,13 @@ public:
   // the one thing to do about it.
   void drawEventScreen(uint8_t ev) {
     if (ev == EV_AGE)  { drawAgeCard(); return; }
-    if (ev == EV_RETG) { drawRetarget(heldRetarget(), 4); return; }
-    if (ev == EV_HALV) { drawHalving(heldHalving(), 4); return; }
+    // the celebrations: the animation's last frame, prompt and all
+    if (ev == EV_RETG) { drawRetarget(heldRetarget(), 4); drawReplayPrompt(); return; }
+    if (ev == EV_HALV) { drawHalving(heldHalving(), 4); drawReplayPrompt(); return; }
     if (ev == EV_CURIO) {
       const char *why = curiosity(evCurioH);
       drawCurioFrame(evCurioH, why ? why : "CURIOUS BLOCK");
+      drawReplayPrompt();
       return;
     }
     themeDark = darkNow();
@@ -11421,11 +11434,90 @@ public:
     return true;                                  // otherwise the caller
   }                                               // sends it to the panel
 
+  // the event whose card is on the glass now, if it is still waiting
+  uint8_t visibleEvent() {
+    return (evShown && (evQueue & evShown)) ? evShown : 0;
+  }
+
+  // A press acknowledges the card on the glass, and only that one. It used to
+  // take firstEvent(), the lowest waiting bit. An animation that put a higher
+  // one up over it (a retarget over a block alarm read in the same fetch)
+  // left the two apart until the next draw, and a press in between cleared
+  // the covered card unseen: on the dock that is seconds, the rest of the
+  // poll. Nothing on the glass (a rest ended, a card not drawn yet): nothing
+  // is cleared, and the draw that follows puts the card up.
   void dismissEvent() {
-    uint8_t ev = firstEvent();
-    evQueue &= (uint8_t)~ev;
+    uint8_t ev = visibleEvent();
+    if (ev) evQueue &= (uint8_t)~ev;
     evShown = 0;
     Serial.printf("[alarm] dismissed %u, queue %u\n", ev, evQueue);
+  }
+
+  // ---- replay: UP on a waiting celebration plays it again ----
+  // The cards with an animation of their own (a retarget, a halving, and on
+  // EV_CURIO a curiosity, a supply milestone or block 1,000,000) wait with
+  // UP: REPLAY  BACK: OK at the foot. UP plays the same sequence again, from
+  // what the event saved: no fetch, no event fired, the queue and NVS left as
+  // they are, the cold rule kept (a cold curiosity or milestone is its card
+  // and its buzz). It ends on the same card. Any other button, and any button
+  // on an alarm, PAY or age card, is OK (OP and Lead, Nov 27).
+  bool canReplay(uint8_t ev) {
+    return ev == EV_RETG || ev == EV_HALV || ev == EV_CURIO;
+  }
+
+  // a tab over the foot of the frame (or the ring), the size of its words
+  void drawReplayPrompt() {
+    static const char *P = "UP: REPLAY  BACK: OK";
+    int w = (int)strlen(P) * 6, x = (200 - w) / 2;    // 120 px, from x 40
+    display.fillRect(x - 4, 187, w + 7, 13, cardBg());
+    display.drawRect(x - 4, 187, w + 7, 13, cardFg());
+    display.setFont(NULL); display.setTextSize(1);
+    display.setTextColor(cardFg());
+    display.setCursor(x, 190); display.print(P);
+  }
+
+  // the animation again, as drawCurioFrame() tells the EV_CURIO kinds apart
+  void replayEvent(uint8_t ev) {
+    Serial.printf("[replay] %u (queue %u)\n", ev, evQueue);
+    themeDark = darkNow();        // a press, before any face draw
+    if (ev == EV_RETG) retargetScreen();
+    else if (ev == EV_HALV) halvingScreen();
+    else if (ev == EV_CURIO) {
+      int sm = supMsAt(evCurioH);
+      if (sm >= 0) supplyScreen(sm);
+      else if (evCurioH == 1000000L) millionAnimation();
+      else {
+        const char *why = curiosity(evCurioH);
+        curiosityScreen(evCurioH, why ? why : "CURIOUS BLOCK");
+      }
+    }
+    eventOnGlass = true;          // its own full put the card back up
+    panelOff();
+  }
+
+  // A press with a card waiting, from every path that reads buttons then: the
+  // wake, the fast loop, the vigil and the dock. Returns true for a replay:
+  // the same card is up again and nothing needs drawing. Otherwise the card
+  // on the glass (if any) is acknowledged and the caller draws what is next.
+  bool eventPress(int pin) {
+    uint8_t ev = visibleEvent();
+    waitAllRelease();
+    if (ev && pin == UP_BTN_PIN && canReplay(ev)) {
+      replayEvent(ev);
+      waitAllRelease();
+      return true;
+    }
+    dismissEvent();
+    return false;
+  }
+
+  // the button held now, in the face's order (-1: none)
+  int pressedNow() {
+    if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) return MENU_BTN_PIN;
+    if (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE) return BACK_BTN_PIN;
+    if (digitalRead(UP_BTN_PIN)   == BTN_ACTIVE) return UP_BTN_PIN;
+    if (digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE) return DOWN_BTN_PIN;
+    return -1;
   }
 
   // ---- late payments ----
@@ -12492,14 +12584,11 @@ public:
 
       if (checkAlarms()) redraw = true;      // the dock polls on its own
 
-      // ANY BUTTON: OK on an alarm screen, here as on the wrist
-      if (evQueue && evShown && !qrOnGlass() &&
-          (digitalRead(BACK_BTN_PIN) == BTN_ACTIVE ||
-           digitalRead(MENU_BTN_PIN) == BTN_ACTIVE ||
-           digitalRead(UP_BTN_PIN)   == BTN_ACTIVE ||
-           digitalRead(DOWN_BTN_PIN) == BTN_ACTIVE)) {
-        dismissEvent();
-        waitAllRelease();
+      // ANY BUTTON: OK on an alarm screen, here as on the wrist (and UP on a
+      // celebration plays it again)
+      int ep = (evQueue && evShown && !qrOnGlass()) ? pressedNow() : -1;
+      if (ep >= 0) {
+        eventPress(ep);
         buttonWake = true;
         drawWatchFace();
         partialRefresh();
@@ -12692,12 +12781,15 @@ public:
     if (guiState == WATCHFACE_STATE && !evQueue && !qrOnGlass() &&
         maybeDateCard()) return;             // the day's first press: the card
     // ANY BUTTON: OK. The press acknowledges the alarm on the glass and does
-    // nothing else; the next one waiting (or the face) takes its place.
+    // nothing else; the next one waiting (or the face) takes its place. UP on
+    // a celebration plays it again instead, and the card stays (eventPress).
     if (evQueue && guiState == WATCHFACE_STATE && !qrOnGlass()) {
-      if (evShown) dismissEvent();     // only what has actually been seen
       pinMode(MENU_BTN_PIN, INPUT); pinMode(BACK_BTN_PIN, INPUT);
       pinMode(UP_BTN_PIN, INPUT);   pinMode(DOWN_BTN_PIN, INPUT);
-      waitAllRelease();
+      int pin = (wake & MENU_BTN_MASK) ? MENU_BTN_PIN
+              : (wake & BACK_BTN_MASK) ? BACK_BTN_PIN
+              : (wake & UP_BTN_MASK)   ? UP_BTN_PIN : DOWN_BTN_PIN;
+      if (eventPress(pin)) return;     // only what has actually been seen
       RTC.read(currentTime);
       showFaceFull();
       return;
@@ -12761,7 +12853,14 @@ public:
         lastTimeout = millis();          // and stay awake for what comes next
       }
       else {
-        if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
+        // a card up (a menu left, a fetch that found something): the press
+        // is the card's, as on the wake above, not the face's beneath it
+        int ep = (guiState == WATCHFACE_STATE && evQueue && !qrOnGlass())
+                 ? pressedNow() : -1;
+        if (ep >= 0) {
+          if (!eventPress(ep)) { RTC.read(currentTime); showFaceFull(); }
+          lastTimeout = millis();      // from the end: a replay runs seconds
+        } else if (digitalRead(MENU_BTN_PIN) == BTN_ACTIVE) {
           lastTimeout = millis();
           if (guiState == MAIN_MENU_STATE) dispatchMenu();
           else if (guiState == WATCHFACE_STATE) {
