@@ -1213,7 +1213,7 @@ window.addEventListener("pagehide",()=>{if(playing)presenceOff()});
   $("orderForm").addEventListener("submit",e=>{if(!onSite){e.preventDefault();$("orderStatus").textContent="Pre-orders go through on bwatch.xyz/radio. This preview doesn't send anything."}})})();
 // An explicit audition link selects labelled synthetic blocks, never autoplay or fake Live data.
 if(/(?:^|[?&])demo=1(?:&|$)/.test(location.search||"")){
-  $("srcDemo").hidden=false;setReplayUI("demo");$("src").textContent="Demo · simulated blocks";showBlock(DEMO[0]);
+  $("srcDemo").hidden=false;setReplayUI("demo");chain=DEMO.slice();$("src").textContent="Demo · simulated blocks";showBlock(chain[0]);
 }
 window.addEventListener("resize",draw);
 document.fonts&&document.fonts.ready.then(draw);draw();

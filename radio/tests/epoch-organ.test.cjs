@@ -44,6 +44,9 @@ test('old epochs keep the exact original transition choices and locked chords ne
     assert.equal(p.run(`organPalette(h).every(cur=>Array.from({length:256},(_,b)=>{const by=new Uint8Array(32);by[0]=b;const next=blockChord(cur,by,h);return next!==cur&&organPalette(h).includes(next)}).every(Boolean))`),true,'allowed transitions at '+h);
   }
 });
+test('all earlier additions remain reachable through authored transitions as the score grows',()=>{
+  const p=page();assert.equal(p.run(`Array.from({length:17},(_,n)=>{const h=(485+n)*2016+1,seen=new Set(['Dmaj9']),queue=['Dmaj9'];while(queue.length){const cur=queue.shift();for(let j=0;j<256;j++){const by=new Uint8Array(32);by[0]=j;const next=blockChord(cur,by,h);if(!seen.has(next)){seen.add(next);queue.push(next)}}}return organPalette(h).every(ch=>seen.has(ch))}).every(Boolean)`),true);
+});
 test('each debut is introduced regardless of the hash, but hidden stations retain their original selection',()=>{
   const p=page();assert.equal(p.run(`ORGAN_BASE_NAMES.every(c=>blockChord(c,new Uint8Array(32),979776)==='Gm6')`),true);
   p.run(`st='lofi'`);assert.equal(p.run(`blockChord('Dmaj9',new Uint8Array(32),979776)`),'Bm11');
@@ -63,6 +66,10 @@ test('the production Shortwave pad has only four square voices with the old tota
   const gains=p.json('params.filter(p=>p.value>0&&p.value<0.01).map(p=>p.value)');assert.equal(gains.length,4);assert.ok(Math.abs(gains.reduce((s,n)=>s+n*n,0)-0.0003)<1e-12);
   assert.deepEqual(p.json('oscillators.map(o=>o.frequency.value)'),p.json(`organNotes('Gm6',1,979777).map(mtof)`));
   p.run('played.stop(110)');assert.equal(p.run('oscillators.every(o=>o.stops.includes(113.2))'),true);
+});
+test('recalling the same chord with its different remembered voicing actually replaces the pad',()=>{
+  const p=page();audio(p);p.run(`curChord='Dmaj9';currentOrgan=0;pad=makePad(curChord,st,100,0);setChord('Dmaj9',110,979775,1)`);
+  assert.equal(p.run('currentOrgan'),1);assert.equal(p.run('oscillators.length'),8);assert.equal(p.run('oscillators.slice(0,4).every(o=>o.stops.includes(113.2))'),true);
 });
 test('wait-noise is zero at zero wait, grows to the original ceiling, and the introduction does not alter backlog',()=>{
   const p=page();audio(p);p.run(`bed={st:'shortwave',gains:{hiss:node(),whistle:node(),whistleOsc:node()}};mempoolCount=12000;const rainBefore=rainRate();bedTick(0,rainBefore,100)`);
@@ -98,7 +105,7 @@ test('looping a future demo back to its beginning clears unlocked-chord memory a
   assert.equal(p.run('lastIdx'),-1);assert.equal(p.run('hist.length'),0);assert.equal(p.run('curChord'),'Dmaj9');assert.equal(p.run('currentOrgan'),0);assert.equal(p.run('organIntroUntil'),0);assert.equal(p.run('octShift'),p.run('octFor(979774)'));
 });
 test('the explicit demo link is labelled as simulation and cannot start audio without a tap',()=>{
-  const p=page('?demo=1');assert.equal(p.run('mode'),'replay');assert.equal(p.run('replaySet'),'demo');assert.equal(p.run('playing'),false);assert.equal(p.run('ctx'),null);assert.equal(p.run('$("src").textContent'),'Demo · simulated blocks');assert.match(p.run('$("srcNote").textContent'),/made up/);assert.equal(p.run('$("srcDemo").hidden'),false);
+  const p=page('?demo=1');assert.equal(p.run('mode'),'replay');assert.equal(p.run('replaySet'),'demo');assert.equal(p.run('playing'),false);assert.equal(p.run('ctx'),null);assert.equal(p.run('$("src").textContent'),'Demo · simulated blocks');assert.match(p.run('$("srcNote").textContent'),/made up/);assert.equal(p.run('$("srcDemo").hidden'),false);assert.equal(p.run('chain.length'),p.run('DEMO.length'));assert.equal(p.run('chain.every(b=>b.hash===null)'),true);
   const normal=page();assert.equal(normal.run('mode'),'live');assert.equal(normal.run('ctx'),null);
 });
 test('the old recorded set has no future unlocks and the simulated demo actually crosses the first addition',()=>{
