@@ -4,8 +4,9 @@ A wristwatch that keeps Bitcoin's time. No app, no account, no custodian.
 
 Inspired by the digital watches of my youth, bwatch shows the height of the Bitcoin timechain, difficulty epochs, halvings, derives
 issued supply on-device from the block height. It also carries a watch-only wallet that holds
-no key, and vibrates once for every block the network finds, roughly one hundred and
-forty-four times a day. The Bitcoin price is available in 5 different currencies along with SATS/USD (MSCW Time)
+no key, and buzzes once when it sees the chain advance. The Bitcoin price is available in twenty currencies along with sats per unit of fiat,
+six of them on the currency dial out of the box. Twelve instruments are built in; ten are in
+the face cycle out of the box.
 
 **Site:** [bwatch.xyz](https://bwatch.xyz) · **Manual:** [bwatch.xyz/bwatch-manual.html](https://bwatch.xyz/bwatch-manual.html)
 
@@ -15,11 +16,10 @@ forty-four times a day. The Bitcoin price is available in 5 different currencies
 
 ```
 index.html              the site's front door
-bwatch.html             the long document: claims, editions, specs, field log
+bwatch.html             the long document: claims, the edition, specs, field log
 bwatch-manual.html      the manual: every mode, every button
 img/                    photographs and schematics
 fonts/                  Archivo, self-hosted
-brand/                  the mark and lockup, SVG and PDF
 favicon.svg
 404.html  robots.txt  sitemap.xml  CNAME
 
@@ -36,7 +36,7 @@ is where you check them.
 The case is the **Armadillonium**, SQFMI's official CNC anodized aluminium case for
 Watchy. Buy it from them unless you need a colour they do not sell — `hardware/case`
 holds the assembly split into its three parts and the manufacturing drawings that go
-with it, which exist because the Genesis edition is orange and had to be machined.
+with it, which are there for a colour SQFMI does not sell.
 The geometry is theirs, under MIT; the drawings are ours.
 
 - Case: [shop.sqfmi.com](https://shop.sqfmi.com/products/watchy-cnc-anodized-aluminum-case)
@@ -81,8 +81,8 @@ Compatibility* or it will never see the network.
 
 Two rules run through the firmware and are worth knowing before changing it.
 
-**Never show a number you cannot defend.** Block height is fetched, never inferred,
-while the network is reachable. Once a fetch has actually failed the face switches to
+**Never show a number you cannot defend.** Block height is the fetched height
+until that data has gone stale. Then the face can switch to
 dead reckoning and says so — `EST +36 BLK +/-6` — rather than presenting a guess as a
 reading. The corner tag carries the age of everything on screen, so individual
 readouts do not each need their own disclaimer.
@@ -112,8 +112,8 @@ set WiFi, paste a zpub, calibrate the battery once, and it is the same watch.
 
 ## The mark
 
-`brand/` holds the mark and the lockup as SVG and PDF, letterforms converted to
-paths. The field is not a generic rounded square: it is the bw-1 case at its true
+The lockup as SVG and PDF is not in this repository yet; `favicon.svg` carries the mark.
+The field is not a generic rounded square: it is the bw-1 case at its true
 proportion — 40.40 × 50.36, corner radius 5.4 — traced from the same STEP file the
 shop machines from, so the mark and the object cannot drift apart.
 
@@ -122,6 +122,6 @@ Orange `#FF3B12` · ink `#14120F` · paper `#F2EFE6` · Archivo SemiBold.
 ## Licence
 
 MIT for the firmware. Build your own — the sketch is here, free, forever, and runs
-on stock Watchy hardware. The editions exist for people who would rather have one made.
+on stock Watchy hardware. The watch exists for people who would rather have one made.
 
 Photographs are © BTC Technologies and not covered by the MIT licence.

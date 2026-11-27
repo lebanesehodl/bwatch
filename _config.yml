@@ -1,0 +1,6 @@
+# GitHub Pages builds this repository with Jekyll. A leading-dot directory is
+# excluded unless it is named here; without this line .well-known is dropped.
+# Do not rename `nojekyll` to `.nojekyll`: that would disable the build that
+# currently produces /docs/security/tls.html and /docs/ASSEMBLY.html from their
+# Markdown sources.
+include: [".well-known"]
