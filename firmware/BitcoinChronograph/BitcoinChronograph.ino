@@ -447,6 +447,24 @@ const char *HASH_URL = "https://mempool.space/api/v1/mining/hashrate/3d";
 #define DISPLAY_LAB      0
 #endif
 
+// ---- which build this is ----
+// About's top line says FW and the commit it was built from. The commit is
+// not written here by hand, where it would drift: firmware/ci/build.sh passes
+// the one it compiles (-DFW_COMMIT=<7 hex>, and -DFW_DIRTY=1 when firmware/
+// has uncommitted changes), the same seven characters as the image's name,
+// and then checks the image holds this exact text. A build without the stamp
+// (the IDE, a tree outside git) says FW DEV instead of a commit it can't
+// know; a dirty tree says DEV and the commit it started from.
+#define FW_STR2(x) #x
+#define FW_STR(x)  FW_STR2(x)
+#if defined(FW_COMMIT) && !defined(FW_DIRTY)
+static const char FW_ID[] = "FW " FW_STR(FW_COMMIT);
+#elif defined(FW_COMMIT)
+static const char FW_ID[] = "DEV " FW_STR(FW_COMMIT);
+#else
+static const char FW_ID[] = "FW DEV";
+#endif
+
 // ---------------- persisted across deep sleep ----------------
 // RTC LAYOUT GUARD: RTC RAM survives reflashes, but the firmware's
 // variable layout doesn't — after a reflash that adds/moves RTC vars,
@@ -12371,6 +12389,10 @@ public:
 
     int y = 20;
     display.setCursor(0, y); display.print("BWATCH bw-1");
+    // the build, small, to the right of the name, on its baseline
+    display.setFont(NULL);
+    display.setCursor(200 - (int)strlen(FW_ID) * 6, y - 7); display.print(FW_ID);
+    display.setFont(&FreeMonoBold9pt7b);
 
     int cs = chargeState();
     int p  = batteryPctShown();
