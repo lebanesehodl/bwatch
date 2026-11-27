@@ -87,6 +87,11 @@ test('the new chord stays exposed through transmission and eight seconds after i
   assert.equal(p.run('curChord'),'Gm6');assert.equal(p.run('currentOrgan'),0);assert.ok(Math.abs(p.run('organIntroUntil-(swBusy-0.5)')-8)<1e-9);assert.ok(p.run('harm.next>organIntroUntil'));
   p.run(`let recalled=0;setChord=()=>recalled++;harm.next=0;harmonyTick(organIntroUntil-0.01,1)`);assert.equal(p.run('recalled'),0);p.run('harmonyTick(organIntroUntil+0.01,1)');assert.equal(p.run('recalled'),1);
 });
+test('a busy debut uses the actual old sign-off, not the extra broadcast guard, and queues no second transmission',async()=>{
+  const p=page();audio(p);p.run(`playing=true;let broadcasts=0;transmit=(h,by,t)=>{broadcasts++;return t+12};chain=[{height:979775,time:Date.now(),hash:'a'.repeat(64),tx:3000},{height:979776,time:Date.now(),hash:'b'.repeat(64),tx:3000}];lastIdx=-1`);
+  await p.run('fireBlock(0,100)');p.run('const signedOff=swBusy-0.5;ctx.currentTime=signedOff+0.25');await p.run('fireBlock(1,ctx.currentTime)');
+  assert.equal(p.run('curChord'),'Gm6');assert.equal(p.run('broadcasts'),1);assert.ok(Math.abs(p.run('organIntroUntil-signedOff')-8)<1e-9);assert.ok(p.run('organIntroUntil>ctx.currentTime'));
+});
 test('newer blocks and Stop clear the old introduction instead of letting it leak into another run',async()=>{
   const p=page();audio(p);p.run(`playing=true;chain=[{height:979776,time:Date.now(),hash:'a'.repeat(64),tx:3000},{height:979777,time:Date.now(),hash:'b'.repeat(64),tx:3000}];lastIdx=-1`);
   await p.run('fireBlock(0,100)');assert.ok(p.run('organIntroUntil>0'));await p.run('fireBlock(1,101)');assert.equal(p.run('organIntroUntil'),0);

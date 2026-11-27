@@ -988,7 +988,7 @@ async function fireBlock(i,t){
   setKeyFor(b.height);if(pad) pad.stop(now);curChord=nc;pad=makePad(nc,st,now,organ);$("chord").textContent=nc;$("from").textContent="";
   harm.next=now+harmPeriod()*1.5;harm.pos=-1;
   const end=playBlock(st,b,notes,now+0.05,by,nc,close);
-  if(debut){organIntroUntil=Math.max(now,Number.isFinite(end)?end:now)+8;harm.next=organIntroUntil+harmPeriod()*1.5}
+  if(debut){organIntroUntil=Math.max(now,(Number.isFinite(end)?end:now)+8);harm.next=organIntroUntil+harmPeriod()*1.5}
   flash();
 }
 function tick(){
