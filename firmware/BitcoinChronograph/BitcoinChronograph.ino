@@ -11956,6 +11956,89 @@ public:
   }
   #endif  // DISPLAY_LAB
 
+#if !DISPLAY_LAB
+  // ---- TEST IMAGE ONLY (#37's wrist test), never merge ----
+  // About, short DOWN: pick a celebration, or a two-card queue, and it lands
+  // the way a fetch lands it. The animation plays, the event fires and its
+  // card is left waiting, then the watch draws what a wake draws after a
+  // fetch (the lowest waiting bit). Refused while any card is waiting, so a
+  // real one is never covered, overwritten or cleared. Payloads: the held
+  // retarget / halving if the watch has one, otherwise fixtures (OP's epoch
+  // 484; halving 5, years and fees unknown). Curiosity 977,779 and the 900K
+  // milestone are real past blocks; 1,000,000 is a fixture. sawMillion and
+  // supMsDone are never written, and nothing goes to NVS.
+  void testFire(int sel) {
+    Serial.printf("[test] cards %d (queue %u)\n", sel, evQueue);
+    themeDark = darkNow();
+    guiState = WATCHFACE_STATE;
+    RTC.read(currentTime);
+    if (sel == 5) {                     // checkAlarms runs first in a fetch
+      evBlockH = blockHeight > 0 ? blockHeight : 977800L;
+      fireEvent(EV_BLOCK);
+    }
+    if (sel == 2 || sel == 6) {
+      evCurioH = 977779L;
+      curiosityScreen(977779L, "PALINDROME BLOCK");
+      fireEvent(EV_CURIO); evShown = EV_CURIO;
+    }
+    if (sel == 3) {
+      supplyScreen(0);
+      evCurioH = supMsHeight(0);
+      fireEvent(EV_CURIO); evShown = EV_CURIO;
+    }
+    if (sel == 4) {
+      millionAnimation();
+      evCurioH = 1000000L;
+      fireEvent(EV_CURIO); evShown = EV_CURIO;
+    }
+    if (sel == 1) {
+      if (evHalvN <= 0) { evHalvN = 5; evHalvYears = 0; evHalvFees = -1; }
+      halvingScreen();
+      fireEvent(EV_HALV); evShown = EV_HALV;
+    }
+    if (sel == 0 || sel == 5 || sel == 6) {
+      if (evRetEpoch <= 0) {
+        evRetEpoch = 484; evRetChange = 7.61f; evRetDays = 13.0f;
+        evRetMined = 6300; evRetFees = -1; evRetTxs = 0;
+      }
+      retargetScreen();
+      fireEvent(EV_RETG); evShown = EV_RETG;
+    }
+    eventOnGlass = true;
+    showFaceFull();                     // the draw after the fetch
+  }
+  bool testCards() {                    // true: a card went up, the face after it
+    static const char *N[] = {"RETARGET", "HALVING", "CURIOSITY 977,779",
+                              "SUPPLY UNDER 900K", "BLOCK 1,000,000",
+                              "BLOCK ALARM + RETARGET", "CURIOSITY + RETARGET"};
+    const int NN = 7;
+    int sel = 0;
+    while (true) {
+      themeDark = darkNow();
+      display.setFullWindow();
+      display.fillScreen(bg());
+      display.setTextColor(fg());
+      display.setFont(NULL); display.setTextSize(1);
+      centerSmall("TEST CARDS (#37, TEST IMAGE)", 8);
+      for (int i = 0; i < NN; i++) {
+        display.setCursor(10, 30 + i * 16);
+        display.print(i == sel ? "> " : "  ");
+        display.print(N[i]);
+      }
+      centerSmall(evQueue ? "A CARD IS WAITING: CLEAR IT FIRST"
+                          : "UP/DOWN: PICK   MENU: FIRE", 160);
+      centerSmall("BACK: LEAVE", 176);
+      display.display(true);
+      int p = waitForPress(60000);
+      waitAllRelease();
+      if (p < 0 || p == BACK_BTN_PIN) return false;
+      if (p == UP_BTN_PIN) sel = (sel + NN - 1) % NN;
+      else if (p == DOWN_BTN_PIN) sel = (sel + 1) % NN;
+      else if (p == MENU_BTN_PIN && !evQueue) { testFire(sel); return true; }
+    }
+  }
+#endif
+
   void myShowAbout() {
     // FreeMonoBold9pt7b advances 11 px, so a 200 px panel fits 18 characters
     // per line. Every label below is budgeted against that; the closing note
@@ -12088,8 +12171,14 @@ public:
         showFaceFull();
         return;
       #else
-        waitAllRelease();               // a short press: nothing, by design
-        continue;
+        // TEST IMAGE ONLY (#37): the test cards. Back to the face after.
+        waitAllRelease();
+        if (!testCards()) {
+          guiState = WATCHFACE_STATE;
+          RTC.read(currentTime);
+          showFaceFull();
+        }
+        return;
       #endif
       }
       if (p == UP_BTN_PIN && heldFor(UP_BTN_PIN, 900)) {
